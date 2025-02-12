@@ -20,7 +20,6 @@ type JSONLogEntry struct {
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	// Logs Explorer allows filtering and display of this as `jsonPayload.component`.
 	Component string `json:"component,omitempty"`
-	logLevel  LogLevel
 }
 
 // String renders an entry structure to the JSON format expected by Cloud Logging.

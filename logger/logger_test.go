@@ -138,7 +138,7 @@ func TestJSONLoggerWithEnvLevel(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		os.Setenv("SM_LOG_LEVEL", tt.level)
+		os.Setenv("AGENTUITY_LOG_LEVEL", tt.level)
 		logger := NewJSONLogger().(*jsonLogger)
 
 		output := captureOutput(func() {
@@ -154,6 +154,6 @@ func TestJSONLoggerWithEnvLevel(t *testing.T) {
 		for _, shouldNotContain := range tt.shouldNotContain {
 			assert.NotContains(t, output, shouldNotContain)
 		}
-		os.Unsetenv("SM_LOG_LEVEL")
+		os.Unsetenv("AGENTUITY_LOG_LEVEL")
 	}
 }

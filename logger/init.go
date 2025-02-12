@@ -19,9 +19,9 @@ const (
 	LevelNone
 )
 
-// GetLevelFrom env will look at the environment var `SM_LOG_LEVEL` and convert it into the appropriate LogLevel
+// GetLevelFromEnv will look at the environment var `AGENTUITY_LOG_LEVEL` and convert it into the appropriate LogLevel
 func GetLevelFromEnv() LogLevel {
-	s := os.Getenv("SM_LOG_LEVEL")
+	s := os.Getenv("AGENTUITY_LOG_LEVEL")
 	switch strings.ToLower(s) { // Convert the string to lowercase to make it case-insensitive
 	case "trace":
 		return LevelTrace

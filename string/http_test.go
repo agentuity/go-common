@@ -1,7 +1,6 @@
 package string
 
 import (
-	"fmt"
 	"net/http"
 	"testing"
 
@@ -39,7 +38,6 @@ func TestMaskHeaders(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			result := MaskHeaders(tc.headers, tc.maskHeaders)
 			assert.Equal(t, tc.expected, result)
-			fmt.Println(tc.name)
 		})
 	}
 }

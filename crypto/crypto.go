@@ -1,33 +1,41 @@
 package crypto
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
 	"crypto/rand"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/pem"
 	"fmt"
 	"os"
 	"strings"
 )
 
-// GenerateRSAKeyPair generates a new RSA key pair with the specified bit size
-func GenerateRSAKeyPair(bits int) (*rsa.PrivateKey, *rsa.PublicKey, error) {
-	privKey, err := rsa.GenerateKey(rand.Reader, bits)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate RSA key pair: %w", err)
-	}
-	return privKey, &privKey.PublicKey, nil
+// KeyPair represents an ECDH key pair
+type KeyPair struct {
+	PrivateKey *ecdh.PrivateKey
+	PublicKey  *ecdh.PublicKey
 }
 
-// EncodePrivateKeyToPEM converts an RSA private key to PEM format using PKCS#8
-func EncodePrivateKeyToPEM(privateKey *rsa.PrivateKey) []byte {
-	privBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+// GenerateKeyPair generates a new ECDH key pair using P-256
+func GenerateKeyPair() (*KeyPair, error) {
+	curve := ecdh.P256()
+	privateKey, err := curve.GenerateKey(rand.Reader)
 	if err != nil {
-		// Since this is an internal conversion that should never fail for an RSA key,
-		// we'll panic if it does. This would indicate a serious internal error.
-		panic(fmt.Sprintf("failed to marshal private key: %v", err))
+		return nil, fmt.Errorf("failed to generate ECDH key pair: %w", err)
 	}
+
+	return &KeyPair{
+		PrivateKey: privateKey,
+		PublicKey:  privateKey.PublicKey(),
+	}, nil
+}
+
+// EncodePrivateKeyToPEM converts an ECDH private key to PEM format using PKCS#8
+func EncodePrivateKeyToPEM(privateKey *ecdh.PrivateKey) []byte {
+	// Get raw private key bytes
+	privBytes := privateKey.Bytes()
+
 	privPEM := pem.EncodeToMemory(
 		&pem.Block{
 			Type:  "PRIVATE KEY",
@@ -37,14 +45,11 @@ func EncodePrivateKeyToPEM(privateKey *rsa.PrivateKey) []byte {
 	return privPEM
 }
 
-// EncodePublicKeyToPEM converts an RSA public key to PEM format using PKIX
-func EncodePublicKeyToPEM(publicKey *rsa.PublicKey) []byte {
-	pubBytes, err := x509.MarshalPKIXPublicKey(publicKey)
-	if err != nil {
-		// Since this is an internal conversion that should never fail for an RSA key,
-		// we'll panic if it does. This would indicate a serious internal error.
-		panic(fmt.Sprintf("failed to marshal public key: %v", err))
-	}
+// EncodePublicKeyToPEM converts an ECDH public key to PEM format using PKIX
+func EncodePublicKeyToPEM(publicKey *ecdh.PublicKey) []byte {
+	// Get raw public key bytes
+	pubBytes := publicKey.Bytes()
+
 	pubPEM := pem.EncodeToMemory(
 		&pem.Block{
 			Type:  "PUBLIC KEY",
@@ -54,48 +59,93 @@ func EncodePublicKeyToPEM(publicKey *rsa.PublicKey) []byte {
 	return pubPEM
 }
 
-// EncryptWithRSA encrypts data using RSA-OAEP with SHA256
-func EncryptWithRSA(publicKey *rsa.PublicKey, data []byte, label []byte) ([]byte, error) {
-	if len(data) == 0 {
+// Encrypt encrypts data using AES-GCM with a shared secret derived from ECDH
+func Encrypt(publicKey *ecdh.PublicKey, privateKey *ecdh.PrivateKey, plaintext []byte) ([]byte, error) {
+	if publicKey == nil || privateKey == nil {
+		return nil, fmt.Errorf("public key and private key cannot be nil")
+	}
+	if len(plaintext) == 0 {
 		return nil, fmt.Errorf("data to encrypt cannot be empty")
 	}
 
-	hash := sha256.New()
-
-	ciphertext, err := rsa.EncryptOAEP(hash, rand.Reader, publicKey, data, label)
+	// Generate shared secret
+	secret, err := privateKey.ECDH(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to encrypt data: %w", err)
+		return nil, fmt.Errorf("failed to generate shared secret: %w", err)
 	}
 
+	// Create AES-GCM cipher
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Generate nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	// Encrypt and seal
+	ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
 	return ciphertext, nil
 }
 
-// DecryptWithRSA decrypts data using RSA-OAEP with SHA256
-func DecryptWithRSA(privateKey *rsa.PrivateKey, ciphertext []byte, label []byte) ([]byte, error) {
+// Decrypt decrypts data using AES-GCM with a shared secret derived from ECDH
+func Decrypt(publicKey *ecdh.PublicKey, privateKey *ecdh.PrivateKey, ciphertext []byte) ([]byte, error) {
+	if publicKey == nil || privateKey == nil {
+		return nil, fmt.Errorf("public key and private key cannot be nil")
+	}
 	if len(ciphertext) == 0 {
 		return nil, fmt.Errorf("ciphertext to decrypt cannot be empty")
 	}
 
-	hash := sha256.New()
-
-	plaintext, err := rsa.DecryptOAEP(hash, rand.Reader, privateKey, ciphertext, label)
+	// Generate shared secret
+	secret, err := privateKey.ECDH(publicKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decrypt data: %w", err)
+		return nil, fmt.Errorf("failed to generate shared secret: %w", err)
+	}
+
+	// Create AES-GCM cipher
+	block, err := aes.NewCipher(secret)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return nil, fmt.Errorf("ciphertext too short")
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt: %w", err)
 	}
 
 	return plaintext, nil
 }
 
-// WriteKeyPairToFiles writes RSA key pair to files with specified permissions
-func WriteKeyPairToFiles(privateKey *rsa.PrivateKey, privateKeyPath, publicKeyPath string) error {
+// WriteKeyPairToFiles writes ECDH key pair to files with specified permissions
+func WriteKeyPairToFiles(keyPair *KeyPair, privateKeyPath, publicKeyPath string) error {
 	// Write private key with restricted permissions (600 - owner read/write only)
-	privPEM := EncodePrivateKeyToPEM(privateKey)
+	privPEM := EncodePrivateKeyToPEM(keyPair.PrivateKey)
 	if err := os.WriteFile(privateKeyPath, privPEM, 0600); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
 
 	// Write public key with less restrictive permissions (644 - owner read/write, others read)
-	pubPEM := EncodePublicKeyToPEM(&privateKey.PublicKey)
+	pubPEM := EncodePublicKeyToPEM(keyPair.PublicKey)
 	if err := os.WriteFile(publicKeyPath, pubPEM, 0644); err != nil {
 		return fmt.Errorf("failed to write public key: %w", err)
 	}
@@ -103,38 +153,30 @@ func WriteKeyPairToFiles(privateKey *rsa.PrivateKey, privateKeyPath, publicKeyPa
 	return nil
 }
 
-// PrivateKeyFromBase64 decodes a base64 encoded PEM string and parses it into an RSA private key
-func PrivateKeyFromBase64(buf []byte) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode(buf)
-	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
-		return nil, fmt.Errorf("failed to decode PEM block containing private key")
-	}
-
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse private key: %w", err)
-	}
-
-	privKey, ok := key.(*rsa.PrivateKey)
-	if !ok {
-		return nil, fmt.Errorf("key is not an RSA private key")
-	}
-
-	return privKey, nil
-}
-
-// ReadPrivateKeyFromFile reads and parses an RSA private key from a file
-func ReadPrivateKeyFromFile(privateKeyPath string) (*rsa.PrivateKey, error) {
+// ReadPrivateKeyFromFile reads and parses an ECDH private key from a file
+func ReadPrivateKeyFromFile(privateKeyPath string) (*ecdh.PrivateKey, error) {
 	privPEM, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key file: %w", err)
 	}
 
-	return PrivateKeyFromBase64(privPEM)
+	block, _ := pem.Decode(privPEM)
+	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
+		return nil, fmt.Errorf("failed to decode PEM block containing private key")
+	}
+
+	// Parse the private key directly as an EC key
+	curve := ecdh.P256()
+	privateKey, err := curve.NewPrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ECDH private key: %w", err)
+	}
+
+	return privateKey, nil
 }
 
-// ReadPublicKeyFromFile reads and parses an RSA public key from a file
-func ReadPublicKeyFromFile(publicKeyPath string) (*rsa.PublicKey, error) {
+// ReadPublicKeyFromFile reads and parses an ECDH public key from a file
+func ReadPublicKeyFromFile(publicKeyPath string) (*ecdh.PublicKey, error) {
 	pubPEM, err := os.ReadFile(publicKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read public key file: %w", err)
@@ -145,15 +187,12 @@ func ReadPublicKeyFromFile(publicKeyPath string) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("failed to decode PEM block containing public key")
 	}
 
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	// Parse the public key directly as an EC key
+	curve := ecdh.P256()
+	publicKey, err := curve.NewPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse public key: %w", err)
+		return nil, fmt.Errorf("failed to create ECDH public key: %w", err)
 	}
 
-	pubKey, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		return nil, fmt.Errorf("key is not an RSA public key")
-	}
-
-	return pubKey, nil
+	return publicKey, nil
 }

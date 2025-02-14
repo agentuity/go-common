@@ -2,64 +2,36 @@ package crypto
 
 import (
 	"bytes"
-	"crypto/rsa"
-	"crypto/x509"
-	"encoding/pem"
+	"crypto/ecdh"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestGenerateRSAKeyPair(t *testing.T) {
-	tests := []struct {
-		name    string
-		bits    int
-		wantErr bool
-	}{
-		{
-			name:    "valid 2048 bits",
-			bits:    2048,
-			wantErr: false,
-		},
-		{
-			name:    "valid 4096 bits",
-			bits:    4096,
-			wantErr: false,
-		},
-		{
-			name:    "invalid bits",
-			bits:    1,
-			wantErr: true,
-		},
+func TestGenerateKeyPair(t *testing.T) {
+	keyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Errorf("GenerateKeyPair() error = %v", err)
+		return
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			privKey, pubKey, err := GenerateRSAKeyPair(tt.bits)
-			if (err != nil) != tt.wantErr {
-				t.Errorf("GenerateRSAKeyPair() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
-			if !tt.wantErr {
-				if privKey == nil {
-					t.Error("GenerateRSAKeyPair() privateKey is nil")
-				}
-				if pubKey == nil {
-					t.Error("GenerateRSAKeyPair() publicKey is nil")
-				}
-			}
-		})
+	if keyPair.PrivateKey == nil {
+		t.Error("GenerateKeyPair() privateKey is nil")
+	}
+	if keyPair.PublicKey == nil {
+		t.Error("GenerateKeyPair() publicKey is nil")
 	}
 }
 
 func TestEncodePrivateKeyToPEM(t *testing.T) {
-	privKey, _, err := GenerateRSAKeyPair(2048)
+	keyPair, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	pemData := EncodePrivateKeyToPEM(privKey)
+	pemData := EncodePrivateKeyToPEM(keyPair.PrivateKey)
 	if len(pemData) == 0 {
 		t.Error("EncodePrivateKeyToPEM() returned empty PEM data")
 	}
@@ -70,12 +42,12 @@ func TestEncodePrivateKeyToPEM(t *testing.T) {
 }
 
 func TestEncodePublicKeyToPEM(t *testing.T) {
-	_, pubKey, err := GenerateRSAKeyPair(2048)
+	keyPair, err := GenerateKeyPair()
 	if err != nil {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	pemData := EncodePublicKeyToPEM(pubKey)
+	pemData := EncodePublicKeyToPEM(keyPair.PublicKey)
 	if len(pemData) == 0 {
 		t.Error("EncodePublicKeyToPEM() returned empty PEM data")
 	}
@@ -85,7 +57,7 @@ func TestEncodePublicKeyToPEM(t *testing.T) {
 	}
 }
 
-func TestEncryptDecryptWithRSA(t *testing.T) {
+func TestEncryptDecrypt(t *testing.T) {
 	tests := []struct {
 		name    string
 		data    []byte
@@ -103,22 +75,27 @@ func TestEncryptDecryptWithRSA(t *testing.T) {
 		},
 		{
 			name:    "long data",
-			data:    bytes.Repeat([]byte("a"), 190), // Should be less than key size
+			data:    bytes.Repeat([]byte("a"), 1024), // ECDH+AES can handle much larger data
 			wantErr: false,
 		},
 	}
 
-	privKey, pubKey, err := GenerateRSAKeyPair(2048)
+	aliceKeyPair, err := GenerateKeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair: %v", err)
+		t.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
+
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Bob's key pair: %v", err)
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test encryption
-			encrypted, err := EncryptWithRSA(pubKey, tt.data, []byte("test"))
+			// Alice encrypts message for Bob
+			encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, tt.data)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("EncryptWithRSA() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("Encrypt() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 
@@ -126,35 +103,40 @@ func TestEncryptDecryptWithRSA(t *testing.T) {
 				return
 			}
 
-			// Test decryption
-			decrypted, err := DecryptWithRSA(privKey, encrypted, []byte("test"))
+			// Bob decrypts message from Alice
+			decrypted, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
 			if err != nil {
-				t.Errorf("DecryptWithRSA() error = %v", err)
+				t.Errorf("Decrypt() error = %v", err)
 				return
 			}
 
 			// Compare original and decrypted data
 			if !bytes.Equal(tt.data, decrypted) {
-				t.Errorf("DecryptWithRSA() = %v, want %v", decrypted, tt.data)
+				t.Errorf("Decrypt() = %v, want %v", decrypted, tt.data)
 			}
 		})
 	}
 }
 
-func TestDecryptWithRSA_InvalidInput(t *testing.T) {
-	privKey, _, err := GenerateRSAKeyPair(2048)
+func TestDecrypt_InvalidInput(t *testing.T) {
+	aliceKeyPair, err := GenerateKeyPair()
 	if err != nil {
-		t.Fatalf("Failed to generate key pair: %v", err)
+		t.Fatalf("Failed to generate Alice's key pair: %v", err)
 	}
 
-	_, err = DecryptWithRSA(privKey, []byte{}, []byte("test"))
-	if err == nil {
-		t.Error("DecryptWithRSA() should return error for empty ciphertext")
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Bob's key pair: %v", err)
 	}
 
-	_, err = DecryptWithRSA(privKey, []byte("invalid ciphertext"), []byte("test"))
+	_, err = Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, []byte{})
 	if err == nil {
-		t.Error("DecryptWithRSA() should return error for invalid ciphertext")
+		t.Error("Decrypt() should return error for empty ciphertext")
+	}
+
+	_, err = Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, []byte("invalid ciphertext"))
+	if err == nil {
+		t.Error("Decrypt() should return error for invalid ciphertext")
 	}
 }
 
@@ -166,23 +148,21 @@ func TestKeyPairFileIO(t *testing.T) {
 
 	// Test cases
 	tests := []struct {
-		name    string
-		keyBits int
+		name string
 	}{
-		{"2048-bit RSA Key", 2048},
-		{"4096-bit RSA Key", 4096},
+		{"ECDH Key Pair"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Generate a key pair
-			privateKey, _, err := GenerateRSAKeyPair(tt.keyBits)
+			keyPair, err := GenerateKeyPair()
 			if err != nil {
-				t.Fatalf("Failed to generate RSA key pair: %v", err)
+				t.Fatalf("Failed to generate key pair: %v", err)
 			}
 
 			// Write keys to files
-			err = WriteKeyPairToFiles(privateKey, privateKeyPath, publicKeyPath)
+			err = WriteKeyPairToFiles(keyPair, privateKeyPath, publicKeyPath)
 			if err != nil {
 				t.Fatalf("Failed to write key pair to files: %v", err)
 			}
@@ -219,12 +199,15 @@ func TestKeyPairFileIO(t *testing.T) {
 
 			// Test encryption/decryption with read keys to verify they work
 			testMessage := []byte("test message for encryption")
-			encrypted, err := EncryptWithRSA(readPublicKey, testMessage, []byte("foobar"))
+
+			// Alice (original keypair) encrypts for Bob (read keys)
+			encrypted, err := Encrypt(readPublicKey, keyPair.PrivateKey, testMessage)
 			if err != nil {
 				t.Fatalf("Failed to encrypt test message: %v", err)
 			}
 
-			decrypted, err := DecryptWithRSA(readPrivateKey, encrypted, []byte("foobar"))
+			// Bob (read keys) decrypts message from Alice
+			decrypted, err := Decrypt(keyPair.PublicKey, readPrivateKey, encrypted)
 			if err != nil {
 				t.Fatalf("Failed to decrypt test message: %v", err)
 			}
@@ -279,144 +262,512 @@ func TestReadInvalidKeyFiles(t *testing.T) {
 }
 
 func TestPEMEncodingAndCrypto(t *testing.T) {
-	// Test private key in PEM format
-	// generated with:
-	// openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:4096 -out private.pem
-	//
-	testPrivateKeyPEM := []byte(`-----BEGIN PRIVATE KEY-----
-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
-6hG43ZPf9LDiEdQiCEPjLxLiSJAOZeY=
------END PRIVATE KEY-----
-`)
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
 
-	// Step 1: Decode the private key from PEM
-	privateKey, err := PrivateKeyFromBase64(testPrivateKeyPEM)
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Bob's key pair: %v", err)
+	}
+
+	// Test PEM encoding/decoding
+	pemData := EncodePrivateKeyToPEM(aliceKeyPair.PrivateKey)
+
+	// Write PEM data to a temporary file
+	tempDir := t.TempDir()
+	tempFile := filepath.Join(tempDir, "temp.pem")
+	if err := os.WriteFile(tempFile, pemData, 0600); err != nil {
+		t.Fatalf("Failed to write PEM data to temp file: %v", err)
+	}
+
+	// Read and test the key
+	readPrivateKey, err := ReadPrivateKeyFromFile(tempFile)
 	if err != nil {
 		t.Fatalf("Failed to decode private key: %v", err)
 	}
 
-	// Step 2: Re-encode the private key to PEM
-	reEncodedPEM := EncodePrivateKeyToPEM(privateKey)
-
-	// Step 3: Verify that the re-encoded PEM matches the original
-	if !bytes.Equal(testPrivateKeyPEM, reEncodedPEM) {
-		t.Error("Re-encoded PEM does not match original PEM")
-	}
-
-	// Step 4: Test encryption and decryption
-	testMessage := []byte("Hello, this is a test message!")
-
-	// Test the public key encoded PEM from the command line:
-	// openssl rsa -in private.pem -pubout -out public.pem
-	// the private.pem is from the previous step
-
-	block, _ := pem.Decode([]byte(`-----BEGIN PUBLIC KEY-----
-MIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEA1GbsMp5bj5LlnryItla6
-4GQDpM3M6hRMG/cY4uoQ4kuWrLf720fIr0EVTytAptKWaLsy335jeNP5YdybNc/2
-Q/MRbpfGpTvQQ2QyoQb3anWKlgPw6xd2KKREj41YewTFG+/LSJWf9IOFmYai8r4w
-wZ4IKi+XmfRnabwxf1nyNeuC3iSFG/inrR3TraesB7c/upVW+EPBtlehVzS4hH6e
-QKIOlqyCGOj9FapelVKkCuUw6d/tUzOY/XOa17UC72ZDAnMbjj9R3z8m8JLFb8wU
-jKOvzQlsLgUBrbfPmh+Olu8EvbnYvyyjrSDDCSbl55KgvO9U1ihVZix+3iN72I4M
-RLHGjMKNvivo7ofGrobq/ei655i2JJC6qY4XKONpOpaSTCrRhE96FpSAd2ftTJZb
-mVDkA7E6hJHI87s3m+NS3UsXJEuG+L3WSpeoWgCJIDZFU4EcHiRWzUcCwKRqrg5j
-fVNLiFEDoC6PGqFVRyRC2DVx2qBBb+h1ZFLUeeBWLTD87sm7a55w4FwXO7OM+sBV
-AnW1+XfeCSA8C2NJ/MsLslyMMkI2iEwX6aA8bGI8J9922t0/8FO1ZlB8Q+88xcyo
-CbhI7cFzeG5TlD9BuA387K4//4fVsJVUrMJtrUXq0IRf8+gDjbb23S17CvHnbeJi
-0U5CyHcDIQU5XtUHXQscN9UCAwEAAQ==
------END PUBLIC KEY-----
-`))
-	if block == nil || block.Type != "PUBLIC KEY" {
-		t.Fatal("Failed to decode public key PEM block")
-	}
-
-	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
+	// Test encryption/decryption with the keys
+	testMessage := []byte("test message for encryption")
+	encrypted, err := Encrypt(bobKeyPair.PublicKey, readPrivateKey, testMessage)
 	if err != nil {
-		t.Fatalf("Failed to parse public key: %v", err)
+		t.Fatalf("Failed to encrypt: %v", err)
 	}
 
-	pubKey, ok := pub.(*rsa.PublicKey)
-	if !ok {
-		t.Fatal("Parsed key is not an RSA public key")
-	}
-
-	// Test encryption with decoded public key
-	encryptedWithDecodedKey, err := EncryptWithRSA(pubKey, testMessage, []byte("x"))
+	decrypted, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
 	if err != nil {
-		t.Fatalf("Failed to encrypt with decoded public key: %v", err)
+		t.Fatalf("Failed to decrypt: %v", err)
 	}
 
-	// Decrypt using original private key
-	decryptedFromDecodedKey, err := DecryptWithRSA(privateKey, encryptedWithDecodedKey, []byte("x"))
-	if err != nil {
-		t.Fatalf("Failed to decrypt message encrypted with decoded key: %v", err)
-	}
-
-	if !bytes.Equal(testMessage, decryptedFromDecodedKey) {
-		t.Error("Decrypted message from decoded key does not match original message")
-	}
-
-	// Encrypt using the public key derived from the private key
-	encrypted, err := EncryptWithRSA(&privateKey.PublicKey, testMessage, []byte(""))
-	if err != nil {
-		t.Fatalf("Failed to encrypt message: %v", err)
-	}
-
-	// Decrypt using the private key
-	decrypted, err := DecryptWithRSA(privateKey, encrypted, []byte(""))
-	if err != nil {
-		t.Fatalf("Failed to decrypt message: %v", err)
-	}
-
-	// Verify the decrypted message matches the original
 	if !bytes.Equal(testMessage, decrypted) {
-		t.Error("Decrypted message does not match original message")
+		t.Error("Decrypted message doesn't match original")
+	}
+}
+
+func TestEncryptWithInvalidKeys(t *testing.T) {
+	keyPair1, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair 1: %v", err)
+	}
+	keyPair2, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair 2: %v", err)
+	}
+
+	// Test with nil keys
+	testData := []byte("test data")
+	_, err = Encrypt(nil, keyPair1.PrivateKey, testData)
+	if err == nil {
+		t.Error("Encrypt() should fail with nil public key")
+	}
+
+	_, err = Encrypt(keyPair2.PublicKey, nil, testData)
+	if err == nil {
+		t.Error("Encrypt() should fail with nil private key")
+	}
+
+	// Test with mismatched key pairs
+	keyPair3, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair 3: %v", err)
+	}
+
+	msg := []byte("test message")
+	encrypted, err := Encrypt(keyPair2.PublicKey, keyPair1.PrivateKey, msg)
+	if err != nil {
+		t.Fatalf("Failed to encrypt with valid keys: %v", err)
+	}
+
+	// Try to decrypt with wrong key pair (keyPair3)
+	_, err = Decrypt(keyPair1.PublicKey, keyPair3.PrivateKey, encrypted)
+	if err == nil {
+		t.Error("Decrypt() should fail with mismatched key pairs")
+	}
+}
+
+func TestEncryptLargeData(t *testing.T) {
+	keyPair1, _ := GenerateKeyPair()
+	keyPair2, _ := GenerateKeyPair()
+
+	// Test with 1MB of data
+	largeData := bytes.Repeat([]byte("A"), 1024*1024)
+	encrypted, err := Encrypt(keyPair2.PublicKey, keyPair1.PrivateKey, largeData)
+	if err != nil {
+		t.Errorf("Encrypt() failed with large data: %v", err)
+	}
+
+	decrypted, err := Decrypt(keyPair1.PublicKey, keyPair2.PrivateKey, encrypted)
+	if err != nil {
+		t.Errorf("Decrypt() failed with large data: %v", err)
+	}
+
+	if !bytes.Equal(largeData, decrypted) {
+		t.Error("Decrypted large data doesn't match original")
+	}
+}
+
+func TestDecryptWithTamperedData(t *testing.T) {
+	keyPair1, _ := GenerateKeyPair()
+	keyPair2, _ := GenerateKeyPair()
+
+	original := []byte("test message")
+	encrypted, _ := Encrypt(keyPair2.PublicKey, keyPair1.PrivateKey, original)
+
+	// Test with tampered ciphertext
+	tampered := make([]byte, len(encrypted))
+	copy(tampered, encrypted)
+	tampered[len(tampered)-1] ^= 0x01 // Flip one bit
+
+	_, err := Decrypt(keyPair1.PublicKey, keyPair2.PrivateKey, tampered)
+	if err == nil {
+		t.Error("Decrypt() should fail with tampered ciphertext")
+	}
+
+	// Test with truncated ciphertext
+	truncated := encrypted[:len(encrypted)-1]
+	_, err = Decrypt(keyPair1.PublicKey, keyPair2.PrivateKey, truncated)
+	if err == nil {
+		t.Error("Decrypt() should fail with truncated ciphertext")
+	}
+}
+
+func TestKeyPairFileIOWithInvalidData(t *testing.T) {
+	tempDir := t.TempDir()
+	privateKeyPath := filepath.Join(tempDir, "private.pem")
+
+	// Test with invalid PEM data
+	invalidPEM := []byte("-----BEGIN PRIVATE KEY-----\ninvalid data\n-----END PRIVATE KEY-----")
+	err := os.WriteFile(privateKeyPath, invalidPEM, 0600)
+	if err != nil {
+		t.Fatalf("Failed to write invalid private key file: %v", err)
+	}
+
+	_, err = ReadPrivateKeyFromFile(privateKeyPath)
+	if err == nil {
+		t.Error("ReadPrivateKeyFromFile() should fail with invalid PEM data")
+	}
+
+	// Test with wrong key type
+	wrongTypePEM := []byte("-----BEGIN RSA PRIVATE KEY-----\nMIICXQIBAAKBgQC8AEqKyFXCzHVx1H+ywrKVhYhkVBwsJ5g5fdEtxhHkl7dPCqQq6RQRKGa1qGm6jeBFxZhutMwBUHPTdz9SMUGZpGbpbcQ95/73KZcvBNhHFQVNKp1zibNVq0gnV0RYE5T6MR8fnXBPRYhUDZMcXVfwpSptsTmBHUf3tX+GhXLtlQIDAQABAoGANhFG7YGZuNJ2TubQvhHJQvgpqmJzO+E5ECZlHJWHFS0pQILhGh6FGh4GUZGHtYGVVWLRgGHDVQPMwkwYRXZKfvVpHd7LQlHhDBd5Qw7zJZ1J7qAm0ZHaU1XPz3GSoGYYwUXuF4+Nl0UNlRFJIZCVXlL5IRnAF6TXXhGzLYUFoQECQQDgZd390f5PQXJ0cF8VyQGvVQNYC3AFcO9KXZ5kmZUxQDiCRTiVqZ/QpJrRbKaGXgmJKpyrgZBGypQjXJKXGqtRAkEA1uVE/Y8gf7C/J9/Oa4O4P0C4qsYn9c2HyQWXgKlb5QgBBUZsXS/RQqVhpERQpRGJfKLFb6JO+HjvFNrLMBtVZQJBAJXcHvXwTcBYZF5D0h3lW2Qc9Q0EZhDvPZo7qwF5+OZhm2fM1J3WFQZuHLqFZwBXJC9RbgZFPvNjuEDKBVDVqmECQQCz39tZGS6Uzmk7QWqvdVwZ7DtHSNRE4VFwz7qqc+3ZnO9cENbfkFLXdxEWnYFLsS2DPu26QUi+yWBz/8ib6tblAkAEjSlQYGZg/BGkJ+NcK5HQKmlHAh0ZEgzM1dG6cFbFrVWj7bZ7F4XxVVjkNQKZmVm3o+l6UQhJtGdNXD2HcvmF\n-----END RSA PRIVATE KEY-----")
+	err = os.WriteFile(privateKeyPath, wrongTypePEM, 0600)
+	if err != nil {
+		t.Fatalf("Failed to write wrong type private key file: %v", err)
+	}
+
+	_, err = ReadPrivateKeyFromFile(privateKeyPath)
+	if err == nil {
+		t.Error("ReadPrivateKeyFromFile() should fail with wrong key type")
+	}
+
+	// Test with empty file
+	err = os.WriteFile(privateKeyPath, []byte{}, 0600)
+	if err != nil {
+		t.Fatalf("Failed to write empty file: %v", err)
+	}
+
+	_, err = ReadPrivateKeyFromFile(privateKeyPath)
+	if err == nil {
+		t.Error("ReadPrivateKeyFromFile() should fail with empty file")
+	}
+}
+
+func TestSharedSecretConsistency(t *testing.T) {
+	// Test that the same shared secret is generated in both directions
+	aliceKeyPair, _ := GenerateKeyPair()
+	bobKeyPair, _ := GenerateKeyPair()
+
+	// Test multiple messages to ensure consistent encryption/decryption
+	messages := []string{
+		"short message",
+		"longer message with some numbers 12345",
+		strings.Repeat("very long message ", 100),
+	}
+
+	for _, msg := range messages {
+		// Alice encrypts for Bob
+		encrypted1, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, []byte(msg))
+		if err != nil {
+			t.Errorf("Failed to encrypt first message: %v", err)
+		}
+
+		// Bob encrypts for Alice
+		encrypted2, err := Encrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, []byte(msg))
+		if err != nil {
+			t.Errorf("Failed to encrypt second message: %v", err)
+		}
+
+		// Decrypt both messages
+		decrypted1, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted1)
+		if err != nil {
+			t.Errorf("Failed to decrypt first message: %v", err)
+		}
+
+		decrypted2, err := Decrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, encrypted2)
+		if err != nil {
+			t.Errorf("Failed to decrypt second message: %v", err)
+		}
+
+		// Verify both decrypted messages match the original
+		if !bytes.Equal([]byte(msg), decrypted1) || !bytes.Equal([]byte(msg), decrypted2) {
+			t.Error("Decrypted messages don't match original")
+		}
+	}
+}
+
+func FuzzEncryptDecrypt(f *testing.F) {
+	// Add seed corpus
+	f.Add([]byte("hello world"), uint8(0))
+	f.Add([]byte{}, uint8(1))
+	f.Add(bytes.Repeat([]byte("A"), 1024), uint8(2))
+
+	// Generate a valid key pair for testing
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		f.Fatal(err)
+	}
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		f.Fatal(err)
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
+		// Test different scenarios based on mode
+		switch mode % 4 {
+		case 0:
+			// Normal encryption/decryption
+			encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, data)
+			if err != nil && len(data) > 0 {
+				t.Logf("Valid encryption failed: %v", err)
+				return
+			}
+			if len(data) == 0 && err == nil {
+				t.Error("Expected error for empty data")
+				return
+			}
+			if len(data) > 0 {
+				decrypted, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
+				if err != nil {
+					t.Logf("Valid decryption failed: %v", err)
+					return
+				}
+				if !bytes.Equal(data, decrypted) {
+					t.Error("Decrypted data doesn't match original")
+				}
+			}
+
+		case 1:
+			// Try to decrypt random data
+			_, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, data)
+			if err == nil && len(data) > 0 {
+				t.Error("Expected error when decrypting random data")
+			}
+
+		case 2:
+			// Test with modified ciphertext
+			if len(data) > 0 {
+				encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, data)
+				if err != nil {
+					return
+				}
+				// Modify random bytes in the ciphertext
+				modified := make([]byte, len(encrypted))
+				copy(modified, encrypted)
+				for i := 0; i < len(modified); i++ {
+					modified[i] ^= byte(i)
+				}
+				_, err = Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, modified)
+				if err == nil {
+					t.Error("Expected error when decrypting modified ciphertext")
+				}
+			}
+
+		case 3:
+			// Test with truncated ciphertext
+			if len(data) > 0 {
+				encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, data)
+				if err != nil {
+					return
+				}
+				if len(encrypted) > 0 {
+					truncated := encrypted[:len(encrypted)-1]
+					_, err = Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, truncated)
+					if err == nil {
+						t.Error("Expected error when decrypting truncated ciphertext")
+					}
+				}
+			}
+		}
+	})
+}
+
+func FuzzPEMEncoding(f *testing.F) {
+	// Add seed corpus
+	keyPair, err := GenerateKeyPair()
+	if err != nil {
+		f.Fatal(err)
+	}
+	validPrivPEM := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	validPubPEM := EncodePublicKeyToPEM(keyPair.PublicKey)
+
+	f.Add(validPrivPEM, uint8(0))
+	f.Add(validPubPEM, uint8(1))
+	f.Add([]byte("invalid PEM"), uint8(2))
+
+	f.Fuzz(func(t *testing.T, data []byte, mode uint8) {
+		tempDir := t.TempDir()
+		keyPath := filepath.Join(tempDir, "key.pem")
+
+		err := os.WriteFile(keyPath, data, 0600)
+		if err != nil {
+			return
+		}
+
+		switch mode % 2 {
+		case 0:
+			// Test private key reading
+			_, err := ReadPrivateKeyFromFile(keyPath)
+			if err == nil {
+				// If no error, verify it was valid PEM data
+				if !bytes.Contains(data, []byte("-----BEGIN PRIVATE KEY-----")) {
+					t.Error("ReadPrivateKeyFromFile() succeeded with invalid PEM data")
+				}
+			}
+
+		case 1:
+			// Test public key reading
+			_, err := ReadPublicKeyFromFile(keyPath)
+			if err == nil {
+				// If no error, verify it was valid PEM data
+				if !bytes.Contains(data, []byte("-----BEGIN PUBLIC KEY-----")) {
+					t.Error("ReadPublicKeyFromFile() succeeded with invalid PEM data")
+				}
+			}
+		}
+	})
+}
+
+func TestConcurrentEncryptionDecryption(t *testing.T) {
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Bob's key pair: %v", err)
+	}
+
+	testMessage := []byte("concurrent test message")
+	numGoroutines := 100
+	errors := make(chan error, numGoroutines)
+
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, testMessage)
+			if err != nil {
+				errors <- fmt.Errorf("encryption failed: %v", err)
+				return
+			}
+
+			decrypted, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
+			if err != nil {
+				errors <- fmt.Errorf("decryption failed: %v", err)
+				return
+			}
+
+			if !bytes.Equal(testMessage, decrypted) {
+				errors <- fmt.Errorf("decrypted message doesn't match original")
+				return
+			}
+
+			errors <- nil
+		}()
+	}
+
+	for i := 0; i < numGoroutines; i++ {
+		if err := <-errors; err != nil {
+			t.Error(err)
+		}
+	}
+}
+
+func TestNonDeterministicEncryption(t *testing.T) {
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate Bob's key pair: %v", err)
+	}
+
+	testMessage := []byte("test message for non-deterministic encryption")
+
+	encrypted1, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, testMessage)
+	if err != nil {
+		t.Fatalf("Failed to encrypt first message: %v", err)
+	}
+
+	encrypted2, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, testMessage)
+	if err != nil {
+		t.Fatalf("Failed to encrypt second message: %v", err)
+	}
+
+	if bytes.Equal(encrypted1, encrypted2) {
+		t.Error("Encryption should be non-deterministic, but produced identical ciphertexts")
+	}
+}
+
+func TestKeySerialization(t *testing.T) {
+	keyPair, err := GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	// Serialize keys to JSON
+	privKeyJSON, err := json.Marshal(keyPair.PrivateKey.Bytes())
+	if err != nil {
+		t.Fatalf("Failed to serialize private key: %v", err)
+	}
+
+	pubKeyJSON, err := json.Marshal(keyPair.PublicKey.Bytes())
+	if err != nil {
+		t.Fatalf("Failed to serialize public key: %v", err)
+	}
+
+	// Deserialize keys from JSON
+	var privKeyBytes, pubKeyBytes []byte
+	if err := json.Unmarshal(privKeyJSON, &privKeyBytes); err != nil {
+		t.Fatalf("Failed to deserialize private key: %v", err)
+	}
+
+	if err := json.Unmarshal(pubKeyJSON, &pubKeyBytes); err != nil {
+		t.Fatalf("Failed to deserialize public key: %v", err)
+	}
+
+	curve := ecdh.P256()
+	deserializedPrivateKey, err := curve.NewPrivateKey(privKeyBytes)
+	if err != nil {
+		t.Fatalf("Failed to create private key from bytes: %v", err)
+	}
+
+	deserializedPublicKey, err := curve.NewPublicKey(pubKeyBytes)
+	if err != nil {
+		t.Fatalf("Failed to create public key from bytes: %v", err)
+	}
+
+	// Verify that the deserialized keys match the original keys
+	if !bytes.Equal(deserializedPrivateKey.Bytes(), keyPair.PrivateKey.Bytes()) {
+		t.Error("Deserialized private key does not match original")
+	}
+
+	if !bytes.Equal(deserializedPublicKey.Bytes(), keyPair.PublicKey.Bytes()) {
+		t.Error("Deserialized public key does not match original")
+	}
+}
+
+func BenchmarkEncrypt(b *testing.B) {
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		b.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		b.Fatalf("Failed to generate Bob's key pair: %v", err)
+	}
+
+	testMessage := []byte("benchmark test message")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, testMessage)
+		if err != nil {
+			b.Fatalf("Encryption failed: %v", err)
+		}
+	}
+}
+
+func BenchmarkDecrypt(b *testing.B) {
+	aliceKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		b.Fatalf("Failed to generate Alice's key pair: %v", err)
+	}
+	bobKeyPair, err := GenerateKeyPair()
+	if err != nil {
+		b.Fatalf("Failed to generate Bob's key pair: %v", err)
+	}
+
+	testMessage := []byte("benchmark test message")
+	encrypted, err := Encrypt(bobKeyPair.PublicKey, aliceKeyPair.PrivateKey, testMessage)
+	if err != nil {
+		b.Fatalf("Failed to encrypt message: %v", err)
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
+		if err != nil {
+			b.Fatalf("Decryption failed: %v", err)
+		}
 	}
 }

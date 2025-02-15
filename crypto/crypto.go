@@ -4,11 +4,13 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ecdh"
+	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/x509"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"os"
-	"strings"
 )
 
 // KeyPair represents an ECDH key pair
@@ -33,29 +35,38 @@ func GenerateKeyPair() (*KeyPair, error) {
 
 // EncodePrivateKeyToPEM converts an ECDH private key to PEM format using PKCS#8
 func EncodePrivateKeyToPEM(privateKey *ecdh.PrivateKey) []byte {
-	// Get raw private key bytes
-	privBytes := privateKey.Bytes()
+	// Use OID for id-ecPublicKey with P-256 curve: 1.2.840.10045.3.1.7
+	pkcs8Key := pkcs8ECDHPrivateKey{
+		Version:    0,
+		Algorithm:  asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7},
+		PrivateKey: privateKey.Bytes(),
+	}
 
-	privPEM := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "PRIVATE KEY",
-			Bytes: privBytes,
-		},
-	)
+	privDER, err := asn1.Marshal(pkcs8Key)
+	if err != nil {
+		panic(fmt.Sprintf("failed to ASN.1 marshal private key: %s", err))
+	}
+
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: privDER,
+	})
+
 	return privPEM
 }
 
 // EncodePublicKeyToPEM converts an ECDH public key to PEM format using PKIX
 func EncodePublicKeyToPEM(publicKey *ecdh.PublicKey) []byte {
 	// Get raw public key bytes
-	pubBytes := publicKey.Bytes()
+	pubBytes, err := x509.MarshalPKIXPublicKey(publicKey)
+	if err != nil {
+		panic(fmt.Sprintf("failed to marshal public key: %s", err))
+	}
 
-	pubPEM := pem.EncodeToMemory(
-		&pem.Block{
-			Type:  "PUBLIC KEY",
-			Bytes: pubBytes,
-		},
-	)
+	pubPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubBytes,
+	})
 	return pubPEM
 }
 
@@ -136,6 +147,15 @@ func Decrypt(publicKey *ecdh.PublicKey, privateKey *ecdh.PrivateKey, ciphertext 
 	return plaintext, nil
 }
 
+// ASN.1 structure for a minimal PKCS#8-like ECDH private key.
+// (Note: Go’s x509.MarshalPKCS8PrivateKey doesn’t support crypto/ecdh types,
+// so we do a minimal manual ASN.1 wrap.)
+type pkcs8ECDHPrivateKey struct {
+	Version    int
+	Algorithm  asn1.ObjectIdentifier
+	PrivateKey []byte
+}
+
 // WriteKeyPairToFiles writes ECDH key pair to files with specified permissions
 func WriteKeyPairToFiles(keyPair *KeyPair, privateKeyPath, publicKeyPath string) error {
 	// Write private key with restricted permissions (600 - owner read/write only)
@@ -155,44 +175,77 @@ func WriteKeyPairToFiles(keyPair *KeyPair, privateKeyPath, publicKeyPath string)
 
 // ReadPrivateKeyFromFile reads and parses an ECDH private key from a file
 func ReadPrivateKeyFromFile(privateKeyPath string) (*ecdh.PrivateKey, error) {
-	privPEM, err := os.ReadFile(privateKeyPath)
+	keyBytes, err := os.ReadFile(privateKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key file: %w", err)
 	}
 
-	block, _ := pem.Decode(privPEM)
-	if block == nil || !strings.Contains(block.Type, "PRIVATE KEY") {
-		return nil, fmt.Errorf("failed to decode PEM block containing private key")
+	block, _ := pem.Decode(keyBytes)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
-	// Parse the private key directly as an EC key
-	curve := ecdh.P256()
-	privateKey, err := curve.NewPrivateKey(block.Bytes)
+	var pkcs8Key pkcs8ECDHPrivateKey
+	if _, err = asn1.Unmarshal(block.Bytes, &pkcs8Key); err != nil {
+		return nil, fmt.Errorf("failed to ASN.1 unmarshal private key: %w", err)
+	}
+
+	// Verify OID matches P-256
+	expectedOID := asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
+	if !pkcs8Key.Algorithm.Equal(expectedOID) {
+		return nil, fmt.Errorf("the private key is not a P-256 ECDH key")
+	}
+
+	ecdhPriv, err := ecdh.P256().NewPrivateKey(pkcs8Key.PrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ECDH private key: %w", err)
+		return nil, fmt.Errorf("failed to reconstruct ECDH private key: %w", err)
 	}
 
-	return privateKey, nil
+	return ecdhPriv, nil
 }
 
 // ReadPublicKeyFromFile reads and parses an ECDH public key from a file
 func ReadPublicKeyFromFile(publicKeyPath string) (*ecdh.PublicKey, error) {
-	pubPEM, err := os.ReadFile(publicKeyPath)
+	keyBytes, err := os.ReadFile(publicKeyPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read public key file: %w", err)
 	}
 
-	block, _ := pem.Decode(pubPEM)
-	if block == nil || block.Type != "PUBLIC KEY" {
-		return nil, fmt.Errorf("failed to decode PEM block containing public key")
+	block, _ := pem.Decode(keyBytes)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
-	// Parse the public key directly as an EC key
-	curve := ecdh.P256()
-	publicKey, err := curve.NewPublicKey(block.Bytes)
+	parsedKey, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create ECDH public key: %w", err)
+		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
 	}
 
-	return publicKey, nil
+	// x509.ParsePKIXPublicKey returns an *ecdsa.PublicKey for EC keys.
+	ecdsaPub, ok := parsedKey.(*ecdsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("the public key is not an ECDSA key")
+	}
+
+	// Convert the ECDSA public key to an uncompressed EC point.
+	// For a P-256 curve, the uncompressed point is 65 bytes:
+	// 0x04 || X (32 bytes) || Y (32 bytes)
+	byteLen := (ecdsaPub.Curve.Params().BitSize + 7) / 8
+	uncompressed := make([]byte, 1+2*byteLen)
+	uncompressed[0] = 4
+
+	// Get X and Y coordinates, padded to the correct length.
+	xBytes := ecdsaPub.X.Bytes()
+	yBytes := ecdsaPub.Y.Bytes()
+
+	copy(uncompressed[1+byteLen-len(xBytes):1+byteLen], xBytes)
+	copy(uncompressed[1+2*byteLen-len(yBytes):1+2*byteLen], yBytes)
+
+	// Now create an ECDH public key from the uncompressed bytes.
+	ecdhPub, err := ecdh.P256().NewPublicKey(uncompressed)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert to ECDH public key: %w", err)
+	}
+
+	return ecdhPub, nil
 }

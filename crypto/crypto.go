@@ -179,14 +179,18 @@ func ReadPrivateKeyFromFile(privateKeyPath string) (*ecdh.PrivateKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read private key file: %w", err)
 	}
+	return ReadPrivateKey(keyBytes)
+}
 
-	block, _ := pem.Decode(keyBytes)
+// ReadPrivateKey reads and parses an ECDH private key from pem encoded bytes
+func ReadPrivateKey(privateKey []byte) (*ecdh.PrivateKey, error) {
+	block, _ := pem.Decode(privateKey)
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
 	var pkcs8Key pkcs8ECDHPrivateKey
-	if _, err = asn1.Unmarshal(block.Bytes, &pkcs8Key); err != nil {
+	if _, err := asn1.Unmarshal(block.Bytes, &pkcs8Key); err != nil {
 		return nil, fmt.Errorf("failed to ASN.1 unmarshal private key: %w", err)
 	}
 
@@ -210,8 +214,12 @@ func ReadPublicKeyFromFile(publicKeyPath string) (*ecdh.PublicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read public key file: %w", err)
 	}
+	return ReadPublicKey(keyBytes)
+}
 
-	block, _ := pem.Decode(keyBytes)
+// ReadPublicKey reads and parses an ECDH public key from pem encoded bytes
+func ReadPublicKey(publicKey []byte) (*ecdh.PublicKey, error) {
+	block, _ := pem.Decode(publicKey)
 	if block == nil {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}

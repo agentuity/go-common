@@ -31,7 +31,10 @@ func TestEncodePrivateKeyToPEM(t *testing.T) {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	pemData := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	pemData, err := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	if err != nil {
+		t.Fatalf("Failed to encode private key: %v", err)
+	}
 	if len(pemData) == 0 {
 		t.Error("EncodePrivateKeyToPEM() returned empty PEM data")
 	}
@@ -47,7 +50,10 @@ func TestEncodePublicKeyToPEM(t *testing.T) {
 		t.Fatalf("Failed to generate key pair: %v", err)
 	}
 
-	pemData := EncodePublicKeyToPEM(keyPair.PublicKey)
+	pemData, err := EncodePublicKeyToPEM(keyPair.PublicKey)
+	if err != nil {
+		t.Fatalf("Failed to encode public key: %v", err)
+	}
 	if len(pemData) == 0 {
 		t.Error("EncodePublicKeyToPEM() returned empty PEM data")
 	}
@@ -273,7 +279,10 @@ func TestPEMEncodingAndCrypto(t *testing.T) {
 	}
 
 	// Test PEM encoding/decoding
-	pemData := EncodePrivateKeyToPEM(aliceKeyPair.PrivateKey)
+	pemData, err := EncodePrivateKeyToPEM(aliceKeyPair.PrivateKey)
+	if err != nil {
+		t.Fatalf("Failed to encode private key: %v", err)
+	}
 
 	// Write PEM data to a temporary file
 	tempDir := t.TempDir()
@@ -567,8 +576,14 @@ func FuzzPEMEncoding(f *testing.F) {
 	if err != nil {
 		f.Fatal(err)
 	}
-	validPrivPEM := EncodePrivateKeyToPEM(keyPair.PrivateKey)
-	validPubPEM := EncodePublicKeyToPEM(keyPair.PublicKey)
+	validPrivPEM, err := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	if err != nil {
+		f.Fatal(err)
+	}
+	validPubPEM, err := EncodePublicKeyToPEM(keyPair.PublicKey)
+	if err != nil {
+		f.Fatal(err)
+	}
 
 	f.Add(validPrivPEM, uint8(0))
 	f.Add(validPubPEM, uint8(1))

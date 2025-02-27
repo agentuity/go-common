@@ -7,7 +7,6 @@ import (
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -34,17 +33,10 @@ func GenerateKeyPair() (*KeyPair, error) {
 }
 
 // EncodePrivateKeyToPEM converts an ECDH private key to PEM format using PKCS#8
-func EncodePrivateKeyToPEM(privateKey *ecdh.PrivateKey) []byte {
-	// Use OID for id-ecPublicKey with P-256 curve: 1.2.840.10045.3.1.7
-	pkcs8Key := pkcs8ECDHPrivateKey{
-		Version:    0,
-		Algorithm:  asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7},
-		PrivateKey: privateKey.Bytes(),
-	}
-
-	privDER, err := asn1.Marshal(pkcs8Key)
+func EncodePrivateKeyToPEM(privateKey *ecdh.PrivateKey) ([]byte, error) {
+	privDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
 	if err != nil {
-		panic(fmt.Sprintf("failed to ASN.1 marshal private key: %s", err))
+		return nil, fmt.Errorf("failed to ASN.1 marshal private key: %w", err)
 	}
 
 	privPEM := pem.EncodeToMemory(&pem.Block{
@@ -52,22 +44,22 @@ func EncodePrivateKeyToPEM(privateKey *ecdh.PrivateKey) []byte {
 		Bytes: privDER,
 	})
 
-	return privPEM
+	return privPEM, nil
 }
 
 // EncodePublicKeyToPEM converts an ECDH public key to PEM format using PKIX
-func EncodePublicKeyToPEM(publicKey *ecdh.PublicKey) []byte {
+func EncodePublicKeyToPEM(publicKey *ecdh.PublicKey) ([]byte, error) {
 	// Get raw public key bytes
 	pubBytes, err := x509.MarshalPKIXPublicKey(publicKey)
 	if err != nil {
-		panic(fmt.Sprintf("failed to marshal public key: %s", err))
+		return nil, fmt.Errorf("failed to marshal public key: %w", err)
 	}
 
 	pubPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "PUBLIC KEY",
 		Bytes: pubBytes,
 	})
-	return pubPEM
+	return pubPEM, nil
 }
 
 // Encrypt encrypts data using AES-GCM with a shared secret derived from ECDH
@@ -147,25 +139,22 @@ func Decrypt(publicKey *ecdh.PublicKey, privateKey *ecdh.PrivateKey, ciphertext 
 	return plaintext, nil
 }
 
-// ASN.1 structure for a minimal PKCS#8-like ECDH private key.
-// (Note: Go’s x509.MarshalPKCS8PrivateKey doesn’t support crypto/ecdh types,
-// so we do a minimal manual ASN.1 wrap.)
-type pkcs8ECDHPrivateKey struct {
-	Version    int
-	Algorithm  asn1.ObjectIdentifier
-	PrivateKey []byte
-}
-
 // WriteKeyPairToFiles writes ECDH key pair to files with specified permissions
 func WriteKeyPairToFiles(keyPair *KeyPair, privateKeyPath, publicKeyPath string) error {
 	// Write private key with restricted permissions (600 - owner read/write only)
-	privPEM := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	privPEM, err := EncodePrivateKeyToPEM(keyPair.PrivateKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode private key: %w", err)
+	}
 	if err := os.WriteFile(privateKeyPath, privPEM, 0600); err != nil {
 		return fmt.Errorf("failed to write private key: %w", err)
 	}
 
 	// Write public key with less restrictive permissions (644 - owner read/write, others read)
-	pubPEM := EncodePublicKeyToPEM(keyPair.PublicKey)
+	pubPEM, err := EncodePublicKeyToPEM(keyPair.PublicKey)
+	if err != nil {
+		return fmt.Errorf("failed to encode public key: %w", err)
+	}
 	if err := os.WriteFile(publicKeyPath, pubPEM, 0644); err != nil {
 		return fmt.Errorf("failed to write public key: %w", err)
 	}
@@ -189,18 +178,17 @@ func ReadPrivateKey(privateKey []byte) (*ecdh.PrivateKey, error) {
 		return nil, fmt.Errorf("failed to decode PEM block")
 	}
 
-	var pkcs8Key pkcs8ECDHPrivateKey
-	if _, err := asn1.Unmarshal(block.Bytes, &pkcs8Key); err != nil {
-		return nil, fmt.Errorf("failed to ASN.1 unmarshal private key: %w", err)
+	pkcs8Key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse PKCS8 private key: %w", err)
 	}
 
-	// Verify OID matches P-256
-	expectedOID := asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}
-	if !pkcs8Key.Algorithm.Equal(expectedOID) {
-		return nil, fmt.Errorf("the private key is not a P-256 ECDH key")
+	ecdsaPriv, ok := pkcs8Key.(*ecdsa.PrivateKey)
+	if !ok {
+		return nil, fmt.Errorf("the private key is not an ECDSA key")
 	}
 
-	ecdhPriv, err := ecdh.P256().NewPrivateKey(pkcs8Key.PrivateKey)
+	ecdhPriv, err := ecdh.P256().NewPrivateKey(ecdsaPriv.D.Bytes())
 	if err != nil {
 		return nil, fmt.Errorf("failed to reconstruct ECDH private key: %w", err)
 	}

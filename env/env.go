@@ -129,22 +129,25 @@ func FlagOrEnv(cmd *cobra.Command, flagName string, envName string, defaultValue
 	return defaultValue
 }
 
+func LogLevel(cmd *cobra.Command) logger.LogLevel {
+	level := FlagOrEnv(cmd, "log-level", "AGENTUITY_LOG_LEVEL", "info")
+	switch level {
+	case "debug", "DEBUG":
+		return logger.LevelDebug
+	case "warn", "WARN":
+		return logger.LevelWarn
+	case "error", "ERROR":
+		return logger.LevelError
+	case "trace", "TRACE":
+		return logger.LevelTrace
+	}
+	return logger.LevelInfo
+}
+
 // NewLogger returns a console logger by first checking the cobra.Command log-level flag, then use the
 // AGENTUITY_LOG_LEVEL environment value and falling back to the info logger level
 func NewLogger(cmd *cobra.Command) logger.Logger {
 	log.SetFlags(0)
-	level := FlagOrEnv(cmd, "log-level", "AGENTUITY_LOG_LEVEL", "info")
-	switch level {
-	case "debug", "DEBUG":
-		return logger.NewConsoleLogger(logger.LevelDebug)
-	case "warn", "WARN":
-		return logger.NewConsoleLogger(logger.LevelWarn)
-	case "error", "ERROR":
-		return logger.NewConsoleLogger(logger.LevelError)
-	case "trace", "TRACE":
-		return logger.NewConsoleLogger(logger.LevelTrace)
-	case "info", "INFO":
-	default:
-	}
-	return logger.NewConsoleLogger(logger.LevelInfo)
+	level := LogLevel(cmd)
+	return logger.NewConsoleLogger(level)
 }

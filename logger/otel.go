@@ -153,7 +153,6 @@ func (o *otelLogger) Fatal(msg string, args ...interface{}) {
 }
 
 func NewOtelLogger(otelsLogger log.Logger, levels LogLevel) Logger {
-
 	return &otelLogger{
 		otelLogger: otelsLogger,
 		logLevel:   LevelTrace,

@@ -10,9 +10,12 @@ import (
 	"time"
 
 	"github.com/agentuity/go-common/logger"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
 )
 
@@ -28,16 +31,16 @@ func GenerateOTLPBearerToken(sharedSecret string, token string) (string, error) 
 
 type ShutdownFunc func()
 
-func New(ctx context.Context, oltpServerURL string, authToken string, serviceName string) (logger.Logger, ShutdownFunc, error) {
+func new(ctx context.Context, oltpServerURL string, authToken string, serviceName string) (context.Context, logger.Logger, ShutdownFunc, error) {
 	// parse oltpURL
 	oltpURL, err := url.Parse(oltpServerURL)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error parsing oltpServerURL: %w", err)
+		return nil, nil, nil, fmt.Errorf("error parsing oltpServerURL: %w", err)
 	}
 	oltpURL.Path = "/v1/logs"
 	logURL := oltpURL.String()
-	// oltpURL.Path = "/v1/traces"
-	// traceURL := oltpURL.String()
+	oltpURL.Path = "/v1/traces"
+	traceURL := oltpURL.String()
 	// oltpURL.Path = "/v1/metrics"
 	// metricsURL := oltpURL.String()
 
@@ -54,13 +57,15 @@ func New(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	if errors.Is(err, resource.ErrPartialResource) || errors.Is(err, resource.ErrSchemaURLConflict) {
 		fmt.Println(err)
 	} else if err != nil {
-		return nil, nil, fmt.Errorf("error creating resource: %w", err)
+		return nil, nil, nil, fmt.Errorf("error creating resource: %w", err)
 	}
 
 	headers := make(map[string]string)
 	if authToken != "" {
 		headers["Authorization"] = "Bearer " + authToken
 	}
+
+	// Setup log exporter
 	logExporterOpts := []otlploghttp.Option{
 		otlploghttp.WithEndpointURL(logURL),
 		otlploghttp.WithHeaders(headers),
@@ -70,27 +75,67 @@ func New(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	if oltpURL.Scheme == "http" {
 		logExporterOpts = append(logExporterOpts, otlploghttp.WithInsecure())
 	}
-	// log.NewSimpleProcessor()
-	exporter, err := otlploghttp.New(
-		ctx, // ctx is not used by the exporter
-		logExporterOpts...,
-	)
+	logExporter, err := otlploghttp.New(ctx, logExporterOpts...)
 	if err != nil {
-		return nil, nil, fmt.Errorf("error creating log exporter: %w", err)
+		return nil, nil, nil, fmt.Errorf("error creating log exporter: %w", err)
 	}
+
+	// Setup trace exporter
+	traceExporterOpts := []otlptracehttp.Option{
+		otlptracehttp.WithEndpoint(traceURL),
+		otlptracehttp.WithHeaders(headers),
+		otlptracehttp.WithTimeout(time.Second * 10),
+		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
+	}
+	if oltpURL.Scheme == "http" {
+		traceExporterOpts = append(traceExporterOpts, otlptracehttp.WithInsecure())
+	}
+	traceExporter, err := otlptracehttp.New(ctx, traceExporterOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating trace exporter: %w", err)
+	}
+
+	// Create trace provider
+	tracerProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithResource(res),
+	)
+	otel.SetTracerProvider(tracerProvider)
 
 	logProvider := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
+		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
 	)
 
 	otelsLogger := logProvider.Logger(serviceName)
 
-	logger := logger.NewOtelLogger(otelsLogger, logger.LevelTrace)
+	// tracer := otel.Tracer(serviceName)
+	// meter := otel.Meter(serviceName)
 
-	return logger, func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*10)
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*11)
 		defer cancel()
 		logProvider.Shutdown(ctx)
-	}, nil
+		tracerProvider.Shutdown(ctx)
+	}
+
+	return ctx,
+		logger.NewOtelLogger(otelsLogger, logger.LevelTrace),
+		shutdown,
+		nil
+}
+
+func New(ctx context.Context, serviceName string, telemetrySecret string, telemetryURL string, consoleLogger logger.Logger) (context.Context, logger.Logger, func(), error) {
+	token, err := GenerateOTLPBearerToken(telemetrySecret, serviceName)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error generating otel token: %w", err)
+	}
+	ctx2, otherLogger, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating otel logger: %w", err)
+	}
+	if consoleLogger == nil {
+		return ctx2, otherLogger, shutdownMetrics, nil
+	}
+	return ctx2, logger.NewMultiLogger(consoleLogger, otherLogger), shutdownMetrics, nil
 }

@@ -110,9 +110,6 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 
 	otelsLogger := logProvider.Logger(serviceName)
 
-	// tracer := otel.Tracer(serviceName)
-	// meter := otel.Meter(serviceName)
-
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*11)
 		defer cancel()

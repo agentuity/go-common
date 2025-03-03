@@ -1,15 +1,16 @@
 package logger
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
-	gstrings "github.com/agentuity/go-common/string"
 	"github.com/mattn/go-isatty"
 )
 
@@ -60,9 +61,18 @@ type consoleLogger struct {
 	sink              Sink
 	logLevel          LogLevel
 	sinkLogLevel      LogLevel
+	child             Logger
 }
 
 var _ Logger = (*consoleLogger)(nil)
+
+func (c *consoleLogger) WithContext(ctx context.Context) Logger {
+	clone := c.Clone()
+	if clone.child != nil {
+		clone.child = clone.child.WithContext(ctx)
+	}
+	return clone
+}
 
 func (c *consoleLogger) Default(val string, def string) string {
 	if val == "" {
@@ -73,27 +83,34 @@ func (c *consoleLogger) Default(val string, def string) string {
 
 // WithPrefix will return a new logger with a prefix prepended to the message
 func (c *consoleLogger) WithPrefix(prefix string) Logger {
-	prefixes := make([]string, 0)
-	prefixes = append(prefixes, c.prefixes...)
-	if !gstrings.Contains(prefixes, prefix, false) {
+	prefixes := make([]string, len(c.prefixes))
+	copy(prefixes, c.prefixes)
+	if !slices.Contains(prefixes, prefix) {
 		prefixes = append(prefixes, prefix)
 	}
-	l := c.Clone(c.metadata, c.sink)
+	l := c.Clone()
 	l.prefixes = prefixes
+	if l.child != nil {
+		l.child = l.child.WithPrefix(prefix)
+	}
 	return l
 }
 
 var isCI = os.Getenv("CI") != ""
 
-func (c *consoleLogger) Clone(kv map[string]interface{}, sink Sink) *consoleLogger {
-	prefixes := make([]string, 0)
-	prefixes = append(prefixes, c.prefixes...)
+func (c *consoleLogger) Clone() *consoleLogger {
+	prefixes := make([]string, len(c.prefixes))
+	copy(prefixes, c.prefixes)
+	metadata := make(map[string]interface{})
+	for k, v := range c.metadata {
+		metadata[k] = v
+	}
 	var tracecolor = Gray
 	if isCI {
 		tracecolor = Purple
 	}
 	return &consoleLogger{
-		metadata:          kv,
+		metadata:          metadata,
 		prefixes:          prefixes,
 		traceLevelColor:   c.Default(c.traceLevelColor, CyanBold),
 		traceMessageColor: c.Default(c.traceMessageColor, tracecolor),
@@ -105,32 +122,32 @@ func (c *consoleLogger) Clone(kv map[string]interface{}, sink Sink) *consoleLogg
 		warnMessageColor:  c.Default(c.warnMessageColor, Magenta),
 		errorLevelColor:   c.Default(c.errorMessageColor, RedBold),
 		errorMessageColor: c.Default(c.errorMessageColor, Red),
-		sink:              sink,
+		sink:              c.sink,
 		logLevel:          c.logLevel,
 		sinkLogLevel:      c.sinkLogLevel,
+		child:             c.child,
 	}
 }
 
 func (c *consoleLogger) SetSink(sink Sink, level LogLevel) {
 	c.sink = sink
 	c.sinkLogLevel = level
+	if c.child != nil {
+		if child, ok := c.child.(SinkLogger); ok {
+			child.SetSink(sink, level)
+		}
+	}
 }
 
 func (c *consoleLogger) With(metadata map[string]interface{}) Logger {
-	kv := metadata
-	if c.metadata != nil {
-		kv = make(map[string]interface{})
-		for k, v := range c.metadata {
-			kv[k] = v
-		}
-		for k, v := range metadata {
-			kv[k] = v
-		}
+	clone := c.Clone()
+	for k, v := range metadata {
+		clone.metadata[k] = v
 	}
-	if len(kv) == 0 {
-		kv = nil
+	if clone.child != nil {
+		clone.child = clone.child.With(metadata)
 	}
-	return c.Clone(kv, c.sink)
+	return clone
 }
 
 func (c *consoleLogger) Log(level LogLevel, levelColor string, messageColor string, levelString string, msg string, args ...interface{}) {
@@ -172,27 +189,51 @@ func (c *consoleLogger) Log(level LogLevel, levelColor string, messageColor stri
 
 func (c *consoleLogger) Trace(msg string, args ...interface{}) {
 	c.Log(LevelTrace, c.traceLevelColor, c.traceMessageColor, "TRACE", msg, args...)
+	if c.child != nil {
+		c.child.Trace(msg, args...)
+	}
 }
 
 func (c *consoleLogger) Debug(msg string, args ...interface{}) {
 	c.Log(LevelDebug, c.debugLevelColor, c.debugMessageColor, "DEBUG", msg, args...)
+	if c.child != nil {
+		c.child.Debug(msg, args...)
+	}
 }
 
 func (c *consoleLogger) Info(msg string, args ...interface{}) {
 	c.Log(LevelInfo, c.infoLevelColor, c.infoMessageColor, "INFO", msg, args...)
+	if c.child != nil {
+		c.child.Info(msg, args...)
+	}
 }
 
 func (c *consoleLogger) Warn(msg string, args ...interface{}) {
 	c.Log(LevelWarn, c.warnLevelColor, c.warnMessageColor, "WARN", msg, args...)
+	if c.child != nil {
+		c.child.Warn(msg, args...)
+	}
 }
 
 func (c *consoleLogger) Error(msg string, args ...interface{}) {
 	c.Log(LevelError, c.errorLevelColor, c.errorMessageColor, "ERROR", msg, args...)
+	if c.child != nil {
+		c.child.Error(msg, args...)
+	}
 }
 
 func (c *consoleLogger) Fatal(msg string, args ...interface{}) {
 	c.Log(LevelError, c.errorLevelColor, c.errorMessageColor, "ERROR", msg, args...)
+	if c.child != nil {
+		c.child.Error(msg, args...) // Error because we want to log the error before exiting
+	}
 	os.Exit(1)
+}
+
+func (c *consoleLogger) Stack(next Logger) Logger {
+	clone := c.Clone()
+	clone.child = next
+	return clone
 }
 
 func (c *consoleLogger) SetLogLevel(level LogLevel) {
@@ -202,9 +243,9 @@ func (c *consoleLogger) SetLogLevel(level LogLevel) {
 // NewConsoleLogger returns a new Logger instance which will log to the console
 func NewConsoleLogger(levels ...LogLevel) SinkLogger {
 	if len(levels) > 0 {
-		return (&consoleLogger{logLevel: levels[0], sinkLogLevel: LevelNone}).Clone(nil, nil)
+		return (&consoleLogger{logLevel: levels[0], sinkLogLevel: LevelNone}).Clone()
 	}
 	level := GetLevelFromEnv()
 
-	return (&consoleLogger{logLevel: level, sinkLogLevel: LevelNone}).Clone(nil, nil)
+	return (&consoleLogger{logLevel: level, sinkLogLevel: LevelNone}).Clone()
 }

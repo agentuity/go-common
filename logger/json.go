@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -43,61 +44,81 @@ type jsonLogger struct {
 	noConsole    bool
 	ts           *time.Time // for unit testing
 	logLevel     LogLevel
+	child        Logger
 }
 
 var _ Logger = (*jsonLogger)(nil)
+var _ SinkLogger = (*jsonLogger)(nil)
+
+func (c *jsonLogger) WithContext(ctx context.Context) Logger {
+	clone := c.clone()
+	if clone.child != nil {
+		clone.child = clone.child.WithContext(ctx)
+	}
+	return clone
+}
 
 func (c *jsonLogger) SetSink(sink Sink, level LogLevel) {
 	c.sink = sink
 	c.sinkLogLevel = level
+	if c.child != nil {
+		if child, ok := c.child.(SinkLogger); ok {
+			child.SetSink(sink, level)
+		}
+	}
 }
 
-// WithPrefix will return a new logger with a prefix prepended to the message
-func (c *jsonLogger) WithPrefix(prefix string) Logger {
-	newlogger := c.With(nil).(*jsonLogger)
-	if c.component == "" {
-		newlogger.component = prefix
-	} else {
-		if !strings.Contains(c.component, prefix) {
-			newlogger.component = c.component + " " + prefix
-		}
+func (c *jsonLogger) clone() *jsonLogger {
+	metadata := make(map[string]interface{})
+	for k, v := range c.metadata {
+		metadata[k] = v
 	}
-	return newlogger
-}
 
-func (c *jsonLogger) With(metadata map[string]interface{}) Logger {
-	traceID := c.traceID
-	component := c.component
-	if trace, ok := metadata["trace"].(string); ok {
-		traceID = trace
-		delete(metadata, "trace")
-	}
-	if comp, ok := metadata["component"].(string); ok {
-		component = comp
-		delete(metadata, "component")
-	}
-	kv := metadata
-	if c.metadata != nil {
-		kv = make(map[string]interface{})
-		for k, v := range c.metadata {
-			kv[k] = v
-		}
-		for k, v := range metadata {
-			kv[k] = v
-		}
-	}
-	if len(kv) == 0 {
-		kv = nil
-	}
 	return &jsonLogger{
-		metadata:     kv,
-		traceID:      traceID,
-		component:    component,
+		metadata:     metadata,
+		traceID:      c.traceID,
+		component:    c.component,
 		noConsole:    c.noConsole,
 		sink:         c.sink,
 		sinkLogLevel: c.sinkLogLevel,
 		logLevel:     c.logLevel,
+		child:        c.child,
 	}
+}
+
+// WithPrefix will return a new logger with a prefix prepended to the message
+func (c *jsonLogger) WithPrefix(prefix string) Logger {
+	clone := c.clone()
+	if clone.component == "" {
+		clone.component = prefix
+	} else {
+		if !strings.Contains(clone.component, prefix) {
+			clone.component = clone.component + " " + prefix
+		}
+	}
+	if clone.child != nil {
+		clone.child = clone.child.WithPrefix(prefix)
+	}
+	return clone
+}
+
+func (c *jsonLogger) With(newFields map[string]interface{}) Logger {
+	clone := c.clone()
+	if trace, ok := newFields["trace"].(string); ok {
+		clone.traceID = trace
+		delete(newFields, "trace")
+	}
+	if comp, ok := newFields["component"].(string); ok {
+		clone.component = comp
+		delete(newFields, "component")
+	}
+	for k, v := range newFields {
+		clone.metadata[k] = v
+	}
+	if c.child != nil {
+		clone.child = c.child.With(newFields)
+	}
+	return clone
 }
 
 var bracketRegex = regexp.MustCompile(`\[(.*?)\]`)
@@ -146,30 +167,54 @@ func (c *jsonLogger) Log(level LogLevel, severity string, msg string, args ...in
 
 func (c *jsonLogger) Trace(msg string, args ...interface{}) {
 	c.Log(LevelTrace, "TRACE", msg, args...)
+	if c.child != nil {
+		c.child.Trace(msg, args...)
+	}
 }
 
 func (c *jsonLogger) Debug(msg string, args ...interface{}) {
 	c.Log(LevelDebug, "DEBUG", msg, args...)
+	if c.child != nil {
+		c.child.Debug(msg, args...)
+	}
 }
 
 func (c *jsonLogger) Info(msg string, args ...interface{}) {
 	c.Log(LevelInfo, "INFO", msg, args...)
+	if c.child != nil {
+		c.child.Info(msg, args...)
+	}
 }
 
 func (c *jsonLogger) Warn(msg string, args ...interface{}) {
 	c.Log(LevelWarn, "WARNING", msg, args...)
+	if c.child != nil {
+		c.child.Warn(msg, args...)
+	}
 }
 
 func (c *jsonLogger) Error(msg string, args ...interface{}) {
 	c.Log(LevelError, "ERROR", msg, args...)
+	if c.child != nil {
+		c.child.Error(msg, args...)
+	}
 }
 
 func (c *jsonLogger) Fatal(msg string, args ...interface{}) {
 	c.Log(LevelError, "ERROR", msg, args...)
+	if c.child != nil {
+		c.child.Error(msg, args...)
+	}
 }
 
 func (c *jsonLogger) SetLogLevel(level LogLevel) {
 	c.logLevel = level
+}
+
+func (c *jsonLogger) Stack(next Logger) Logger {
+	clone := c.clone()
+	clone.child = next
+	return clone
 }
 
 // NewJSONLogger returns a new Logger instance which can be used for structured logging

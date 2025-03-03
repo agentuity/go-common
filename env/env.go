@@ -1,12 +1,14 @@
 package env
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 
 	"github.com/agentuity/go-common/logger"
+	"github.com/agentuity/go-common/telemetry"
 	"github.com/spf13/cobra"
 )
 
@@ -129,22 +131,53 @@ func FlagOrEnv(cmd *cobra.Command, flagName string, envName string, defaultValue
 	return defaultValue
 }
 
+func LogLevel(cmd *cobra.Command) logger.LogLevel {
+	level := FlagOrEnv(cmd, "log-level", "AGENTUITY_LOG_LEVEL", "info")
+	switch level {
+	case "debug", "DEBUG":
+		return logger.LevelDebug
+	case "warn", "WARN":
+		return logger.LevelWarn
+	case "error", "ERROR":
+		return logger.LevelError
+	case "trace", "TRACE":
+		return logger.LevelTrace
+	}
+	return logger.LevelInfo
+}
+
 // NewLogger returns a console logger by first checking the cobra.Command log-level flag, then use the
 // AGENTUITY_LOG_LEVEL environment value and falling back to the info logger level
 func NewLogger(cmd *cobra.Command) logger.Logger {
 	log.SetFlags(0)
-	level := FlagOrEnv(cmd, "log-level", "AGENTUITY_LOG_LEVEL", "info")
-	switch level {
-	case "debug", "DEBUG":
-		return logger.NewConsoleLogger(logger.LevelDebug)
-	case "warn", "WARN":
-		return logger.NewConsoleLogger(logger.LevelWarn)
-	case "error", "ERROR":
-		return logger.NewConsoleLogger(logger.LevelError)
-	case "trace", "TRACE":
-		return logger.NewConsoleLogger(logger.LevelTrace)
-	case "info", "INFO":
-	default:
+	level := LogLevel(cmd)
+	return logger.NewConsoleLogger(level)
+}
+
+// NewTelemetry returns a telemetry context, logger, shutdown function. The cobra flags it expects are:
+//
+// --no-telemetry (boolean): if set, telemetry will be disabled
+//
+// --otlp-url (string): the url of the otlp server
+//
+// --otlp-shared-secret (string): the shared secret for the otlp server
+func NewTelemetry(ctx context.Context, cmd *cobra.Command, serviceName string) (context.Context, logger.Logger, func(), error) {
+	if noTelemetry, err := cmd.Flags().GetBool("no-telemetry"); err == nil && noTelemetry {
+		return ctx, NewLogger(cmd), func() {}, nil
 	}
-	return logger.NewConsoleLogger(logger.LevelInfo)
+	otlpURL := FlagOrEnv(cmd, "otlp-url", "AGENTUITY_OTLP_URL", "")
+	otlpSharedSecret := FlagOrEnv(cmd, "otlp-shared-secret", "AGENTUITY_OTLP_SHARED_SECRET", "")
+
+	if otlpURL == "" {
+		return nil, nil, nil, fmt.Errorf("otlp-url or AGENTUITY_OTLP_URL are required and --no-telemetry was not set")
+	}
+	if otlpSharedSecret == "" {
+		return nil, nil, nil, fmt.Errorf("otlp-shared-secret or AGENTUITY_OTLP_SHARED_SECRET are required and --no-telemetry was not set")
+	}
+
+	telemetryCtx, logger, shutdown, err := telemetry.New(ctx, serviceName, otlpSharedSecret, otlpURL, NewLogger(cmd))
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating telemetry: %w", err)
+	}
+	return telemetryCtx, logger, shutdown, nil
 }

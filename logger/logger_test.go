@@ -19,7 +19,7 @@ func (s *testSink) Write(buf []byte) (int, error) {
 
 func TestGCloudLogger(t *testing.T) {
 	sink := &testSink{}
-	log := NewGCloudLoggerWithSink(sink, LevelTrace)
+	log := NewJSONLoggerWithSink(sink, LevelTrace)
 	jlog := log.(*jsonLogger)
 	tv := time.Date(2023, 10, 22, 12, 30, 0, 0, time.UTC)
 	jlog.ts = &tv
@@ -43,9 +43,9 @@ func TestCombinedLogger(t *testing.T) {
 	jsonLog := NewJSONLoggerWithSink(sink, LevelTrace)
 	tv := time.Date(2023, 10, 22, 12, 30, 0, 0, time.UTC)
 	jsonLog.(*jsonLogger).ts = &tv
-	combined := NewMultiLogger(log, jsonLog)
+	combined := log.Stack(jsonLog)
 	combined.Info("Ayyyyyy")
-	assert.Len(t, log.Logs, 1)
+	assert.Len(t, combined.(*TestLogger).Logs, 1)
 	assert.Equal(t, `{"timestamp":"2023-10-22T12:30:00Z","message":"Ayyyyyy","severity":"INFO"}`, string(sink.buf))
 }
 

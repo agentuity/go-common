@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func GenerateOTLPBearerToken(sharedSecret string, token string) (string, error) {
@@ -82,7 +83,7 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 
 	// Setup trace exporter
 	traceExporterOpts := []otlptracehttp.Option{
-		otlptracehttp.WithEndpoint(traceURL),
+		otlptracehttp.WithEndpointURL(traceURL),
 		otlptracehttp.WithHeaders(headers),
 		otlptracehttp.WithTimeout(time.Second * 10),
 		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
@@ -130,12 +131,17 @@ func New(ctx context.Context, serviceName string, telemetrySecret string, teleme
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error generating otel token: %w", err)
 	}
-	ctx2, otherLogger, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName)
+	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error creating otel logger: %w", err)
 	}
 	if consoleLogger == nil {
-		return ctx2, otherLogger, shutdownMetrics, nil
+		return ctx2, olog, shutdownMetrics, nil
 	}
-	return ctx2, logger.NewMultiLogger(consoleLogger, otherLogger), shutdownMetrics, nil
+	return ctx2, olog.Stack(consoleLogger), shutdownMetrics, nil
+}
+
+func StartSpan(ctx context.Context, logger logger.Logger, tracer trace.Tracer, spanName string, opts ...trace.SpanStartOption) (context.Context, logger.Logger, trace.Span) {
+	ctx, span := tracer.Start(ctx, spanName, opts...)
+	return ctx, logger.WithContext(ctx), span
 }

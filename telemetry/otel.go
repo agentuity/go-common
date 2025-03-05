@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/agentuity/go-common/logger"
@@ -31,13 +32,13 @@ func GenerateOTLPBearerToken(sharedSecret string, token string) (string, error) 
 	return token + "." + tok2, nil
 }
 
-func GenerateOTLPBearerTokenWithExpiration(sharedSecret string, tokenVal string, expiration time.Time) (string, error) {
+func GenerateOTLPBearerTokenWithExpiration(sharedSecret string, expiration time.Time) (string, error) {
 	hash := sha256.New()
 	exp := time.Until(expiration)
 	if exp < 0 {
 		return "", fmt.Errorf("expiration time is in the past")
 	}
-	token := str2duration.String(exp.Round(time.Hour)) + "." + tokenVal
+	token := str2duration.String(exp.Round(time.Hour)) + "." + strconv.FormatInt(time.Now().Unix(), 10)
 	if _, err := hash.Write([]byte(sharedSecret + "." + token)); err != nil {
 		return "", fmt.Errorf("error hashing token: %w", err)
 	}

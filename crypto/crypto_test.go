@@ -911,7 +911,7 @@ func TestStreamDecryptionWithTamperedData(t *testing.T) {
 
 func TestStreamEncryptionWithLargeData(t *testing.T) {
 	// Test with 10MB of data
-	originalData := bytes.Repeat([]byte("large data test "), 640*1024)
+	originalData := bytes.Repeat([]byte("large data test "), 1024*1024)
 	input := bytes.NewReader(originalData)
 	encryptedBuf := &bytes.Buffer{}
 

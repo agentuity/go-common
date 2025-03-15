@@ -5,6 +5,7 @@ import (
 	"crypto/ecdh"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -783,6 +784,230 @@ func BenchmarkDecrypt(b *testing.B) {
 		_, err := Decrypt(aliceKeyPair.PublicKey, bobKeyPair.PrivateKey, encrypted)
 		if err != nil {
 			b.Fatalf("Decryption failed: %v", err)
+		}
+	}
+}
+
+type nopCloser struct {
+	io.Writer
+}
+
+func (nopCloser) Close() error { return nil }
+
+func TestStreamEncryptionDecryption(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		key     string
+		wantErr bool
+	}{
+		{
+			name:    "valid data",
+			data:    []byte("hello world"),
+			key:     "test-key-1",
+			wantErr: false,
+		},
+		{
+			name:    "empty data",
+			data:    []byte{},
+			key:     "test-key-2",
+			wantErr: false,
+		},
+		{
+			name:    "long data",
+			data:    bytes.Repeat([]byte("a"), 1024*1024), // 1MB
+			key:     "test-key-3",
+			wantErr: false,
+		},
+		{
+			name:    "empty key",
+			data:    []byte("test data"),
+			key:     "",
+			wantErr: false, // Empty key is valid, though not recommended
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create input and output buffers
+			input := bytes.NewReader(tt.data)
+			encryptedBuf := &bytes.Buffer{}
+
+			// Encrypt
+			err := EncryptStream(input, nopCloser{encryptedBuf}, tt.key)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("EncryptStream() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if tt.wantErr {
+				return
+			}
+
+			// Create decryption buffers
+			encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
+			decryptedBuf := &bytes.Buffer{}
+
+			// Decrypt
+			err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, tt.key)
+			if err != nil {
+				t.Errorf("DecryptStream() error = %v", err)
+				return
+			}
+
+			// Compare original and decrypted data
+			if !bytes.Equal(tt.data, decryptedBuf.Bytes()) {
+				t.Errorf("DecryptStream() = %v, want %v", decryptedBuf.Bytes(), tt.data)
+			}
+		})
+	}
+}
+
+func TestStreamDecryptionWithWrongKey(t *testing.T) {
+	originalData := []byte("sensitive data")
+	input := bytes.NewReader(originalData)
+	encryptedBuf := &bytes.Buffer{}
+
+	// Encrypt with one key
+	err := EncryptStream(input, nopCloser{encryptedBuf}, "correct-key")
+	if err != nil {
+		t.Fatalf("EncryptStream() error = %v", err)
+	}
+
+	// Try to decrypt with wrong key
+	encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
+	decryptedBuf := &bytes.Buffer{}
+	err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, "wrong-key")
+	if err == nil {
+		t.Error("DecryptStream() with wrong key should return error")
+	}
+}
+
+func TestStreamDecryptionWithTamperedData(t *testing.T) {
+	originalData := []byte("sensitive data")
+	input := bytes.NewReader(originalData)
+	encryptedBuf := &bytes.Buffer{}
+
+	// Encrypt
+	err := EncryptStream(input, nopCloser{encryptedBuf}, "test-key")
+	if err != nil {
+		t.Fatalf("EncryptStream() error = %v", err)
+	}
+
+	// Tamper with encrypted data
+	encryptedData := encryptedBuf.Bytes()
+	tamperedData := make([]byte, len(encryptedData))
+	copy(tamperedData, encryptedData)
+	tamperedData[len(tamperedData)-1] ^= 0x01 // Flip last bit
+
+	// Try to decrypt tampered data
+	tamperedReader := bytes.NewReader(tamperedData)
+	decryptedBuf := &bytes.Buffer{}
+	err = DecryptStream(tamperedReader, nopCloser{decryptedBuf}, "test-key")
+	if err == nil {
+		t.Error("DecryptStream() with tampered data should return error")
+	}
+}
+
+func TestStreamEncryptionWithLargeData(t *testing.T) {
+	// Test with 10MB of data
+	originalData := bytes.Repeat([]byte("large data test "), 640*1024)
+	input := bytes.NewReader(originalData)
+	encryptedBuf := &bytes.Buffer{}
+
+	// Encrypt
+	err := EncryptStream(input, nopCloser{encryptedBuf}, "test-key")
+	if err != nil {
+		t.Fatalf("EncryptStream() error = %v", err)
+	}
+
+	// Decrypt
+	encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
+	decryptedBuf := &bytes.Buffer{}
+	err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, "test-key")
+	if err != nil {
+		t.Fatalf("DecryptStream() error = %v", err)
+	}
+
+	// Verify
+	if !bytes.Equal(originalData, decryptedBuf.Bytes()) {
+		t.Error("Decrypted large data doesn't match original")
+	}
+}
+
+func TestStreamEncryptionWithMultipleKeys(t *testing.T) {
+	data := []byte("test data")
+	keys := []string{"key1", "key2", "key3"}
+
+	for _, key1 := range keys {
+		for _, key2 := range keys {
+			input := bytes.NewReader(data)
+			encryptedBuf := &bytes.Buffer{}
+
+			// Encrypt with key1
+			err := EncryptStream(input, nopCloser{encryptedBuf}, key1)
+			if err != nil {
+				t.Fatalf("EncryptStream() error = %v", err)
+			}
+
+			// Try to decrypt with key2
+			encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
+			decryptedBuf := &bytes.Buffer{}
+			err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, key2)
+
+			if key1 == key2 {
+				// Should succeed with same key
+				if err != nil {
+					t.Errorf("DecryptStream() with matching key error = %v", err)
+				}
+				if !bytes.Equal(data, decryptedBuf.Bytes()) {
+					t.Error("Decrypted data doesn't match original")
+				}
+			} else {
+				// Should fail with different key
+				if err == nil {
+					t.Error("DecryptStream() with different key should return error")
+				}
+			}
+		}
+	}
+}
+
+func BenchmarkStreamEncryption(b *testing.B) {
+	data := bytes.Repeat([]byte("benchmark data "), 1024) // ~13KB
+	key := "benchmark-key"
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		input := bytes.NewReader(data)
+		output := &bytes.Buffer{}
+		err := EncryptStream(input, nopCloser{output}, key)
+		if err != nil {
+			b.Fatalf("EncryptStream() error = %v", err)
+		}
+	}
+}
+
+func BenchmarkStreamDecryption(b *testing.B) {
+	data := bytes.Repeat([]byte("benchmark data "), 1024) // ~13KB
+	key := "benchmark-key"
+
+	// Create encrypted data for benchmark
+	input := bytes.NewReader(data)
+	encryptedBuf := &bytes.Buffer{}
+	err := EncryptStream(input, nopCloser{encryptedBuf}, key)
+	if err != nil {
+		b.Fatalf("Setup encryption failed: %v", err)
+	}
+	encryptedData := encryptedBuf.Bytes()
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		input := bytes.NewReader(encryptedData)
+		output := &bytes.Buffer{}
+		err := DecryptStream(input, nopCloser{output}, key)
+		if err != nil {
+			b.Fatalf("DecryptStream() error = %v", err)
 		}
 	}
 }

@@ -6,9 +6,11 @@ import (
 	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"os"
 )
 
@@ -244,4 +246,117 @@ func ReadPublicKey(publicKey []byte) (*ecdh.PublicKey, error) {
 	}
 
 	return ecdhPub, nil
+}
+
+// deriveKey derives a 32-byte encryption key from a string using SHA-256
+func deriveKey(key string) []byte {
+	hash := sha256.Sum256([]byte(key))
+	return hash[:]
+}
+
+// EncryptStream encrypts data from reader using AES-256-GCM and writes to writer
+// The output format is: nonce (12 bytes) || ciphertext || tag
+func EncryptStream(reader io.Reader, writer io.WriteCloser, key string) error {
+	defer writer.Close()
+
+	// Derive 32-byte key for AES-256
+	derivedKey := deriveKey(key)
+
+	// Create AES-256 cipher
+	block, err := aes.NewCipher(derivedKey)
+	if err != nil {
+		return fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Generate nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	// Write nonce first
+	if _, err := writer.Write(nonce); err != nil {
+		return fmt.Errorf("failed to write nonce: %w", err)
+	}
+
+	// Create a buffer for reading chunks
+	buf := make([]byte, 32*1024) // 32KB chunks
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			// Encrypt this chunk
+			encrypted := gcm.Seal(nil, nonce, buf[:n], nil)
+			if _, err := writer.Write(encrypted); err != nil {
+				return fmt.Errorf("failed to write encrypted chunk: %w", err)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read input: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// DecryptStream decrypts data from reader using AES-256-GCM and writes to writer
+// The input format should be: nonce (12 bytes) || ciphertext || tag
+func DecryptStream(reader io.Reader, writer io.WriteCloser, key string) error {
+	defer writer.Close()
+
+	// Derive 32-byte key for AES-256
+	derivedKey := deriveKey(key)
+
+	// Create AES-256 cipher
+	block, err := aes.NewCipher(derivedKey)
+	if err != nil {
+		return fmt.Errorf("failed to create AES cipher: %w", err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return fmt.Errorf("failed to create GCM: %w", err)
+	}
+
+	// Read the nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(reader, nonce); err != nil {
+		return fmt.Errorf("failed to read nonce: %w", err)
+	}
+
+	// Create a buffer for reading chunks
+	// GCM tag size is 16 bytes, so we need to account for that in our chunk size
+	chunkSize := 32 * 1024 // 32KB chunks
+	buf := make([]byte, chunkSize+gcm.Overhead())
+
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			// Decrypt this chunk
+			decrypted, err := gcm.Open(nil, nonce, buf[:n], nil)
+			if err != nil {
+				return fmt.Errorf("failed to decrypt chunk: %w", err)
+			}
+			if _, err := writer.Write(decrypted); err != nil {
+				return fmt.Errorf("failed to write decrypted chunk: %w", err)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to read encrypted input: %w", err)
+		}
+	}
+
+	return nil
 }

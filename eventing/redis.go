@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/agentuity/go-common/logger"
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var redisReplyHeader = "reply-to"
 
 type redisMsgPayload struct {
-	InternalData    []byte            `msgpack:"data"`
-	InternalHeaders map[string]string `msgpack:"headers"`
+	InternalData    []byte  `msgpack:"data"`
+	InternalHeaders Headers `msgpack:"headers"`
 	replier         func(ctx context.Context, data []byte, opts ...PublishOption) error
 }
 
@@ -56,16 +59,18 @@ type redisEventingClient struct {
 	rdb    *redis.Client
 	ctx    context.Context
 	cancel context.CancelFunc
+	logger logger.Logger
 }
 
 var _ Client = (*redisEventingClient)(nil)
 
-func NewRedisClient(ctx context.Context, rdb *redis.Client) (Client, error) {
+func NewRedisClient(ctx context.Context, logger logger.Logger, rdb *redis.Client) (Client, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	client := &redisEventingClient{
 		rdb:    rdb,
 		ctx:    ctx,
 		cancel: cancel,
+		logger: logger.With(map[string]interface{}{"component": "eventing"}),
 	}
 
 	return client, nil
@@ -98,27 +103,48 @@ func newPubRedisMessage(data []byte, opts ...PublishOption) redisMsgPayload {
 	return msg
 }
 
-func newSerializedPubMessage(data []byte, opts ...PublishOption) ([]byte, error) {
-	return msgpack.Marshal(newPubRedisMessage(data, opts...))
-}
-
 func (c *redisEventingClient) Publish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
-	payload, err := newSerializedPubMessage(data, opts...)
+	msg := newPubRedisMessage(data, opts...)
+	// inject the trace context into the headers before starting a span
+	propagator.Inject(ctx, msg.InternalHeaders)
+
+	spanCtx, span := tracer.Start(ctx, "Publish", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
+	payload, err := msgpack.Marshal(msg)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
-	return c.rdb.Publish(ctx, subject, payload).Err()
+	if err := c.rdb.Publish(spanCtx, subject, payload).Err(); err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+
+	span.SetStatus(codes.Ok, "message published")
+	return nil
 }
 
 func (c *redisEventingClient) QueuePublish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
-	payload, err := newSerializedPubMessage(data, opts...)
+	msg := newPubRedisMessage(data, opts...)
+	// inject the trace context into the headers before starting a span
+	propagator.Inject(ctx, msg.InternalHeaders)
+
+	spanCtx, span := tracer.Start(ctx, "QueuePublish", trace.WithSpanKind(trace.SpanKindProducer))
+	defer span.End()
+
+	payload, err := msgpack.Marshal(msg)
 	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
 	// Use XADD with MAXLEN to keep the stream size bounded
-	return c.rdb.XAdd(ctx, &redis.XAddArgs{
+	return c.rdb.XAdd(spanCtx, &redis.XAddArgs{
 		Stream: subject,
 		Approx: true,
 		MaxLen: 50,
@@ -195,6 +221,31 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	}
 }
 
+func (c *redisEventingClient) internalCallback(ctx context.Context, payload []byte, cb MessageCallback) {
+	var msg redisMsgPayload
+	if err := msgpack.Unmarshal(payload, &msg); err != nil {
+		c.logger.Error("failed to decode message %s", err)
+		return
+	}
+	// extract the trace context from the headers
+	spanCtx, span := tracer.Start(
+		propagator.Extract(ctx, msg.InternalHeaders),
+		"internalCallback",
+		trace.WithSpanKind(trace.SpanKindConsumer),
+	)
+	defer span.End()
+
+	if msg.InternalHeaders[redisReplyHeader] != "" {
+		msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
+			return c.Publish(ctx, msg.InternalHeaders[redisReplyHeader], data, opts...)
+		}
+	} else {
+		msg.replier = notReplyable
+	}
+
+	cb(spanCtx, &msg)
+}
+
 func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error) {
 	// Create a new PubSub instance for this subscription
 	pubsub := c.rdb.Subscribe(ctx, subject)
@@ -210,20 +261,7 @@ func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb 
 				if !ok {
 					return
 				}
-
-				var msg redisMsgPayload
-				if err := msgpack.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
-					continue
-				}
-				if msg.InternalHeaders[redisReplyHeader] != "" {
-					msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
-						return c.Publish(ctx, msg.InternalHeaders[redisReplyHeader], data, opts...)
-					}
-				} else {
-					msg.replier = notReplyable
-				}
-
-				cb(ctx, &msg)
+				c.internalCallback(ctx, []byte(redisMsg.Payload), cb)
 			}
 		}
 	}()
@@ -287,21 +325,8 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 							continue
 						}
 
-						var msg redisMsgPayload
-						if err := msgpack.Unmarshal([]byte(payload), &msg); err != nil {
-							continue
-						}
-
-						if msg.InternalHeaders[redisReplyHeader] != "" {
-							msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
-								return c.Publish(ctx, msg.InternalHeaders[redisReplyHeader], data, opts...)
-							}
-						} else {
-							msg.replier = notReplyable
-						}
-
 						// Process the message
-						cb(ctx, &msg)
+						c.internalCallback(ctx, []byte(payload), cb)
 
 						// Acknowledge the message
 						c.rdb.XAck(ctx, subject, queue, message.ID)

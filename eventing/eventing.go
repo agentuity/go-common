@@ -9,6 +9,7 @@ import (
 type Message interface {
 	Data() []byte
 	Headers() Headers
+	Reply(ctx context.Context, data []byte, opts ...PublishOption) error
 }
 
 type msgReply struct {
@@ -42,14 +43,28 @@ type Subscriber interface {
 	Close() error
 }
 
+type PublishOption func(*publishOptions)
+
+type publishOptions struct {
+	Headers [][]string
+}
+
+func WithHeader(key, value string) PublishOption {
+	return func(o *publishOptions) {
+		o.Headers = append(o.Headers, []string{key, value})
+	}
+}
+
 // Client defines the interface for event clients
 type Client interface {
 	// Publish publishes a message to a subject
-	Publish(ctx context.Context, subject string, data []byte) error
+	Publish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error
 	// PublishQueue publishes a message to a subject in a consumer group named queue
-	PublishQueue(ctx context.Context, subject string, data []byte) error
+	PublishQueue(ctx context.Context, subject string, data []byte, opts ...PublishOption) error
 	// Request requests a message from a subject, and synchronously waits for a reply
-	Request(ctx context.Context, subject string, data []byte, timeout time.Duration) (Message, error)
+	Request(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error)
+	// RequestQueue requests a message from a subject in a consumer group named queue, and synchronously waits for a reply
+	RequestQueue(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error)
 	// Subscribe subscribes to a subject
 	Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error)
 	// QueueSubscribe subscribes to a subject in a consumer group named queue

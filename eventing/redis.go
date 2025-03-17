@@ -2,6 +2,7 @@ package eventing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -9,22 +10,24 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
-type redisMessage struct {
-	data    []byte
-	headers Headers
-}
-
-func (m *redisMessage) Data() []byte {
-	return m.data
-}
-
-func (m *redisMessage) Headers() Headers {
-	return m.headers
-}
+var redisReplyHeader = "reply-to"
 
 type redisMsgPayload struct {
-	Data    []byte            `msgpack:"data"`
-	Headers map[string]string `msgpack:"headers"`
+	InternalData    []byte            `msgpack:"data"`
+	InternalHeaders map[string]string `msgpack:"headers"`
+	replier         func(ctx context.Context, data []byte, opts ...PublishOption) error
+}
+
+func (m *redisMsgPayload) Data() []byte {
+	return m.InternalData
+}
+
+func (m *redisMsgPayload) Headers() Headers {
+	return m.InternalHeaders
+}
+
+func (m *redisMsgPayload) Reply(ctx context.Context, data []byte, opts ...PublishOption) error {
+	return m.replier(ctx, data, opts...)
 }
 
 type redisSubscriber struct {
@@ -68,13 +71,39 @@ func NewRedisClient(ctx context.Context, rdb *redis.Client) (Client, error) {
 	return client, nil
 }
 
-func (c *redisEventingClient) Publish(ctx context.Context, subject string, data []byte) error {
+var ErrNotReplyable = errors.New("message is not replyable")
+
+func notReplyable(ctx context.Context, data []byte, opts ...PublishOption) error {
+	return ErrNotReplyable
+}
+
+func newPubRedisMessage(data []byte, opts ...PublishOption) redisMsgPayload {
 	msg := redisMsgPayload{
-		Data:    data,
-		Headers: make(map[string]string),
+		InternalData:    data,
+		InternalHeaders: make(map[string]string),
+		replier:         notReplyable,
 	}
 
-	payload, err := msgpack.Marshal(msg)
+	// Apply publish options
+	options := &publishOptions{}
+	for _, opt := range opts {
+		opt(options)
+	}
+	for _, header := range options.Headers {
+		if len(header) == 2 {
+			msg.InternalHeaders[header[0]] = header[1]
+		}
+	}
+
+	return msg
+}
+
+func newSerializedPubMessage(data []byte, opts ...PublishOption) ([]byte, error) {
+	return msgpack.Marshal(newPubRedisMessage(data, opts...))
+}
+
+func (c *redisEventingClient) Publish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
+	payload, err := newSerializedPubMessage(data, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
@@ -82,13 +111,8 @@ func (c *redisEventingClient) Publish(ctx context.Context, subject string, data 
 	return c.rdb.Publish(ctx, subject, payload).Err()
 }
 
-func (c *redisEventingClient) PublishQueue(ctx context.Context, subject string, data []byte) error {
-	msg := redisMsgPayload{
-		Data:    data,
-		Headers: make(map[string]string),
-	}
-
-	payload, err := msgpack.Marshal(msg)
+func (c *redisEventingClient) PublishQueue(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
+	payload, err := newSerializedPubMessage(data, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
@@ -104,12 +128,25 @@ func (c *redisEventingClient) PublishQueue(ctx context.Context, subject string, 
 	}).Err()
 }
 
-func (c *redisEventingClient) Request(ctx context.Context, subject string, data []byte, timeout time.Duration) (Message, error) {
+func (c *redisEventingClient) Request(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
+	return c.request(ctx, subject, data, timeout, false, opts...)
+}
+
+func (c *redisEventingClient) RequestQueue(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
+	return c.request(ctx, subject, data, timeout, true, opts...)
+}
+
+// request is a helper function to request a message from a subject
+// if queue is nil, the message is published using pubsub
+// if queue is not nil, the message is published using streams
+// replies are always sent using pubsub
+func (c *redisEventingClient) request(ctx context.Context, subject string, data []byte, timeout time.Duration, queue bool, opts ...PublishOption) (Message, error) {
+
 	// Generate a unique reply subject
 	replySubject := fmt.Sprintf("%s.reply.%d", subject, time.Now().UnixNano())
 
 	// Create a channel to receive the reply
-	replyChan := make(chan Message, 1)
+	replyChan := make(chan *redisMsgPayload, 1)
 
 	// Subscribe to the reply subject
 	sub := c.rdb.Subscribe(ctx, replySubject)
@@ -131,28 +168,20 @@ func (c *redisEventingClient) Request(ctx context.Context, subject string, data 
 				return
 			}
 
-			replyChan <- &redisMessage{
-				data:    redisMsg.Data,
-				headers: redisMsg.Headers,
-			}
+			replyChan <- &redisMsg
 		}
 	}()
 
-	// Publish the request with the reply subject in headers
-	msg := redisMsgPayload{
-		Data: data,
-		Headers: map[string]string{
-			"reply-to": replySubject,
-		},
-	}
+	opts = append(opts, WithHeader(redisReplyHeader, replySubject))
 
-	payload, err := msgpack.Marshal(msg)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-
-	if err := c.rdb.Publish(ctx, subject, payload).Err(); err != nil {
-		return nil, fmt.Errorf("failed to publish request: %w", err)
+	if queue {
+		if err := c.PublishQueue(ctx, subject, data, opts...); err != nil {
+			return nil, fmt.Errorf("failed to queue publish: %w", err)
+		}
+	} else {
+		if err := c.Publish(ctx, subject, data, opts...); err != nil {
+			return nil, fmt.Errorf("failed to publish: %w", err)
+		}
 	}
 
 	// Wait for the reply with timeout
@@ -177,20 +206,24 @@ func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb 
 			select {
 			case <-ctx.Done():
 				return
-			case msg, ok := <-ch:
+			case redisMsg, ok := <-ch:
 				if !ok {
 					return
 				}
 
-				var redisMsg redisMsgPayload
-				if err := msgpack.Unmarshal([]byte(msg.Payload), &redisMsg); err != nil {
+				var msg redisMsgPayload
+				if err := msgpack.Unmarshal([]byte(redisMsg.Payload), &msg); err != nil {
 					continue
 				}
+				if msg.InternalHeaders[redisReplyHeader] != "" {
+					msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
+						return c.Publish(ctx, msg.InternalHeaders[redisReplyHeader], data, opts...)
+					}
+				} else {
+					msg.replier = notReplyable
+				}
 
-				cb(ctx, &redisMessage{
-					data:    redisMsg.Data,
-					headers: redisMsg.Headers,
-				})
+				cb(ctx, &msg)
 			}
 		}
 	}()
@@ -254,16 +287,21 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 							continue
 						}
 
-						var redisMsg redisMsgPayload
-						if err := msgpack.Unmarshal([]byte(payload), &redisMsg); err != nil {
+						var msg redisMsgPayload
+						if err := msgpack.Unmarshal([]byte(payload), &msg); err != nil {
 							continue
 						}
 
+						if msg.InternalHeaders[redisReplyHeader] != "" {
+							msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
+								return c.Publish(ctx, msg.InternalHeaders[redisReplyHeader], data, opts...)
+							}
+						} else {
+							msg.replier = notReplyable
+						}
+
 						// Process the message
-						cb(ctx, &redisMessage{
-							data:    redisMsg.Data,
-							headers: redisMsg.Headers,
-						})
+						cb(ctx, &msg)
 
 						// Acknowledge the message
 						c.rdb.XAck(ctx, subject, queue, message.ID)

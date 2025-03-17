@@ -36,6 +36,19 @@ func (s *redisSubscriber) Close() error {
 	return s.pubsub.Close()
 }
 
+type redisQueueSubscriber struct {
+	streamKey string
+	group     string
+	consumer  string
+	rdb       *redis.Client
+	ctx       context.Context
+}
+
+func (s *redisQueueSubscriber) Close() error {
+	// Remove the consumer from the group
+	return s.rdb.XGroupDelConsumer(s.ctx, s.streamKey, s.group, s.consumer).Err()
+}
+
 type redisEventingClient struct {
 	rdb    *redis.Client
 	ctx    context.Context
@@ -67,6 +80,28 @@ func (c *redisEventingClient) Publish(ctx context.Context, subject string, data 
 	}
 
 	return c.rdb.Publish(ctx, subject, payload).Err()
+}
+
+func (c *redisEventingClient) PublishQueue(ctx context.Context, subject string, data []byte) error {
+	msg := redisMsgPayload{
+		Data:    data,
+		Headers: make(map[string]string),
+	}
+
+	payload, err := msgpack.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+
+	// Use XADD with MAXLEN to keep the stream size bounded
+	return c.rdb.XAdd(ctx, &redis.XAddArgs{
+		Stream: subject,
+		Approx: true,
+		MaxLen: 50,
+		Values: map[string]interface{}{
+			"payload": payload,
+		},
+	}).Err()
 }
 
 func (c *redisEventingClient) Request(ctx context.Context, subject string, data []byte, timeout time.Duration) (Message, error) {
@@ -131,16 +166,16 @@ func (c *redisEventingClient) Request(ctx context.Context, subject string, data 
 	}
 }
 
-func (c *redisEventingClient) Subscribe(subject string, cb MessageCallback) (Subscriber, error) {
+func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error) {
 	// Create a new PubSub instance for this subscription
-	pubsub := c.rdb.Subscribe(c.ctx, subject)
+	pubsub := c.rdb.Subscribe(ctx, subject)
 
 	// Start a goroutine to handle messages for this subscription
 	go func() {
 		ch := pubsub.Channel()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
 			case msg, ok := <-ch:
 				if !ok {
@@ -152,7 +187,7 @@ func (c *redisEventingClient) Subscribe(subject string, cb MessageCallback) (Sub
 					continue
 				}
 
-				cb(c.ctx, &redisMessage{
+				cb(ctx, &redisMessage{
 					data:    redisMsg.Data,
 					headers: redisMsg.Headers,
 				})
@@ -162,43 +197,83 @@ func (c *redisEventingClient) Subscribe(subject string, cb MessageCallback) (Sub
 
 	return &redisSubscriber{
 		pubsub: pubsub,
-		ctx:    c.ctx,
+		ctx:    ctx,
 	}, nil
 }
 
-func (c *redisEventingClient) QueueSubscribe(subject, queue string, cb MessageCallback) (Subscriber, error) {
-	// Create a new PubSub instance for this queue subscription
-	pubsub := c.rdb.Subscribe(c.ctx, subject)
+func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue string, cb MessageCallback) (Subscriber, error) {
+	// Create a consumer group if it doesn't exist
+	if err := c.rdb.XGroupCreateMkStream(ctx, subject, queue, "$").Err(); err != nil && err != redis.Nil {
+		if err.Error() == "BUSYGROUP Consumer Group name already exists" {
+			// great!
+		} else {
+			return nil, fmt.Errorf("failed to create consumer group: %w", err)
+		}
+	}
+
+	// Generate a unique consumer ID
+	consumer := fmt.Sprintf("%s-%d", queue, time.Now().UnixNano())
+
+	// Create the subscriber
+	sub := &redisQueueSubscriber{
+		streamKey: subject,
+		group:     queue,
+		consumer:  consumer,
+		rdb:       c.rdb,
+		ctx:       ctx,
+	}
 
 	// Start a goroutine to handle messages for this subscription
 	go func() {
-		ch := pubsub.Channel()
 		for {
 			select {
-			case <-c.ctx.Done():
+			case <-ctx.Done():
 				return
-			case msg, ok := <-ch:
-				if !ok {
+			default:
+				// Read messages from the stream
+				streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+					Group:    queue,
+					Consumer: consumer,
+					Streams:  []string{subject, ">"},
+					Count:    10, // Process up to 10 messages at a time
+					Block:    0,  // Block indefinitely
+				}).Result()
+
+				if err != nil {
+					if err == redis.Nil {
+						continue
+					}
 					return
 				}
 
-				var redisMsg redisMsgPayload
-				if err := msgpack.Unmarshal([]byte(msg.Payload), &redisMsg); err != nil {
-					continue
-				}
+				for _, stream := range streams {
+					for _, message := range stream.Messages {
+						// Get the payload from the message
+						payload, ok := message.Values["payload"].(string)
+						if !ok {
+							continue
+						}
 
-				cb(c.ctx, &redisMessage{
-					data:    redisMsg.Data,
-					headers: redisMsg.Headers,
-				})
+						var redisMsg redisMsgPayload
+						if err := msgpack.Unmarshal([]byte(payload), &redisMsg); err != nil {
+							continue
+						}
+
+						// Process the message
+						cb(ctx, &redisMessage{
+							data:    redisMsg.Data,
+							headers: redisMsg.Headers,
+						})
+
+						// Acknowledge the message
+						c.rdb.XAck(ctx, subject, queue, message.ID)
+					}
+				}
 			}
 		}
 	}()
 
-	return &redisSubscriber{
-		pubsub: pubsub,
-		ctx:    c.ctx,
-	}, nil
+	return sub, nil
 }
 
 func (c *redisEventingClient) Close() error {

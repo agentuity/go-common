@@ -46,12 +46,14 @@ type Subscriber interface {
 type Client interface {
 	// Publish publishes a message to a subject
 	Publish(ctx context.Context, subject string, data []byte) error
+	// PublishQueue publishes a message to a subject in a consumer group named queue
+	PublishQueue(ctx context.Context, subject string, data []byte) error
 	// Request requests a message from a subject, and synchronously waits for a reply
 	Request(ctx context.Context, subject string, data []byte, timeout time.Duration) (Message, error)
 	// Subscribe subscribes to a subject
-	Subscribe(subject string, cb MessageCallback) (Subscriber, error)
+	Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error)
 	// QueueSubscribe subscribes to a subject in a consumer group named queue
-	QueueSubscribe(subject, queue string, cb MessageCallback) (Subscriber, error)
+	QueueSubscribe(ctx context.Context, subject, queue string, cb MessageCallback) (Subscriber, error)
 	// Close closes the client
 	Close() error
 }

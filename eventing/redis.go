@@ -111,7 +111,7 @@ func (c *redisEventingClient) Publish(ctx context.Context, subject string, data 
 	return c.rdb.Publish(ctx, subject, payload).Err()
 }
 
-func (c *redisEventingClient) PublishQueue(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
+func (c *redisEventingClient) QueuePublish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
 	payload, err := newSerializedPubMessage(data, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
@@ -132,7 +132,7 @@ func (c *redisEventingClient) Request(ctx context.Context, subject string, data 
 	return c.request(ctx, subject, data, timeout, false, opts...)
 }
 
-func (c *redisEventingClient) RequestQueue(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
+func (c *redisEventingClient) QueueRequest(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
 	return c.request(ctx, subject, data, timeout, true, opts...)
 }
 
@@ -175,7 +175,7 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	opts = append(opts, WithHeader(redisReplyHeader, replySubject))
 
 	if queue {
-		if err := c.PublishQueue(ctx, subject, data, opts...); err != nil {
+		if err := c.QueuePublish(ctx, subject, data, opts...); err != nil {
 			return nil, fmt.Errorf("failed to queue publish: %w", err)
 		}
 	} else {

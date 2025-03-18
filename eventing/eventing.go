@@ -5,11 +5,15 @@ import (
 	"time"
 )
 
+var ReplyHeader = "reply-to"
+var SubjectHeader = "subject"
+
 // Message represents a message received from the event system
 type Message interface {
 	Data() []byte
 	Headers() Headers
 	Reply(ctx context.Context, data []byte, opts ...PublishOption) error
+	Subject() string
 }
 
 type msgReply struct {
@@ -38,9 +42,15 @@ func (h Headers) Keys() []string {
 
 type MessageCallback func(ctx context.Context, msg Message)
 
+type MessageReplier func(ctx context.Context, data []byte, opts ...PublishOption) error
+
 type Subscriber interface {
 	// Close stops the subscriber
 	Close() error
+	// IsValid returns true if the subscriber is running, false if it has been closed, or is nil or is otherwise not in a running state
+	IsValid() bool
+	// CloseWithCallback closes the subscriber and calls the callback with the error if there is one
+	CloseWithCallback(ctx context.Context, cb func(err error))
 }
 
 type PublishOption func(*publishOptions)

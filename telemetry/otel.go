@@ -15,6 +15,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
+	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -126,6 +127,10 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	)
 
 	otelsLogger := logProvider.Logger(serviceName)
+
+	tc := propagation.TraceContext{}
+	// Register the TraceContext propagator globally.
+	otel.SetTextMapPropagator(tc)
 
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second*11)

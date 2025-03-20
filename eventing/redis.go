@@ -219,6 +219,8 @@ func newReplySubject() (string, error) {
 	return fmt.Sprintf("_INBOX.%s", u.String()), nil
 }
 
+var ErrRequestTimeout = errors.New("request timed out")
+
 // request is a helper function to request a message from a subject
 // if queue is nil, the message is published using pubsub
 // if queue is not nil, the message is published using streams
@@ -237,15 +239,18 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	// Create a channel to receive the reply
 	replyChan := make(chan *redisMsgPayload, 1)
 
+	requestContext, cancel := context.WithDeadlineCause(ctx, time.Now().Add(timeout), ErrRequestTimeout)
+	defer cancel()
+
 	// Subscribe to the reply subject
-	sub := c.rdb.Subscribe(ctx, replySubject)
+	sub := c.rdb.Subscribe(requestContext, replySubject)
 	defer sub.Close()
 
 	// Set up a goroutine to handle the reply
 	go func() {
 		ch := sub.Channel()
 		select {
-		case <-ctx.Done():
+		case <-requestContext.Done():
 			return
 		case msg, ok := <-ch:
 			if !ok {
@@ -264,11 +269,11 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	opts = append(opts, WithHeader(ReplyHeader, replySubject))
 
 	if queue {
-		if err := c.QueuePublish(ctx, subject, data, opts...); err != nil {
+		if err := c.QueuePublish(requestContext, subject, data, opts...); err != nil {
 			return nil, fmt.Errorf("failed to queue publish: %w", err)
 		}
 	} else {
-		if err := c.Publish(ctx, subject, data, opts...); err != nil {
+		if err := c.Publish(requestContext, subject, data, opts...); err != nil {
 			return nil, fmt.Errorf("failed to publish: %w", err)
 		}
 	}
@@ -277,10 +282,8 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	select {
 	case reply := <-replyChan:
 		return reply, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("request timed out after %v", timeout)
+	case <-requestContext.Done():
+		return nil, requestContext.Err()
 	}
 }
 

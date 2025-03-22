@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/agentuity/go-common/logger"
@@ -113,6 +114,9 @@ func AskForConfirm(message string, defaultValue byte) byte {
 		return emptyRune
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
+	if !strings.Contains(message, "[Y/n]") {
+		message += Muted(" [Y/n] ")
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 	ch := make(chan byte, 1)

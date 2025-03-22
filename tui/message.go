@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/agentuity/go-common/logger"
-	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 )
 
@@ -40,16 +39,10 @@ func ShowError(msg string, args ...any) {
 }
 
 func Ask(logger logger.Logger, title string, defaultValue bool) bool {
-	confirm := defaultValue
-
-	if err := huh.NewConfirm().
-		Title(title).
-		Affirmative("Yes!").
-		Negative("No").
-		Value(&confirm).
-		Inline(false).
-		Run(); err != nil {
-		logger.Fatal("%s", err)
+	def := byte('Y')
+	if !defaultValue {
+		def = byte('n')
 	}
-	return confirm
+	val := AskForConfirm(title, def)
+	return val == 'Y' || val == 'y'
 }

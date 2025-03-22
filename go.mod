@@ -26,6 +26,7 @@ require (
 	go.opentelemetry.io/otel/sdk/log v0.10.0
 	go.opentelemetry.io/otel/trace v1.34.0
 	golang.org/x/sync v0.11.0
+	golang.org/x/term v0.29.0
 )
 
 require (

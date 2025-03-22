@@ -22,19 +22,21 @@ var (
 func ShowSuccess(msg string, args ...any) {
 	body := messageOKStyle.Render(" ✓ ") + messageTextStyle.Render(fmt.Sprintf(msg, args...))
 	fmt.Println(body)
-	fmt.Println()
 }
 
 func ShowLock(msg string, args ...any) {
 	body := messageLockStyle.Render(" 🔒" + messageLockStyle.Render(fmt.Sprintf(msg, args...)))
 	fmt.Println(body)
-	fmt.Println()
 }
 
 func ShowWarning(msg string, args ...any) {
 	body := messageWarningStyle.Render(" ✕ ") + messageTextStyle.Render(fmt.Sprintf(msg, args...))
 	fmt.Println(body)
-	fmt.Println()
+}
+
+func ShowError(msg string, args ...any) {
+	body := messageWarningStyle.Render(" ⚠ ") + messageTextStyle.Render(fmt.Sprintf(msg, args...))
+	fmt.Println(body)
 }
 
 func Ask(logger logger.Logger, title string, defaultValue bool) bool {

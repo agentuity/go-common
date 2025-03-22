@@ -9,6 +9,7 @@ import (
 
 	"github.com/agentuity/go-common/logger"
 	"github.com/charmbracelet/huh"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var inputTheme = huh.ThemeBase16()
@@ -80,12 +81,22 @@ func WaitForAnyKeyMessage(message string) {
 	go func() {
 		buf := make([]byte, 1)
 		os.Stdin.Read(buf)
+		fmt.Print(ansi.CursorBackward(1)) // remove the char from the screen output
 		ch <- struct{}{}
 	}()
 	fmt.Print(Secondary(message))
 	select {
 	case <-ctx.Done():
+		fmt.Println()
+		os.Exit(1)
 		return
 	case <-ch:
+		select {
+		case <-ctx.Done():
+			fmt.Println()
+			os.Exit(1)
+		default:
+			return
+		}
 	}
 }

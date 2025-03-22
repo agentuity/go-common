@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 	"github.com/vmihailenco/msgpack/v5"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -126,7 +127,7 @@ func notReplyable(ctx context.Context, data []byte, opts ...PublishOption) error
 	return ErrNotReplyable
 }
 
-func newPubRedisMessage(data []byte, opts []PublishOption) redisMsgPayload {
+func newPubRedisMessage(ctx context.Context, data []byte, opts []PublishOption) redisMsgPayload {
 	msg := redisMsgPayload{
 		InternalData:    data,
 		InternalHeaders: make(map[string]string),
@@ -144,56 +145,62 @@ func newPubRedisMessage(data []byte, opts []PublishOption) redisMsgPayload {
 		}
 	}
 
+	propagator.Inject(ctx, msg.InternalHeaders)
+
 	return msg
 }
 
 func (c *redisEventingClient) Publish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
-	msg := newPubRedisMessage(data, append(opts, WithHeader(SubjectHeader, subject)))
-	logger := c.logger.WithContext(ctx)
-	// inject the trace context into the headers before starting a span
-	propagator.Inject(ctx, msg.InternalHeaders)
-
-	spanCtx, span := tracer.Start(ctx, "Publish", trace.WithSpanKind(trace.SpanKindProducer))
+	spanCtx, span := tracer.Start(ctx, "Publish", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("subject", subject)))
 	defer span.End()
-
-	payload, err := msgpack.Marshal(msg)
-	if err != nil {
+	if err := c.publish(spanCtx, subject, data, opts); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
-		return fmt.Errorf("failed to marshal message: %w", err)
+		return err
 	}
-	logger.Trace("publishing message to %s", subject)
-	if err := c.rdb.Publish(spanCtx, subject, payload).Err(); err != nil {
-		span.SetStatus(codes.Error, err.Error())
-		span.RecordError(err)
-		return fmt.Errorf("failed to publish message: %w", err)
-	}
-
 	span.SetStatus(codes.Ok, "message published")
 	return nil
 }
 
-func (c *redisEventingClient) QueuePublish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
-	if err := checkForWildcards(subject); err != nil {
-		return err
-	}
-
-	msg := newPubRedisMessage(data, opts)
-	// inject the trace context into the headers before starting a span
-	propagator.Inject(ctx, msg.InternalHeaders)
-
-	spanCtx, span := tracer.Start(ctx, "QueuePublish", trace.WithSpanKind(trace.SpanKindProducer))
-	defer span.End()
+func (c *redisEventingClient) publish(ctx context.Context, subject string, data []byte, opts []PublishOption) error {
+	msg := newPubRedisMessage(ctx, data, append(opts, WithHeader(SubjectHeader, subject)))
 
 	payload, err := msgpack.Marshal(msg)
 	if err != nil {
+		return fmt.Errorf("failed to marshal message: %w", err)
+	}
+	if err := c.rdb.Publish(ctx, subject, payload).Err(); err != nil {
+		return fmt.Errorf("failed to publish message: %w", err)
+	}
+	return nil
+}
+
+func (c *redisEventingClient) QueuePublish(ctx context.Context, subject string, data []byte, opts ...PublishOption) error {
+	spanCtx, span := tracer.Start(ctx, "QueuePublish", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("subject", subject)))
+	defer span.End()
+
+	if err := c.queuePublish(spanCtx, subject, data, opts); err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		span.RecordError(err)
+		return err
+	}
+	span.SetStatus(codes.Ok, "message published")
+	return nil
+}
+
+func (c *redisEventingClient) queuePublish(ctx context.Context, subject string, data []byte, opts []PublishOption) error {
+	if err := checkForWildcards(subject); err != nil {
+		return err
+	}
+	msg := newPubRedisMessage(ctx, data, opts)
+
+	payload, err := msgpack.Marshal(msg)
+	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
 
 	// Use XADD with MAXLEN to keep the stream size bounded
-	return c.rdb.XAdd(spanCtx, &redis.XAddArgs{
+	return c.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: subject,
 		Approx: true,
 		MaxLen: 50,
@@ -204,11 +211,31 @@ func (c *redisEventingClient) QueuePublish(ctx context.Context, subject string, 
 }
 
 func (c *redisEventingClient) Request(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
-	return c.request(ctx, subject, data, timeout, false, opts...)
+	spanCtx, span := tracer.Start(ctx, "Request", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("subject", subject)))
+	defer span.End()
+
+	msg, err := c.request(spanCtx, subject, data, timeout, false, opts...)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return nil, err
+	}
+	span.SetStatus(codes.Ok, "message published")
+	return msg, nil
 }
 
 func (c *redisEventingClient) QueueRequest(ctx context.Context, subject string, data []byte, timeout time.Duration, opts ...PublishOption) (Message, error) {
-	return c.request(ctx, subject, data, timeout, true, opts...)
+	spanCtx, span := tracer.Start(ctx, "QueueRequest", trace.WithSpanKind(trace.SpanKindProducer), trace.WithAttributes(attribute.String("subject", subject)))
+	defer span.End()
+
+	msg, err := c.request(spanCtx, subject, data, timeout, true, opts...)
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		span.RecordError(err)
+		return nil, err
+	}
+	span.SetStatus(codes.Ok, "message published")
+	return msg, nil
 }
 
 func newReplySubject() (string, error) {
@@ -218,6 +245,8 @@ func newReplySubject() (string, error) {
 	}
 	return fmt.Sprintf("_INBOX.%s", u.String()), nil
 }
+
+var ErrRequestTimeout = errors.New("request timed out")
 
 // request is a helper function to request a message from a subject
 // if queue is nil, the message is published using pubsub
@@ -237,15 +266,18 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	// Create a channel to receive the reply
 	replyChan := make(chan *redisMsgPayload, 1)
 
+	requestContext, cancel := context.WithDeadlineCause(ctx, time.Now().Add(timeout), ErrRequestTimeout)
+	defer cancel()
+
 	// Subscribe to the reply subject
-	sub := c.rdb.Subscribe(ctx, replySubject)
+	sub := c.rdb.Subscribe(requestContext, replySubject)
 	defer sub.Close()
 
 	// Set up a goroutine to handle the reply
 	go func() {
 		ch := sub.Channel()
 		select {
-		case <-ctx.Done():
+		case <-requestContext.Done():
 			return
 		case msg, ok := <-ch:
 			if !ok {
@@ -264,11 +296,11 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	opts = append(opts, WithHeader(ReplyHeader, replySubject))
 
 	if queue {
-		if err := c.QueuePublish(ctx, subject, data, opts...); err != nil {
+		if err := c.queuePublish(requestContext, subject, data, opts); err != nil {
 			return nil, fmt.Errorf("failed to queue publish: %w", err)
 		}
 	} else {
-		if err := c.Publish(ctx, subject, data, opts...); err != nil {
+		if err := c.publish(requestContext, subject, data, opts); err != nil {
 			return nil, fmt.Errorf("failed to publish: %w", err)
 		}
 	}
@@ -277,24 +309,44 @@ func (c *redisEventingClient) request(ctx context.Context, subject string, data 
 	select {
 	case reply := <-replyChan:
 		return reply, nil
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(timeout):
-		return nil, fmt.Errorf("request timed out after %v", timeout)
+	case <-requestContext.Done():
+		return nil, requestContext.Err()
 	}
 }
 
-func (c *redisEventingClient) internalCallback(ctx context.Context, subject string, payload []byte, cb MessageCallback) {
+func (c *redisEventingClient) newReplier(subject string) func(ctx context.Context, data []byte, opts ...PublishOption) error {
+	return func(ctx context.Context, data []byte, opts ...PublishOption) error {
+		spanCtx, span := tracer.Start(
+			ctx,
+			"Reply",
+			trace.WithSpanKind(trace.SpanKindProducer),
+			trace.WithAttributes(attribute.String("subject", subject)),
+		)
+		defer span.End()
+		if err := c.publish(spanCtx, subject, data, opts); err != nil {
+			span.SetStatus(codes.Error, err.Error())
+			span.RecordError(err)
+			return err
+		}
+		span.SetStatus(codes.Ok, "message published")
+		return nil
+	}
+}
+
+func (c *redisEventingClient) receiveMessage(ctx context.Context, queueSubject string, payload []byte, cb MessageCallback) {
 	logger := c.logger.WithContext(ctx)
 	var msg redisMsgPayload
 	if err := msgpack.Unmarshal(payload, &msg); err != nil {
 		logger.Error("failed to decode message %s", err)
 		return
 	}
-	if subject != "" {
-		subject = msg.subject
-	} else if subj := msg.InternalHeaders[SubjectHeader]; subj != "" {
-		subject = subj
+	var subject string
+	if queueSubject != "" {
+		subject = queueSubject
+	} else {
+		if subj := msg.InternalHeaders[SubjectHeader]; subj != "" {
+			subject = subj
+		}
 	}
 	if subject == "" {
 		logger.Error("unable to determine subject from message")
@@ -304,20 +356,22 @@ func (c *redisEventingClient) internalCallback(ctx context.Context, subject stri
 	// extract the trace context from the headers
 	spanCtx, span := tracer.Start(
 		propagator.Extract(ctx, msg.InternalHeaders),
-		"internalCallback",
+		"receiveMessage",
 		trace.WithSpanKind(trace.SpanKindConsumer),
+		trace.WithAttributes(
+			attribute.String("subject", subject),
+		),
 	)
 	defer span.End()
 
 	if msg.InternalHeaders[ReplyHeader] != "" {
-		msg.replier = func(ctx context.Context, data []byte, opts ...PublishOption) error {
-			return c.Publish(ctx, msg.InternalHeaders[ReplyHeader], data, opts...)
-		}
+		msg.replier = c.newReplier(msg.InternalHeaders[ReplyHeader])
 	} else {
 		msg.replier = notReplyable
 	}
 
 	cb(spanCtx, &msg)
+	span.SetStatus(codes.Ok, "message received")
 }
 
 func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error) {
@@ -349,7 +403,7 @@ func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb 
 					return
 				}
 				// let it get the subject from the message
-				c.internalCallback(ctx, "", []byte(redisMsg.Payload), cb)
+				c.receiveMessage(ctx, "", []byte(redisMsg.Payload), cb)
 			}
 		}
 	}()
@@ -435,7 +489,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 						}
 
 						// Process the message
-						c.internalCallback(ctx, subject, []byte(payload), cb)
+						c.receiveMessage(ctx, subject, []byte(payload), cb)
 
 						// Acknowledge the message
 						c.rdb.XAck(ctx, subject, queue, message.ID)

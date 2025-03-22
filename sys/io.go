@@ -385,6 +385,10 @@ func Unzip(src, dest string, flatten bool) error {
 	defer r.Close()
 
 	for _, f := range r.File {
+		if strings.Contains(f.Name, "..") {
+			return fmt.Errorf("invalid file path: %s", f.Name)
+		}
+
 		rc, err := f.Open()
 		if err != nil {
 			return err

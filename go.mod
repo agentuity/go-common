@@ -11,7 +11,7 @@ require (
 	github.com/cockroachdb/errors v1.11.3
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.20
-	github.com/redis/go-redis/v9 v9.7.1
+	github.com/redis/go-redis/v9 v9.7.3
 	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38
 	github.com/spf13/cobra v1.9.1
 	github.com/stretchr/testify v1.10.0

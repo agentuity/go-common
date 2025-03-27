@@ -391,6 +391,7 @@ func (c *redisEventingClient) Subscribe(ctx context.Context, subject string, cb 
 	go func() {
 		ch := pubsub.Channel()
 		defer func() {
+			c.logger.Trace("unsubscribed from %s", subject)
 			sub.wg.Done()
 			sub.running.Store(false)
 		}()
@@ -456,9 +457,11 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 	sub.wg.Add(1)
 	go func() {
 		defer func() {
+			c.logger.Trace("unsubscribed from %s", subject)
 			sub.running.Store(false)
 			sub.wg.Done() // TODO: probably need to do this in the loop instead
 		}()
+		var failures int
 		for {
 			select {
 			case <-ctx.Done():
@@ -477,7 +480,14 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					if err == redis.Nil {
 						continue
 					}
-					return
+					c.logger.Error("failed to read messages from %s: %s", subject, err)
+					failures++
+					time.Sleep(time.Second * 10)
+					if failures > 100 {
+						c.logger.Error("closing subscriber for %s: %s", subject, err)
+						return
+					}
+					continue
 				}
 
 				for _, stream := range streams {
@@ -485,6 +495,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 						// Get the payload from the message
 						payload, ok := message.Values["payload"].(string)
 						if !ok {
+							c.logger.Error("invalid message payload for %s: %v", subject, message.Values)
 							continue
 						}
 

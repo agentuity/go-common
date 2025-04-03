@@ -152,7 +152,18 @@ func New(ctx context.Context, serviceName string, telemetrySecret string, teleme
 	}
 	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("error creating otel logger: %w", err)
+		return nil, nil, nil, fmt.Errorf("error creating otel: %w", err)
+	}
+	if consoleLogger == nil {
+		return ctx2, olog, shutdownMetrics, nil
+	}
+	return ctx2, olog.Stack(consoleLogger), shutdownMetrics, nil
+}
+
+func NewWithAPIKey(ctx context.Context, serviceName string, telemetryURL string, telemetryAPIKey string, consoleLogger logger.Logger) (context.Context, logger.Logger, func(), error) {
+	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, telemetryAPIKey, serviceName)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating otel: %w", err)
 	}
 	if consoleLogger == nil {
 		return ctx2, olog, shutdownMetrics, nil

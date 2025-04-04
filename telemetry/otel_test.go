@@ -15,7 +15,7 @@ import (
 
 func TestGenerateOTLPBearerTokenError(t *testing.T) {
 	pastTime := time.Now().Add(-1 * time.Hour)
-	token, err := GenerateOTLPBearerTokenWithExpiration("secret", pastTime)
+	token, err := GenerateOTLPBearerTokenWithExpiration("test-shared-secret", pastTime)
 	assert.Error(t, err)
 	assert.Empty(t, token)
 	assert.Contains(t, err.Error(), "expiration time is in the past")
@@ -29,7 +29,7 @@ func TestNew(t *testing.T) {
 
 	ctx := context.Background()
 	serviceName := "test-service"
-	telemetrySecret := "test-secret"
+	telemetrySecret := "test-shared-secret" // Using same non-sensitive test value as existing tests
 
 	ctx2, log, shutdown, err := New(ctx, serviceName, telemetrySecret, server.URL, nil)
 	require.NoError(t, err)
@@ -57,7 +57,7 @@ func TestNewWithAPIKey(t *testing.T) {
 
 	ctx := context.Background()
 	serviceName := "test-service"
-	apiKey := "test-api-key"
+	apiKey := "test-token" // Using same non-sensitive test value as existing tests
 
 	ctx2, log, shutdown, err := NewWithAPIKey(ctx, serviceName, server.URL, apiKey, nil)
 	require.NoError(t, err)
@@ -93,7 +93,7 @@ func TestStartSpan(t *testing.T) {
 func TestNewWithInvalidURL(t *testing.T) {
 	ctx := context.Background()
 	serviceName := "test-service"
-	telemetrySecret := "test-secret"
+	telemetrySecret := "test-shared-secret" // Using same non-sensitive test value as existing tests
 	invalidURL := "://invalid-url"
 
 	ctx2, log, shutdown, err := New(ctx, serviceName, telemetrySecret, invalidURL, nil)

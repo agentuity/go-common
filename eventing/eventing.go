@@ -21,6 +21,11 @@ type msgReply struct {
 	Error   string `json:"error,omitempty"`
 }
 
+type MessageSet interface {
+	Messages() []Message
+	Ack(ctx context.Context) error
+}
+
 // Headers represents message headers that can be used for both map operations and propagation
 type Headers map[string]string
 
@@ -57,11 +62,19 @@ type PublishOption func(*publishOptions)
 
 type publishOptions struct {
 	Headers [][]string
+	Trim    int64
 }
 
 func WithHeader(key, value string) PublishOption {
 	return func(o *publishOptions) {
 		o.Headers = append(o.Headers, []string{key, value})
+	}
+}
+
+// sets the trim publish option, which is the number of old messages to trim from the stream after the message is published
+func WithTrim(trim int64) PublishOption {
+	return func(o *publishOptions) {
+		o.Trim = trim
 	}
 }
 

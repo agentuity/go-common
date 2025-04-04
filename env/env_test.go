@@ -55,9 +55,9 @@ KEY4=value with spaces
 				t.Errorf("ParseEnvFile() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			assert.Equal(t, len(tt.expected), len(got))
-			
+
 			for i, expected := range tt.expected {
 				if i < len(got) {
 					assert.Equal(t, expected.Key, got[i].Key)
@@ -66,7 +66,7 @@ KEY4=value with spaces
 			}
 		})
 	}
-	
+
 	t.Run("non-existent file", func(t *testing.T) {
 		got, err := ParseEnvFile(filepath.Join(tmpDir, "nonexistent.env"))
 		assert.NoError(t, err)
@@ -112,9 +112,9 @@ KEY4=value with spaces
 				t.Errorf("ParseEnvBuffer() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			
+
 			assert.Equal(t, len(tt.expected), len(got))
-			
+
 			for i, expected := range tt.expected {
 				if i < len(got) {
 					assert.Equal(t, expected.Key, got[i].Key)
@@ -294,15 +294,15 @@ func TestWriteEnvFile(t *testing.T) {
 func TestFlagOrEnv(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.Flags().String("test-flag", "", "Test flag")
-	
+
 	cmd.Flags().Set("test-flag", "flag-value")
 	assert.Equal(t, "flag-value", FlagOrEnv(cmd, "test-flag", "TEST_ENV", "default"))
-	
+
 	cmd.Flags().Set("test-flag", "")
 	os.Setenv("TEST_ENV", "env-value")
 	defer os.Unsetenv("TEST_ENV")
 	assert.Equal(t, "env-value", FlagOrEnv(cmd, "test-flag", "TEST_ENV", "default"))
-	
+
 	os.Unsetenv("TEST_ENV")
 	assert.Equal(t, "default", FlagOrEnv(cmd, "test-flag", "TEST_ENV", "default"))
 }
@@ -310,7 +310,7 @@ func TestFlagOrEnv(t *testing.T) {
 func TestLogLevel(t *testing.T) {
 	cmd := &cobra.Command{Use: "test"}
 	cmd.Flags().String("log-level", "", "Log level")
-	
+
 	testCases := []struct {
 		name      string
 		flagValue string
@@ -327,12 +327,12 @@ func TestLogLevel(t *testing.T) {
 		{"trace level via env", "", "TRACE", logger.LevelTrace},
 		{"default level", "", "", logger.LevelInfo},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd.Flags().Set("log-level", "")
 			os.Unsetenv("AGENTUITY_LOG_LEVEL")
-			
+
 			if tc.flagValue != "" {
 				cmd.Flags().Set("log-level", tc.flagValue)
 			}
@@ -340,7 +340,7 @@ func TestLogLevel(t *testing.T) {
 				os.Setenv("AGENTUITY_LOG_LEVEL", tc.envValue)
 				defer os.Unsetenv("AGENTUITY_LOG_LEVEL")
 			}
-			
+
 			level := LogLevel(cmd)
 			assert.Equal(t, tc.expected, level)
 		})

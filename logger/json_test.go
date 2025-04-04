@@ -47,14 +47,6 @@ func TestJSONLogEntryString(t *testing.T) {
 	assert.Equal(t, float64(42), metadata["key2"]) // JSON numbers are float64
 }
 
-type testSink struct {
-	buf []byte
-}
-
-func (s *testSink) Write(p []byte) (n int, err error) {
-	s.buf = p
-	return len(p), nil
-}
 
 func TestJSONLoggerTokenize(t *testing.T) {
 	

@@ -12,7 +12,7 @@ func TestGetFreePort(t *testing.T) {
 	port, err := GetFreePort()
 	assert.NoError(t, err)
 	assert.Greater(t, port, 0)
-	
+
 	addr := net.JoinHostPort("localhost", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", addr)
 	if err == nil {
@@ -35,7 +35,7 @@ func TestIsLocalhost(t *testing.T) {
 		{"https://192.168.1.1", false},
 		{"", false},
 	}
-	
+
 	for _, tc := range testCases {
 		t.Run(tc.url, func(t *testing.T) {
 			result := IsLocalhost(tc.url)

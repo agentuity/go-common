@@ -8,6 +8,6 @@ import (
 
 func TestIsRunningInsideDocker(t *testing.T) {
 	result := IsRunningInsideDocker()
-	
+
 	assert.IsType(t, true, result)
 }

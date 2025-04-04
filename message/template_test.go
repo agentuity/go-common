@@ -84,3 +84,23 @@ func TestTemplateWriter(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "<p>Writer message</p>")
 	assert.Contains(t, w.Body.String(), "Writer details")
 }
+
+func TestTemplateWriterRenderToString(t *testing.T) {
+	tw := NewTemplateWriter()
+
+	data := TemplateData{
+		Title:        "String Test",
+		HeaderTitle:  "String Header",
+		Message:      "String message",
+		ShowDetails:  true,
+		ErrorDetails: "String details",
+	}
+
+	html, err := tw.RenderToString(data)
+
+	assert.NoError(t, err)
+	assert.Contains(t, html, "<title>String Test</title>")
+	assert.Contains(t, html, "<h1>String Header</h1>")
+	assert.Contains(t, html, "<p>String message</p>")
+	assert.Contains(t, html, "String details")
+}

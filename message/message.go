@@ -55,12 +55,21 @@ func (tw *TemplateWriter) Write(w http.ResponseWriter, data TemplateData, status
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(statusCode)
 
-	var buf bytes.Buffer
-	err := tw.Template.Execute(&buf, data)
+	html, err := tw.RenderToString(data)
 	if err != nil {
 		return err
 	}
 
-	_, err = io.Copy(w, &buf)
+	_, err = io.WriteString(w, html)
 	return err
+}
+
+func (tw *TemplateWriter) RenderToString(data TemplateData) (string, error) {
+	var buf bytes.Buffer
+	err := tw.Template.Execute(&buf, data)
+	if err != nil {
+		return "", err
+	}
+
+	return buf.String(), nil
 }

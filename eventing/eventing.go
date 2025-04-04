@@ -92,6 +92,8 @@ type Client interface {
 	Subscribe(ctx context.Context, subject string, cb MessageCallback) (Subscriber, error)
 	// QueueSubscribe subscribes to a subject in a consumer group named queue
 	QueueSubscribe(ctx context.Context, subject, queue string, cb MessageCallback) (Subscriber, error)
+	// QueueFetchMessages fetches messages from a subject in a consumer group named queue, the messages must be acknowledged by calling the Ack method on the MessageSet
+	QueueFetchMessages(ctx context.Context, subject, queue string, count int64) (MessageSet, error)
 	// Close closes the client
 	Close() error
 }

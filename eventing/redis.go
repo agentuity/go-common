@@ -351,7 +351,7 @@ func (c *redisEventingClient) decodeMessage(queueSubject string, payload []byte)
 			subject = subj
 		}
 	}
-	if msg.subject == "" {
+	if subject == "" {
 		return redisMsgPayload{}, fmt.Errorf("unable to determine subject from message")
 	}
 	msg.subject = subject
@@ -551,6 +551,10 @@ func (m *redisMessageSet) Messages() []Message {
 }
 
 func (m *redisMessageSet) Ack(ctx context.Context) error {
+	if len(m.ids) == 0 {
+		// this is technically impossible because xreadgroup doesnt return an empty slice, it blocks until there are messages
+		return nil
+	}
 	return m.rdb.XAck(ctx, m.subject, m.queue, m.ids...).Err()
 }
 

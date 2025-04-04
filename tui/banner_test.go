@@ -23,8 +23,8 @@ func TestTitleColor(t *testing.T) {
 func TestShowBanner(t *testing.T) {
 	originalHasTTY := HasTTY
 	defer func() { HasTTY = originalHasTTY }()
-	
+
 	HasTTY = false
 	ShowBanner("Test Title", "Test Body", false)
-	
+
 }

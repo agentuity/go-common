@@ -12,7 +12,7 @@ func TestPanicError(t *testing.T) {
 	result := panicError(1, err)
 	assert.Error(t, result)
 	assert.Contains(t, result.Error(), err.Error())
-	
+
 	result = panicError(1, "test panic")
 	assert.Error(t, result)
 	assert.Contains(t, result.Error(), "test panic")
@@ -20,7 +20,7 @@ func TestPanicError(t *testing.T) {
 
 func TestRecoverPanic(t *testing.T) {
 	log := logger.NewTestLogger()
-	
+
 	RecoverPanic(log)
-	
+
 }

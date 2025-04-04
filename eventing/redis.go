@@ -584,17 +584,18 @@ func (c *redisEventingClient) queueFetchMessages(ctx context.Context, subject, q
 		Group:    queue,
 		Consumer: consumer,
 		Streams:  []string{subject, ">"},
+		Block:    time.Millisecond * 500, // idk what a good block time is
 		Count:    count,
 	}).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil // Return empty slice for no messages
+			return &redisMessageSet{}, nil // Return empty slice for no messages
 		}
 		return nil, fmt.Errorf("failed to fetch messages: %w", err)
 	}
 
 	if len(streams) == 0 {
-		return nil, nil
+		return &redisMessageSet{}, nil
 	}
 	msgSet := redisMessageSet{
 		rdb:      c.rdb,

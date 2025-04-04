@@ -13,9 +13,15 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+const (
+	mockSharedSecret = "MOCK_SHARED_SECRET_FOR_TESTING"
+	mockAPIKey       = "MOCK_API_KEY_FOR_TESTING"
+	mockServiceName  = "mock-service"
+)
+
 func TestGenerateOTLPBearerTokenError(t *testing.T) {
 	pastTime := time.Now().Add(-1 * time.Hour)
-	token, err := GenerateOTLPBearerTokenWithExpiration("test-shared-secret", pastTime)
+	token, err := GenerateOTLPBearerTokenWithExpiration(mockSharedSecret, pastTime)
 	assert.Error(t, err)
 	assert.Empty(t, token)
 	assert.Contains(t, err.Error(), "expiration time is in the past")
@@ -28,10 +34,8 @@ func TestNew(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	serviceName := "test-service"
-	telemetrySecret := "test-shared-secret" // Using same non-sensitive test value as existing tests
 
-	ctx2, log, shutdown, err := New(ctx, serviceName, telemetrySecret, server.URL, nil)
+	ctx2, log, shutdown, err := New(ctx, mockServiceName, mockSharedSecret, server.URL, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ctx2)
 	require.NotNil(t, log)
@@ -40,7 +44,7 @@ func TestNew(t *testing.T) {
 	shutdown()
 
 	consoleLogger := logger.NewTestLogger()
-	ctx3, log2, shutdown2, err := New(ctx, serviceName, telemetrySecret, server.URL, consoleLogger)
+	ctx3, log2, shutdown2, err := New(ctx, mockServiceName, mockSharedSecret, server.URL, consoleLogger)
 	require.NoError(t, err)
 	require.NotNil(t, ctx3)
 	require.NotNil(t, log2)
@@ -56,10 +60,8 @@ func TestNewWithAPIKey(t *testing.T) {
 	defer server.Close()
 
 	ctx := context.Background()
-	serviceName := "test-service"
-	apiKey := "test-token" // Using same non-sensitive test value as existing tests
 
-	ctx2, log, shutdown, err := NewWithAPIKey(ctx, serviceName, server.URL, apiKey, nil)
+	ctx2, log, shutdown, err := NewWithAPIKey(ctx, mockServiceName, server.URL, mockAPIKey, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ctx2)
 	require.NotNil(t, log)
@@ -68,7 +70,7 @@ func TestNewWithAPIKey(t *testing.T) {
 	shutdown()
 
 	consoleLogger := logger.NewTestLogger()
-	ctx3, log2, shutdown2, err := NewWithAPIKey(ctx, serviceName, server.URL, apiKey, consoleLogger)
+	ctx3, log2, shutdown2, err := NewWithAPIKey(ctx, mockServiceName, server.URL, mockAPIKey, consoleLogger)
 	require.NoError(t, err)
 	require.NotNil(t, ctx3)
 	require.NotNil(t, log2)
@@ -92,11 +94,9 @@ func TestStartSpan(t *testing.T) {
 
 func TestNewWithInvalidURL(t *testing.T) {
 	ctx := context.Background()
-	serviceName := "test-service"
-	telemetrySecret := "test-shared-secret" // Using same non-sensitive test value as existing tests
 	invalidURL := "://invalid-url"
 
-	ctx2, log, shutdown, err := New(ctx, serviceName, telemetrySecret, invalidURL, nil)
+	ctx2, log, shutdown, err := New(ctx, mockServiceName, mockSharedSecret, invalidURL, nil)
 	assert.Error(t, err)
 	assert.Nil(t, ctx2)
 	assert.Nil(t, log)

@@ -480,6 +480,9 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					if err == redis.Nil {
 						continue
 					}
+					if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+						continue
+					}
 					c.logger.Error("failed to read messages from %s: %s", subject, err)
 					failures++
 					time.Sleep(time.Second * 10)

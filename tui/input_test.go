@@ -9,7 +9,7 @@ import (
 func TestWaitForAnyKeyMessage(t *testing.T) {
 	originalHasTTY := HasTTY
 	defer func() { HasTTY = originalHasTTY }()
-	
+
 	HasTTY = false
 	WaitForAnyKeyMessage("Press a key") // Just ensure no panic
 }
@@ -17,7 +17,7 @@ func TestWaitForAnyKeyMessage(t *testing.T) {
 func TestAskForConfirm(t *testing.T) {
 	originalHasTTY := HasTTY
 	defer func() { HasTTY = originalHasTTY }()
-	
+
 	HasTTY = false
 	result := AskForConfirm("Confirm?", 'y')
 	assert.Equal(t, byte(0), result)

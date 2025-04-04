@@ -45,6 +45,13 @@ func TestWithHeader(t *testing.T) {
 	assert.Equal(t, []string{"key2", "value2"}, opts.Headers[1])
 }
 
+func TestWithTrim(t *testing.T) {
+	opts := &publishOptions{}
+
+	WithTrim(100)(opts)
+	assert.Equal(t, int64(100), opts.Trim)
+}
+
 type MockMessage struct {
 	data    []byte
 	headers Headers
@@ -143,6 +150,8 @@ type MockClient struct {
 	subscribeErr    error
 	queueSubResult  Subscriber
 	queueSubErr     error
+	queueFetchMsgs  MessageSet
+	queueFetchErr   error
 	closeErr        error
 }
 
@@ -170,19 +179,62 @@ func (c *MockClient) QueueSubscribe(ctx context.Context, subject, queue string, 
 	return c.queueSubResult, c.queueSubErr
 }
 
+func (c *MockClient) QueueFetchMessages(ctx context.Context, subject, queue string, count int64) (MessageSet, error) {
+	return c.queueFetchMsgs, c.queueFetchErr
+}
+
 func (c *MockClient) Close() error {
 	return c.closeErr
+}
+
+type MockMessageSet struct {
+	msgs   []Message
+	ackErr error
+}
+
+func (m *MockMessageSet) Messages() []Message {
+	return m.msgs
+}
+
+func (m *MockMessageSet) Ack(ctx context.Context) error {
+	return m.ackErr
+}
+
+func TestMockMessageSet(t *testing.T) {
+	msgs := []Message{
+		&MockMessage{data: []byte("test1")},
+		&MockMessage{data: []byte("test2")},
+	}
+
+	t.Run("Messages", func(t *testing.T) {
+		msgSet := &MockMessageSet{msgs: msgs}
+		returnedMsgs := msgSet.Messages()
+		assert.Equal(t, msgs, returnedMsgs)
+	})
+
+	t.Run("Ack", func(t *testing.T) {
+		msgSet := &MockMessageSet{msgs: msgs}
+		err := msgSet.Ack(context.Background())
+		assert.NoError(t, err)
+
+		expectedErr := assert.AnError
+		msgSet = &MockMessageSet{msgs: msgs, ackErr: expectedErr}
+		err = msgSet.Ack(context.Background())
+		assert.Equal(t, expectedErr, err)
+	})
 }
 
 func TestMockClient(t *testing.T) {
 	mockMsg := &MockMessage{data: []byte("test")}
 	mockSub := &MockSubscriber{valid: true}
+	mockMsgSet := &MockMessageSet{msgs: []Message{mockMsg}}
 
 	client := &MockClient{
 		requestMsg:      mockMsg,
 		queueRequestMsg: mockMsg,
 		subscribeResult: mockSub,
 		queueSubResult:  mockSub,
+		queueFetchMsgs:  mockMsgSet,
 	}
 
 	err := client.Publish(context.Background(), "test", []byte("data"))
@@ -206,6 +258,10 @@ func TestMockClient(t *testing.T) {
 	sub, err = client.QueueSubscribe(context.Background(), "test", "queue", func(ctx context.Context, msg Message) {})
 	assert.NoError(t, err)
 	assert.Equal(t, mockSub, sub)
+
+	msgSet, err := client.QueueFetchMessages(context.Background(), "test", "queue", 10)
+	assert.NoError(t, err)
+	assert.Equal(t, mockMsgSet, msgSet)
 
 	err = client.Close()
 	assert.NoError(t, err)

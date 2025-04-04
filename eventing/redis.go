@@ -23,6 +23,8 @@ type redisMsgPayload struct {
 	InternalHeaders Headers `msgpack:"headers"`
 	replier         func(ctx context.Context, data []byte, opts ...PublishOption) error
 	subject         string
+
+	options publishOptions
 }
 
 func (m *redisMsgPayload) Data() []byte {
@@ -135,11 +137,10 @@ func newPubRedisMessage(ctx context.Context, data []byte, opts []PublishOption) 
 	}
 
 	// Apply publish options
-	options := &publishOptions{}
 	for _, opt := range opts {
-		opt(options)
+		opt(&msg.options)
 	}
-	for _, header := range options.Headers {
+	for _, header := range msg.options.Headers {
 		if len(header) == 2 {
 			msg.InternalHeaders[header[0]] = header[1]
 		}
@@ -198,12 +199,16 @@ func (c *redisEventingClient) queuePublish(ctx context.Context, subject string, 
 	if err != nil {
 		return fmt.Errorf("failed to marshal message: %w", err)
 	}
+	trim := int64(50)
+	if msg.options.Trim != 0 {
+		trim = msg.options.Trim
+	}
 
 	// Use XADD with MAXLEN to keep the stream size bounded
 	return c.rdb.XAdd(ctx, &redis.XAddArgs{
 		Stream: subject,
 		Approx: true,
-		MaxLen: 50,
+		MaxLen: trim,
 		Values: map[string]interface{}{
 			"payload": payload,
 		},
@@ -333,12 +338,10 @@ func (c *redisEventingClient) newReplier(subject string) func(ctx context.Contex
 	}
 }
 
-func (c *redisEventingClient) receiveMessage(ctx context.Context, queueSubject string, payload []byte, cb MessageCallback) {
-	logger := c.logger.WithContext(ctx)
+func (c *redisEventingClient) decodeMessage(queueSubject string, payload []byte) (redisMsgPayload, error) {
 	var msg redisMsgPayload
 	if err := msgpack.Unmarshal(payload, &msg); err != nil {
-		logger.Error("failed to decode message %s", err)
-		return
+		return redisMsgPayload{}, fmt.Errorf("failed to decode message: %w", err)
 	}
 	var subject string
 	if queueSubject != "" {
@@ -349,17 +352,27 @@ func (c *redisEventingClient) receiveMessage(ctx context.Context, queueSubject s
 		}
 	}
 	if subject == "" {
-		logger.Error("unable to determine subject from message")
-		return
+		return redisMsgPayload{}, fmt.Errorf("unable to determine subject from message")
 	}
 	msg.subject = subject
+	return msg, nil
+}
+
+func (c *redisEventingClient) receiveMessage(ctx context.Context, queueSubject string, payload []byte, cb MessageCallback) {
+	logger := c.logger.WithContext(ctx)
+
+	msg, err := c.decodeMessage(queueSubject, payload)
+	if err != nil {
+		logger.Error(err.Error())
+		return
+	}
 	// extract the trace context from the headers
 	spanCtx, span := tracer.Start(
 		propagator.Extract(ctx, msg.InternalHeaders),
 		"receiveMessage",
 		trace.WithSpanKind(trace.SpanKindConsumer),
 		trace.WithAttributes(
-			attribute.String("subject", subject),
+			attribute.String("subject", msg.subject),
 		),
 	)
 	defer span.End()
@@ -419,16 +432,16 @@ func checkForWildcards(subject string) error {
 	return nil
 }
 
-func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue string, cb MessageCallback) (Subscriber, error) {
+func (c *redisEventingClient) initGroup(ctx context.Context, subject, queue string) (string, error) {
 	if subject == "" {
-		return nil, fmt.Errorf("subject is required")
+		return "", fmt.Errorf("subject is required")
 	}
 	if queue == "" {
-		return nil, fmt.Errorf("queue is required")
+		return "", fmt.Errorf("queue is required")
 	}
 
 	if err := checkForWildcards(subject); err != nil {
-		return nil, err
+		return "", err
 	}
 
 	// Create a consumer group if it doesn't exist
@@ -436,12 +449,21 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 		if err.Error() == "BUSYGROUP Consumer Group name already exists" {
 			// great!
 		} else {
-			return nil, fmt.Errorf("failed to create consumer group: %w", err)
+			return "", fmt.Errorf("failed to create consumer group: %w", err)
 		}
 	}
 
 	// Generate a unique consumer ID
 	consumer := fmt.Sprintf("%s-%d", queue, time.Now().UnixNano())
+	return consumer, nil
+}
+
+func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue string, cb MessageCallback) (Subscriber, error) {
+	// Create a consumer group if it doesn't exist
+	consumer, err := c.initGroup(ctx, subject, queue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize consumer group: %w", err)
+	}
 
 	// Create the subscriber
 	sub := &redisQueueSubscriber{
@@ -506,7 +528,9 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 						c.receiveMessage(ctx, subject, []byte(payload), cb)
 
 						// Acknowledge the message
-						c.rdb.XAck(ctx, subject, queue, message.ID)
+						if err := c.rdb.XAck(ctx, subject, queue, message.ID).Err(); err != nil {
+							c.logger.Error("failed to acknowledge message %s: %s", message.ID, err)
+						}
 					}
 				}
 			}
@@ -514,6 +538,89 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 	}()
 
 	return sub, nil
+}
+
+type redisMessageSet struct {
+	rdb      *redis.Client
+	consumer string
+	subject  string
+	queue    string
+	msgs     []Message
+	ids      []string
+}
+
+func (m *redisMessageSet) Messages() []Message {
+	return m.msgs
+}
+
+func (m *redisMessageSet) Ack(ctx context.Context) error {
+	if len(m.ids) == 0 {
+		// this is technically impossible because xreadgroup doesnt return an empty slice, it blocks until there are messages
+		return nil
+	}
+	return m.rdb.XAck(ctx, m.subject, m.queue, m.ids...).Err()
+}
+
+func (c *redisEventingClient) QueueFetchMessages(_ctx context.Context, subject, queue string, count int64) (MessageSet, error) {
+	spanCtx, span := tracer.Start(_ctx, "QueueFetchMessages", trace.WithSpanKind(trace.SpanKindConsumer), trace.WithAttributes(attribute.String("subject", subject)))
+	defer span.End()
+
+	msgSet, err := c.queueFetchMessages(spanCtx, subject, queue, count)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	span.SetStatus(codes.Ok, "")
+	return msgSet, nil
+}
+
+func (c *redisEventingClient) queueFetchMessages(ctx context.Context, subject, queue string, count int64) (MessageSet, error) {
+	consumer, err := c.initGroup(ctx, subject, queue)
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize consumer group: %w", err)
+	}
+	streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+		Group:    queue,
+		Consumer: consumer,
+		Streams:  []string{subject, ">"},
+		Count:    count,
+	}).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return nil, nil // Return empty slice for no messages
+		}
+		return nil, fmt.Errorf("failed to fetch messages: %w", err)
+	}
+
+	if len(streams) == 0 {
+		return nil, nil
+	}
+	msgSet := redisMessageSet{
+		rdb:      c.rdb,
+		consumer: consumer,
+		subject:  subject,
+		queue:    queue,
+	}
+	stream := streams[0]
+	for _, message := range stream.Messages {
+		payload, ok := message.Values["payload"].(string)
+		if !ok {
+			c.logger.Error("invalid message payload for %s: %v", subject, message.Values)
+			continue
+		}
+
+		// Process the message
+		msg, err := c.decodeMessage(subject, []byte(payload))
+		if err != nil {
+			c.logger.Error(err.Error())
+			continue
+		}
+		msgSet.msgs = append(msgSet.msgs, &msg)
+		msgSet.ids = append(msgSet.ids, message.ID)
+
+	}
+	return &msgSet, nil
 }
 
 func (c *redisEventingClient) Close() error {

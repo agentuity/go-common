@@ -1,6 +1,7 @@
 package sys
 
 import (
+	"fmt"
 	"net"
 	"testing"
 
@@ -12,7 +13,7 @@ func TestGetFreePort(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Greater(t, port, 0)
 	
-	addr := net.JoinHostPort("localhost", string(port))
+	addr := net.JoinHostPort("localhost", fmt.Sprintf("%d", port))
 	listener, err := net.Listen("tcp", addr)
 	if err == nil {
 		listener.Close()

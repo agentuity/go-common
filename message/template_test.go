@@ -9,12 +9,26 @@ import (
 
 func TestRenderErrorPage(t *testing.T) {
 	html, err := RenderErrorPage("Test Error", "This is a test error message", "Error details here")
-
+	
 	assert.NoError(t, err)
 	assert.Contains(t, html, "<title>Test Error</title>")
 	assert.Contains(t, html, "<h1>Test Error</h1>")
 	assert.Contains(t, html, "<p>This is a test error message</p>")
 	assert.Contains(t, html, "Error details here")
+}
+
+func TestRenderErrorPageWithHTML(t *testing.T) {
+	htmlContent := "<strong>Bold text</strong> and <em>italic text</em>"
+	html, err := RenderErrorPageWithHTML("HTML Test", htmlContent, "Error details here")
+	
+	assert.NoError(t, err)
+	assert.Contains(t, html, "<title>HTML Test</title>")
+	assert.Contains(t, html, "<h1>HTML Test</h1>")
+	assert.Contains(t, html, "<p><strong>Bold text</strong> and <em>italic text</em></p>")
+	assert.Contains(t, html, "Error details here")
+	
+	assert.NotContains(t, html, "&lt;strong&gt;")
+	assert.NotContains(t, html, "&lt;em&gt;")
 }
 
 func TestRenderErrorPageWithoutDetails(t *testing.T) {

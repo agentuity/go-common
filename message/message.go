@@ -20,6 +20,19 @@ func ErrorResponse(w http.ResponseWriter, title string, message string, details 
 	return err
 }
 
+func ErrorResponseWithHTML(w http.ResponseWriter, title string, htmlMessage string, details string, statusCode int) error {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+
+	html, err := RenderErrorPageWithHTML(title, htmlMessage, details)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.WriteString(w, html)
+	return err
+}
+
 func NotFoundResponse(w http.ResponseWriter) error {
 	return ErrorResponse(w, "Page not found", "The page you are looking for does not exist.", "", http.StatusNotFound)
 }

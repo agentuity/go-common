@@ -47,7 +47,7 @@ func (c *TestLogger) With(metadata map[string]interface{}) Logger {
 	if child != nil {
 		child = child.With(metadata)
 	}
-	return &TestLogger{kv, c.Logs, child}
+	return &TestLogger{metadata: kv, Logs: c.Logs, child: child}
 }
 
 func (c *TestLogger) Log(level string, msg string, args ...interface{}) {

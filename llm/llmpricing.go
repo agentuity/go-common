@@ -20,6 +20,16 @@ type ModelPrice struct {
 	Mode               string  `json:"mode"` // chat, embedding, moderation, audio_speech, audio_transcription, etc
 }
 
+// ModelPricing is an interface for getting the price for a given model
+type ModelPricing interface {
+	// Start starts the pricing update loop
+	Start(ctx context.Context)
+	// GetPrice returns the price for a given model, or nil if the model is not found
+	GetPrice(model string) *ModelPrice
+	// Close stops the pricing update loop
+	Close()
+}
+
 type modelPricing struct {
 	pricing     map[string]*ModelPrice
 	lastUpdated time.Time
@@ -106,17 +116,7 @@ func WithOnUpdate(onUpdate func(int)) ModelPricingOption {
 	}
 }
 
-// use an interface to allow for unit testing
-type ModelPricing interface {
-	// Start starts the pricing update loop
-	Start()
-	// GetPrice returns the price for a given model, or nil if the model is not found
-	GetPrice(model string) *ModelPrice
-	// Close stops the pricing update loop
-	Close()
-}
-
-func NewModelPricing(ctx context.Context, options ...ModelPricingOption) ModelPricing {
+func NewModelPricing(options ...ModelPricingOption) ModelPricing {
 	lm := &modelPricing{}
 
 	for _, option := range options {
@@ -137,9 +137,7 @@ func NewModelPricing(ctx context.Context, options ...ModelPricingOption) ModelPr
 	return lm
 }
 
-func (p *modelPricing) Start() {
-	ctx, cancel := context.WithCancel(p.ctx)
-	p.ctx = ctx
-	p.cancelFunc = cancel
+func (p *modelPricing) Start(ctx context.Context) {
+	p.ctx, p.cancelFunc = context.WithCancel(ctx)
 	go p.run()
 }

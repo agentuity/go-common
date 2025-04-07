@@ -86,27 +86,27 @@ func (p *ModelPricing) run() {
 	}
 }
 
-type LLMModelPricingOption func(*ModelPricing)
+type ModelPricingOption func(*ModelPricing)
 
-func WithInterval(interval time.Duration) LLMModelPricingOption {
+func WithInterval(interval time.Duration) ModelPricingOption {
 	return func(p *ModelPricing) {
 		p.interval = interval
 	}
 }
 
-func WithOnError(onError func(error)) LLMModelPricingOption {
+func WithOnError(onError func(error)) ModelPricingOption {
 	return func(p *ModelPricing) {
 		p.onError = onError
 	}
 }
 
-func WithOnUpdate(onUpdate func(int)) LLMModelPricingOption {
+func WithOnUpdate(onUpdate func(int)) ModelPricingOption {
 	return func(p *ModelPricing) {
 		p.onUpdate = onUpdate
 	}
 }
 
-func NewLLMModelPricing(ctx context.Context, options ...LLMModelPricingOption) *ModelPricing {
+func NewModelPricing(ctx context.Context, options ...ModelPricingOption) *ModelPricing {
 	ctx, cancel := context.WithCancel(ctx)
 	lm := &ModelPricing{
 		ctx:        ctx,

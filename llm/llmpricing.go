@@ -20,7 +20,17 @@ type ModelPrice struct {
 	Mode               string  `json:"mode"` // chat, embedding, moderation, audio_speech, audio_transcription, etc
 }
 
-type ModelPricing struct {
+// ModelPricing is an interface for getting the price for a given model
+type ModelPricing interface {
+	// Start starts the pricing update loop
+	Start(ctx context.Context)
+	// GetPrice returns the price for a given model, or nil if the model is not found
+	GetPrice(model string) *ModelPrice
+	// Close stops the pricing update loop
+	Close()
+}
+
+type modelPricing struct {
 	pricing     map[string]*ModelPrice
 	lastUpdated time.Time
 	mu          sync.RWMutex
@@ -32,20 +42,20 @@ type ModelPricing struct {
 	interval    time.Duration
 }
 
-func (p *ModelPricing) GetPrice(model string) *ModelPrice {
+func (p *modelPricing) GetPrice(model string) *ModelPrice {
 	p.mu.RLock()
 	val := p.pricing[model]
 	p.mu.RUnlock()
 	return val
 }
 
-func (p *ModelPricing) Close() {
+func (p *modelPricing) Close() {
 	p.once.Do(func() {
 		p.cancelFunc()
 	})
 }
 
-func (p *ModelPricing) updatePrices() {
+func (p *modelPricing) updatePrices() {
 	req, err := http.NewRequestWithContext(p.ctx, "GET", modelPricingURL, nil)
 	if err != nil {
 		p.onError(fmt.Errorf("failed to create request: %w", err))
@@ -70,7 +80,7 @@ func (p *ModelPricing) updatePrices() {
 	p.mu.Unlock()
 }
 
-func (p *ModelPricing) run() {
+func (p *modelPricing) run() {
 	t := time.NewTicker(p.interval)
 	defer t.Stop()
 
@@ -86,32 +96,28 @@ func (p *ModelPricing) run() {
 	}
 }
 
-type ModelPricingOption func(*ModelPricing)
+type ModelPricingOption func(*modelPricing)
 
 func WithInterval(interval time.Duration) ModelPricingOption {
-	return func(p *ModelPricing) {
+	return func(p *modelPricing) {
 		p.interval = interval
 	}
 }
 
 func WithOnError(onError func(error)) ModelPricingOption {
-	return func(p *ModelPricing) {
+	return func(p *modelPricing) {
 		p.onError = onError
 	}
 }
 
 func WithOnUpdate(onUpdate func(int)) ModelPricingOption {
-	return func(p *ModelPricing) {
+	return func(p *modelPricing) {
 		p.onUpdate = onUpdate
 	}
 }
 
-func NewModelPricing(ctx context.Context, options ...ModelPricingOption) *ModelPricing {
-	ctx, cancel := context.WithCancel(ctx)
-	lm := &ModelPricing{
-		ctx:        ctx,
-		cancelFunc: cancel,
-	}
+func NewModelPricing(options ...ModelPricingOption) ModelPricing {
+	lm := &modelPricing{}
 
 	for _, option := range options {
 		option(lm)
@@ -128,6 +134,10 @@ func NewModelPricing(ctx context.Context, options ...ModelPricingOption) *ModelP
 		lm.interval = DefaultRefreshInterval
 	}
 
-	go lm.run()
 	return lm
+}
+
+func (p *modelPricing) Start(ctx context.Context) {
+	p.ctx, p.cancelFunc = context.WithCancel(ctx)
+	go p.run()
 }

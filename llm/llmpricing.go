@@ -117,11 +117,7 @@ type ModelPricing interface {
 }
 
 func NewModelPricing(ctx context.Context, options ...ModelPricingOption) ModelPricing {
-	ctx, cancel := context.WithCancel(ctx)
-	lm := &modelPricing{
-		ctx:        ctx,
-		cancelFunc: cancel,
-	}
+	lm := &modelPricing{}
 
 	for _, option := range options {
 		option(lm)
@@ -142,5 +138,8 @@ func NewModelPricing(ctx context.Context, options ...ModelPricingOption) ModelPr
 }
 
 func (p *modelPricing) Start() {
+	ctx, cancel := context.WithCancel(p.ctx)
+	p.ctx = ctx
+	p.cancelFunc = cancel
 	go p.run()
 }

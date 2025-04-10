@@ -17,6 +17,12 @@ type EnvLine struct {
 	Val string `json:"val"`
 }
 
+// EnvLineComment extends EnvLine to include an optional comment
+type EnvLineComment struct {
+	EnvLine
+	Comment string `json:"comment,omitempty"`
+}
+
 // ParseEnvFile parses an environment file and returns a list of EnvLine structs.
 func ParseEnvFile(filename string) ([]EnvLine, error) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
@@ -381,4 +387,53 @@ func NewTelemetry(ctx context.Context, cmd *cobra.Command, serviceName string) (
 		return nil, nil, nil, fmt.Errorf("error creating telemetry: %w", err)
 	}
 	return telemetryCtx, logger, shutdown, nil
+}
+
+// ParseEnvLinesWithComments parses an environment buffer and returns a list of EnvLineComment structs.
+// Comments preceding environment variables (starting with #) are associated with the following variable.
+func ParseEnvLinesWithComments(buf []byte) ([]EnvLineComment, error) {
+	if len(buf) == 0 {
+		return make([]EnvLineComment, 0), nil
+	}
+	var envs []EnvLineComment
+	var envMap = make(map[string]string)
+	var lastComment string
+
+	lines := strings.Split(string(buf), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			lastComment = "" // Reset comment on empty line
+			continue
+		}
+
+		if strings.HasPrefix(line, "#") {
+			// Store comment without the # prefix and trimmed
+			lastComment = strings.TrimSpace(strings.TrimPrefix(line, "#"))
+			continue
+		}
+
+		env := ProcessEnvLine(line)
+		if env.Key != "" {
+			// Interpolate the value using the current environment map
+			env.Val = interpolateValue(env.Val, envMap)
+			// Update the environment map with the interpolated value
+			envMap[env.Key] = env.Val
+
+			// Create EnvLineComment with the last seen comment
+			envs = append(envs, EnvLineComment{
+				EnvLine: env,
+				Comment: lastComment,
+			})
+
+			lastComment = "" // Reset comment after using it
+		}
+	}
+
+	// Second pass: Re-interpolate all values with the complete environment map
+	for i := range envs {
+		envs[i].Val = interpolateValue(envs[i].Val, envMap)
+	}
+
+	return envs, nil
 }

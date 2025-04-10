@@ -146,6 +146,137 @@ func TestParseEnvBuffer(t *testing.T) {
 	}
 }
 
+func TestParseEnvLinesWithComments(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []EnvLineComment
+	}{
+		{
+			name:     "empty buffer",
+			input:    "",
+			expected: []EnvLineComment{},
+		},
+		{
+			name:  "single comment with variable",
+			input: "# This is a test comment\nTEST_KEY=value",
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "TEST_KEY", Val: "value"},
+					Comment: "This is a test comment",
+				},
+			},
+		},
+		{
+			name: "multiple comments and variables",
+			input: `# Database settings
+DB_HOST=localhost
+DB_PORT=5432
+
+# API configuration
+API_KEY=secret
+API_URL=https://api.example.com`,
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "DB_HOST", Val: "localhost"},
+					Comment: "Database settings",
+				},
+				{
+					EnvLine: EnvLine{Key: "DB_PORT", Val: "5432"},
+					Comment: "",
+				},
+				{
+					EnvLine: EnvLine{Key: "API_KEY", Val: "secret"},
+					Comment: "API configuration",
+				},
+				{
+					EnvLine: EnvLine{Key: "API_URL", Val: "https://api.example.com"},
+					Comment: "",
+				},
+			},
+		},
+		{
+			name: "comment reset on empty line",
+			input: `# First comment
+KEY1=value1
+
+# Second comment
+KEY2=value2`,
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "KEY1", Val: "value1"},
+					Comment: "First comment",
+				},
+				{
+					EnvLine: EnvLine{Key: "KEY2", Val: "value2"},
+					Comment: "Second comment",
+				},
+			},
+		},
+		{
+			name: "variable interpolation with comments",
+			input: `# Base URL setting
+BASE_URL=https://example.com
+# API endpoint configuration
+API_ENDPOINT=${BASE_URL}/api`,
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "BASE_URL", Val: "https://example.com"},
+					Comment: "Base URL setting",
+				},
+				{
+					EnvLine: EnvLine{Key: "API_ENDPOINT", Val: "https://example.com/api"},
+					Comment: "API endpoint configuration",
+				},
+			},
+		},
+		{
+			name: "multiple comment lines",
+			input: `# First comment line
+# Second comment line
+# Third comment line
+MULTI_COMMENT=value`,
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "MULTI_COMMENT", Val: "value"},
+					Comment: "Third comment line",
+				},
+			},
+		},
+		{
+			name: "comments with special characters",
+			input: `# Comment with "quotes" and 'apostrophes'
+SPECIAL=value
+# Comment with # hash # symbols #
+HASH=value`,
+			expected: []EnvLineComment{
+				{
+					EnvLine: EnvLine{Key: "SPECIAL", Val: "value"},
+					Comment: `Comment with "quotes" and 'apostrophes'`,
+				},
+				{
+					EnvLine: EnvLine{Key: "HASH", Val: "value"},
+					Comment: "Comment with # hash # symbols #",
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseEnvLinesWithComments([]byte(tt.input))
+			assert.NoError(t, err)
+			assert.Equal(t, len(tt.expected), len(got), "number of entries should match")
+
+			for i, expected := range tt.expected {
+				assert.Equal(t, expected.Key, got[i].Key, "Key should match for entry %d", i)
+				assert.Equal(t, expected.Val, got[i].Val, "Value should match for entry %d", i)
+				assert.Equal(t, expected.Comment, got[i].Comment, "Comment should match for entry %d", i)
+			}
+		})
+	}
+}
+
 func TestProcessEnvLine(t *testing.T) {
 	tests := []struct {
 		name     string

@@ -76,70 +76,87 @@ KEY4=value with spaces
 
 func TestParseEnvBuffer(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		expected []EnvLine
+		name        string
+		input       string
+		expected    []EnvLine
+		interpolate bool
 	}{
 		{
-			name:     "empty buffer",
-			input:    "",
-			expected: []EnvLine{},
+			name:        "empty buffer",
+			input:       "",
+			expected:    []EnvLine{},
+			interpolate: true,
 		},
 		{
 			name:  "valid env content",
 			input: "KEY=value\nOTHER=test",
 			expected: []EnvLine{
-				{Key: "KEY", Val: "value"},
-				{Key: "OTHER", Val: "test"},
+				{Key: "KEY", Val: "value", Raw: "value"},
+				{Key: "OTHER", Val: "test", Raw: "test"},
 			},
+			interpolate: true,
 		},
 		{
 			name:  "basic variable interpolation",
 			input: "FOO=bar\nBAR=${FOO}",
 			expected: []EnvLine{
-				{Key: "FOO", Val: "bar"},
-				{Key: "BAR", Val: "bar"},
+				{Key: "FOO", Val: "bar", Raw: "bar"},
+				{Key: "BAR", Val: "bar", Raw: "${FOO}"},
 			},
+			interpolate: true,
 		},
 		{
 			name:  "default values",
 			input: "FOO=${MISSING:-default}\nBAR=${FOO:-backup}",
 			expected: []EnvLine{
-				{Key: "FOO", Val: "default"},
-				{Key: "BAR", Val: "default"},
+				{Key: "FOO", Val: "default", Raw: "${MISSING:-default}"},
+				{Key: "BAR", Val: "default", Raw: `${FOO:-backup}`},
 			},
+			interpolate: true,
 		},
 		{
 			name:  "multiple interpolation",
 			input: "A=1\nB=${A}/2\nC=${A}/${B}",
 			expected: []EnvLine{
-				{Key: "A", Val: "1"},
-				{Key: "B", Val: "1/2"},
-				{Key: "C", Val: "1/1/2"},
+				{Key: "A", Val: "1", Raw: "1"},
+				{Key: "B", Val: "1/2", Raw: "${A}/2"},
+				{Key: "C", Val: "1/1/2", Raw: "${A}/${B}"},
 			},
+			interpolate: true,
 		},
 		{
 			name:  "empty references",
 			input: "EMPTY=${}\nFOO=bar\nBAR=${FOO}",
 			expected: []EnvLine{
-				{Key: "EMPTY", Val: "${}"},
-				{Key: "FOO", Val: "bar"},
-				{Key: "BAR", Val: "bar"},
+				{Key: "EMPTY", Val: "${}", Raw: "${}"},
+				{Key: "FOO", Val: "bar", Raw: "bar"},
+				{Key: "BAR", Val: "bar", Raw: "${FOO}"},
 			},
+			interpolate: true,
 		},
 		{
 			name:  "nested reference",
 			input: "FOO=bar\nBAR=${FOO}foo",
 			expected: []EnvLine{
-				{Key: "FOO", Val: "bar"},
-				{Key: "BAR", Val: "barfoo"},
+				{Key: "FOO", Val: "bar", Raw: "bar"},
+				{Key: "BAR", Val: "barfoo", Raw: `${FOO}foo`},
 			},
+			interpolate: true,
+		},
+		{
+			name:  "nested reference",
+			input: "FOO=bar\nBAR=${FOO}foo",
+			expected: []EnvLine{
+				{Key: "FOO", Val: "bar", Raw: "bar"},
+				{Key: "BAR", Val: `${FOO}foo`, Raw: `${FOO}foo`},
+			},
+			interpolate: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseEnvBuffer([]byte(tt.input))
+			got, err := ParseEnvBuffer([]byte(tt.input), WithInterpolate(tt.interpolate))
 			assert.NoError(t, err)
 			assert.Equal(t, tt.expected, got)
 		})

@@ -15,6 +15,7 @@ import (
 type EnvLine struct {
 	Key string `json:"key"`
 	Val string `json:"val"`
+	Raw string `json:"-"` // the raw line from the file
 }
 
 // EnvLineComment extends EnvLine to include an optional comment
@@ -24,7 +25,7 @@ type EnvLineComment struct {
 }
 
 // ParseEnvFile parses an environment file and returns a list of EnvLine structs.
-func ParseEnvFile(filename string) ([]EnvLine, error) {
+func ParseEnvFile(filename string, opts ...WithParseEnvOptions) ([]EnvLine, error) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
 		return []EnvLine{}, nil
 	}
@@ -32,7 +33,7 @@ func ParseEnvFile(filename string) ([]EnvLine, error) {
 	if err != nil {
 		return nil, err
 	}
-	return ParseEnvBuffer(buf)
+	return ParseEnvBuffer(buf, opts...)
 }
 
 func dequote(s string) string {
@@ -47,20 +48,11 @@ func dequote(s string) string {
 	return v
 }
 
-// isLetter returns true if the byte is a letter (A-Z or a-z)
-func isLetter(c byte) bool {
-	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
-}
-
-// isNumber returns true if the byte is a number (0-9)
-func isNumber(c byte) bool {
-	return c >= '0' && c <= '9'
-}
-
 func ParseEnvValue(key, val string) EnvLine {
 	return EnvLine{
 		Key: key,
 		Val: val,
+		Raw: val,
 	}
 }
 
@@ -246,13 +238,33 @@ func interpolateValueWithLogger(input string, envMap map[string]string, logger d
 	return finalResult
 }
 
+type parseEnvOptions struct {
+	Interpolate bool
+}
+
+type WithParseEnvOptions func(opts *parseEnvOptions)
+
+// WithInterpolate sets the Interpolate flag to true or false
+func WithInterpolate(interpolate bool) WithParseEnvOptions {
+	return func(opts *parseEnvOptions) {
+		opts.Interpolate = interpolate
+	}
+}
+
 // ParseEnvBuffer parses an environment buffer and returns a list of EnvLine structs.
-func ParseEnvBuffer(buf []byte) ([]EnvLine, error) {
+func ParseEnvBuffer(buf []byte, opts ...WithParseEnvOptions) ([]EnvLine, error) {
 	if len(buf) == 0 {
 		return make([]EnvLine, 0), nil
 	}
+	config := parseEnvOptions{
+		Interpolate: true,
+	}
+	for _, opt := range opts {
+		opt(&config)
+	}
 	var envs []EnvLine
 	var envMap = make(map[string]string)
+	var envRaw = make(map[string]string)
 
 	// First pass: Build environment map and process interpolation
 	lines := strings.Split(string(buf), "\n")
@@ -263,8 +275,11 @@ func ParseEnvBuffer(buf []byte) ([]EnvLine, error) {
 		}
 		env := ProcessEnvLine(line)
 		if env.Key != "" {
-			// Interpolate the value using the current environment map
-			env.Val = interpolateValue(env.Val, envMap)
+			envRaw[env.Key] = env.Raw
+			if config.Interpolate {
+				// Interpolate the value using the current environment map
+				env.Val = interpolateValue(env.Val, envMap)
+			}
 			// Update the environment map with the interpolated value
 			envMap[env.Key] = env.Val
 			envs = append(envs, env)
@@ -272,8 +287,15 @@ func ParseEnvBuffer(buf []byte) ([]EnvLine, error) {
 	}
 
 	// Second pass: Re-interpolate all values with the complete environment map
-	for i := range envs {
-		envs[i].Val = interpolateValue(envs[i].Val, envMap)
+	if config.Interpolate {
+		for i := range envs {
+			envs[i].Raw = envRaw[envs[i].Key]
+			envs[i].Val = interpolateValue(envs[i].Val, envMap)
+		}
+	} else {
+		for i := range envs {
+			envs[i].Raw = envRaw[envs[i].Key]
+		}
 	}
 
 	return envs, nil

@@ -498,7 +498,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					Consumer: consumer,
 					Streams:  []string{subject, ">"},
 					Count:    10,              // Process up to 10 messages at a time
-					Block:    time.Minute * 1, // Block for 5 minutes
+					Block:    time.Minute * 1, // Block for 1 minutes then loop
 				}).Result()
 
 				if err != nil {

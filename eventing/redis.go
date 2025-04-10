@@ -465,6 +465,8 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 		return nil, fmt.Errorf("failed to initialize consumer group: %w", err)
 	}
 
+	logger := c.logger.WithContext(ctx).With(map[string]any{"consumer": consumer, "subject": subject, "queue": queue})
+
 	// Create the subscriber
 	sub := &redisQueueSubscriber{
 		streamKey: subject,
@@ -479,7 +481,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 	sub.wg.Add(1)
 	go func() {
 		defer func() {
-			c.logger.Trace("unsubscribed from %s", subject)
+			logger.Trace("unsubscribed from %s", subject)
 			sub.running.Store(false)
 			sub.wg.Done() // TODO: probably need to do this in the loop instead
 		}()
@@ -489,13 +491,14 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 			case <-ctx.Done():
 				return
 			default:
+				logger.Trace("reading messages")
 				// Read messages from the stream
 				streams, err := c.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
 					Group:    queue,
 					Consumer: consumer,
 					Streams:  []string{subject, ">"},
-					Count:    10, // Process up to 10 messages at a time
-					Block:    0,  // Block indefinitely
+					Count:    10,              // Process up to 10 messages at a time
+					Block:    time.Minute * 1, // Block for 5 minutes
 				}).Result()
 
 				if err != nil {
@@ -505,11 +508,11 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 						continue
 					}
-					c.logger.Error("failed to read messages from %s: %s", subject, err)
+					logger.Error("failed to read messages from %s: %s", subject, err)
 					failures++
 					time.Sleep(time.Second * 10)
 					if failures > 100 {
-						c.logger.Error("closing subscriber for %s: %s", subject, err)
+						logger.Error("closing subscriber for %s: %s", subject, err)
 						return
 					}
 					continue
@@ -520,7 +523,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 						// Get the payload from the message
 						payload, ok := message.Values["payload"].(string)
 						if !ok {
-							c.logger.Error("invalid message payload for %s: %v", subject, message.Values)
+							logger.Error("invalid message payload for %s: %v", subject, message.Values)
 							continue
 						}
 
@@ -529,7 +532,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 
 						// Acknowledge the message
 						if err := c.rdb.XAck(ctx, subject, queue, message.ID).Err(); err != nil {
-							c.logger.Error("failed to acknowledge message %s: %s", message.ID, err)
+							logger.Error("failed to acknowledge message %s: %s", message.ID, err)
 						}
 					}
 				}

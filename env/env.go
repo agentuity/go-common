@@ -41,6 +41,16 @@ func dequote(s string) string {
 	return v
 }
 
+// isLetter returns true if the byte is a letter (A-Z or a-z)
+func isLetter(c byte) bool {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+// isNumber returns true if the byte is a number (0-9)
+func isNumber(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
 func ParseEnvValue(key, val string) EnvLine {
 	return EnvLine{
 		Key: key,
@@ -51,24 +61,168 @@ func ParseEnvValue(key, val string) EnvLine {
 // ProcessEnvLine processes an environment variable line and returns an EnvLine struct with the key, value, and secret flag set.
 func ProcessEnvLine(env string) EnvLine {
 	tok := strings.SplitN(env, "=", 2)
+	if len(tok) < 2 {
+		return EnvLine{Key: env, Val: ""}
+	}
 	key := tok[0]
 	val := dequote(tok[1])
 	return ParseEnvValue(key, val)
 }
 
-// ParseEnvBuffer parses an environment file from a buffer and returns a list of EnvLine structs.
-func ParseEnvBuffer(buf []byte) ([]EnvLine, error) {
-	var envs []EnvLine
-	if len(buf) > 0 {
-		lines := strings.Split(string(buf), "\n")
-		for _, line := range lines {
-			line = strings.TrimSpace(line)
-			if line == "" || line[0] == '#' || !strings.Contains(line, "=") {
-				continue
+type reference struct {
+	varName      string
+	defaultValue string
+	preserve     bool
+}
+
+func findClosingBrace(input string, start int) int {
+	braceCount := 1
+	for i := start; i < len(input); i++ {
+		if input[i] == '{' {
+			braceCount++
+		} else if input[i] == '}' {
+			braceCount--
+			if braceCount == 0 {
+				// Check if this is a valid reference by looking at what's inside
+				inner := input[start:i]
+				if strings.Contains(inner, "}") {
+					// If we find a } inside, this is malformed
+					return -1
+				}
+				return i
 			}
-			envs = append(envs, ProcessEnvLine(line))
 		}
 	}
+	return -1
+}
+
+func parseReference(ref string) reference {
+	// Remove ${ and }
+	inner := ref[2 : len(ref)-1]
+
+	// Split on :- for default value
+	parts := strings.SplitN(inner, ":-", 2)
+
+	varName := parts[0]
+	defaultValue := ""
+	if len(parts) > 1 {
+		defaultValue = parts[1]
+	}
+
+	return reference{
+		varName:      varName,
+		defaultValue: defaultValue,
+	}
+}
+
+func interpolateValue(input string, envMap map[string]string) string {
+	if input == "" {
+		return input
+	}
+
+	// For malformed inputs, return as-is
+	if strings.Count(input, "${") != strings.Count(input, "}") {
+		return input
+	}
+
+	var result strings.Builder
+	lastPos := 0
+
+	for i := 0; i < len(input); i++ {
+		if i+1 < len(input) && input[i] == '$' && input[i+1] == '{' {
+			// Write text before the reference
+			result.WriteString(input[lastPos:i])
+
+			// Find closing brace
+			end := findClosingBrace(input, i+2)
+			if end == -1 {
+				// No closing brace - preserve rest of string
+				result.WriteString(input[i:])
+				return result.String()
+			}
+
+			// Extract and parse the reference
+			refStr := input[i : end+1]
+			ref := parseReference(refStr)
+
+			// Handle empty reference
+			if ref.varName == "" {
+				result.WriteString("${}")
+				i = end
+				lastPos = end + 1
+				continue
+			}
+
+			// Check if this is an OS environment lookup
+			if strings.HasPrefix(ref.varName, "env:") {
+				// Strip the env: prefix and look up in OS environment
+				envKey := strings.TrimPrefix(ref.varName, "env:")
+				val := os.Getenv(envKey)
+				if val == "" && ref.defaultValue != "" {
+					// Use default value if provided and env var is empty
+					result.WriteString(ref.defaultValue)
+				} else if val == "" {
+					// Preserve the original reference if no default and env var is empty
+					result.WriteString(refStr)
+				} else {
+					result.WriteString(val)
+				}
+			} else {
+				// Regular envMap lookup
+				val, exists := envMap[ref.varName]
+				if !exists || val == "" {
+					if ref.defaultValue != "" {
+						// Use default value if provided
+						result.WriteString(ref.defaultValue)
+					} else {
+						// Preserve the original reference if no default and variable missing
+						result.WriteString(refStr)
+					}
+				} else {
+					result.WriteString(val)
+				}
+			}
+
+			i = end
+			lastPos = end + 1
+		}
+	}
+
+	// Add remaining text
+	result.WriteString(input[lastPos:])
+	return result.String()
+}
+
+// ParseEnvBuffer parses an environment buffer and returns a list of EnvLine structs.
+func ParseEnvBuffer(buf []byte) ([]EnvLine, error) {
+	if len(buf) == 0 {
+		return make([]EnvLine, 0), nil
+	}
+	var envs []EnvLine
+	var envMap = make(map[string]string)
+
+	// First pass: Build environment map and process interpolation
+	lines := strings.Split(string(buf), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		env := ProcessEnvLine(line)
+		if env.Key != "" {
+			// Interpolate the value using the current environment map
+			env.Val = interpolateValue(env.Val, envMap)
+			// Update the environment map with the interpolated value
+			envMap[env.Key] = env.Val
+			envs = append(envs, env)
+		}
+	}
+
+	// Second pass: Re-interpolate all values with the complete environment map
+	for i := range envs {
+		envs[i].Val = interpolateValue(envs[i].Val, envMap)
+	}
+
 	return envs, nil
 }
 

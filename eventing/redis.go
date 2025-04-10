@@ -481,7 +481,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 	sub.wg.Add(1)
 	go func() {
 		defer func() {
-			logger.Trace("unsubscribed from %s", subject)
+			logger.Trace("unsubscribed")
 			sub.running.Store(false)
 			sub.wg.Done() // TODO: probably need to do this in the loop instead
 		}()

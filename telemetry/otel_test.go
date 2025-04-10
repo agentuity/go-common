@@ -16,7 +16,7 @@ import (
 func TestGenerateOTLPBearerTokenWithExpirationInPast(t *testing.T) {
 	sharedSecret := "test-secret"
 	expiration := time.Now().Add(-time.Hour) // 1 hour in the past
-	
+
 	token, err := GenerateOTLPBearerTokenWithExpiration(sharedSecret, expiration)
 	assert.Error(t, err)
 	assert.Empty(t, token)
@@ -28,17 +28,17 @@ func getTestValues() (string, string, string) {
 	if serviceName == "" {
 		serviceName = "test-service"
 	}
-	
+
 	secretValue := os.Getenv("TEST_SECRET_VALUE")
 	if secretValue == "" {
 		secretValue = "placeholder-for-testing"
 	}
-	
+
 	apiKey := os.Getenv("TEST_API_KEY")
 	if apiKey == "" {
 		apiKey = "placeholder-for-testing"
 	}
-	
+
 	return serviceName, secretValue, apiKey
 }
 
@@ -50,7 +50,7 @@ func TestNew(t *testing.T) {
 
 	ctx := context.Background()
 	serviceName, secretValue, _ := getTestValues()
-	
+
 	ctx2, log, shutdown, err := New(ctx, serviceName, secretValue, server.URL, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ctx2)
@@ -77,7 +77,7 @@ func TestNewWithAPIKey(t *testing.T) {
 
 	ctx := context.Background()
 	serviceName, _, apiKey := getTestValues()
-	
+
 	ctx2, log, shutdown, err := NewWithAPIKey(ctx, serviceName, server.URL, apiKey, nil)
 	require.NoError(t, err)
 	require.NotNil(t, ctx2)
@@ -100,7 +100,7 @@ func TestNewWithInvalidURL(t *testing.T) {
 	ctx := context.Background()
 	invalidURL := "://invalid-url"
 	serviceName, secretValue, _ := getTestValues()
-	
+
 	ctx2, log, shutdown, err := New(ctx, serviceName, secretValue, invalidURL, nil)
 	assert.Error(t, err)
 	assert.Nil(t, ctx2)

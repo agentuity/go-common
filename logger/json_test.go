@@ -56,13 +56,13 @@ func TestJSONLoggerTokenize(t *testing.T) {
 		logLevel:     LevelTrace,
 	}
 	logger = logger.WithPrefix("[component]").(*jsonLogger)
-	
+
 	logger.Info("Test message")
-	
+
 	var parsed map[string]interface{}
 	err := json.Unmarshal(sink.buf, &parsed)
 	assert.NoError(t, err)
-	
+
 	assert.Equal(t, "component", parsed["component"])
 }
 

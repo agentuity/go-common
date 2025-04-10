@@ -34,5 +34,3 @@ jobs:
         run: |
           go test -fuzz=FuzzEncryptDecrypt ./crypto -fuzztime=3s
           go test -fuzz=FuzzPEMEncoding ./crypto -fuzztime=3s
-      # - name: Benchmark
-      #   run: go test -bench=. ./...

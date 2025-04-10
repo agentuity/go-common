@@ -342,7 +342,11 @@ func WriteEnvFile(fn string, envs []EnvLine) error {
 	}
 	defer of.Close()
 	for _, el := range envs {
-		fmt.Fprintln(of, EncodeOSEnv(el.Key, el.Val))
+		if el.Raw != "" {
+			fmt.Fprintln(of, EncodeOSEnv(el.Key, el.Raw))
+		} else {
+			fmt.Fprintln(of, EncodeOSEnv(el.Key, el.Val))
+		}
 	}
 	return of.Close()
 }

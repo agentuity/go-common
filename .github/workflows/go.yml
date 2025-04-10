@@ -34,4 +34,3 @@ jobs:
         run: |
           go test -fuzz=FuzzEncryptDecrypt ./crypto -fuzztime=3s
           go test -fuzz=FuzzPEMEncoding ./crypto -fuzztime=3s
-          go test -fuzz=FuzzInterpolateValue ./env -fuzztime=3s

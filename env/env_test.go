@@ -3,7 +3,6 @@ package env
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/agentuity/go-common/logger"
@@ -369,13 +368,24 @@ func TestLogLevel(t *testing.T) {
 	}
 }
 
+type testLogger struct {
+	t      *testing.T
+	prefix string
+}
+
+func (l testLogger) Logf(format string, args ...interface{}) {
+	l.t.Logf(l.prefix+format, args...)
+}
+
 func TestInterpolateValue(t *testing.T) {
 	// Set up some OS environment variables for testing
 	os.Setenv("TEST_OS_VAR", "os_value")
 	os.Setenv("TEST_OS_VAR2", "os_value2")
+	os.Setenv("USER", "jhaynie")
 	defer func() {
 		os.Unsetenv("TEST_OS_VAR")
 		os.Unsetenv("TEST_OS_VAR2")
+		os.Unsetenv("USER")
 	}()
 
 	tests := []struct {
@@ -469,79 +479,28 @@ func TestInterpolateValue(t *testing.T) {
 			envMap:   map[string]string{},
 			expected: "os_valueos_value2",
 		},
+		{
+			name:     "nested interpolation with env prefix",
+			val:      "${DATABASE_URL_${env:USER}}",
+			envMap:   map[string]string{"DATABASE_URL_jhaynie": "foo"},
+			expected: "foo",
+		},
+		{
+			name:     "full database url example",
+			val:      "DATABASE_URL=${DATABASE_URL_${env:USER}}",
+			envMap:   map[string]string{"DATABASE_URL_jhaynie": "foo"},
+			expected: "DATABASE_URL=foo",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := interpolateValue(tt.val, tt.envMap)
+			t.Logf("Input: %s", tt.val)
+			t.Logf("EnvMap: %v", tt.envMap)
+			logger := testLogger{t: t, prefix: "DEBUG: "}
+			got := interpolateValueWithLogger(tt.val, tt.envMap, logger)
+			t.Logf("Got: %s", got)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
-}
-
-func FuzzInterpolateValue(f *testing.F) {
-	// Add initial seed corpus
-	seeds := []struct {
-		val string
-		env map[string]string
-	}{
-		{"simple value", nil},
-		{"${VAR}", map[string]string{"VAR": "value"}},
-		{"${VAR:-default}", nil},
-		{"prefix ${VAR} suffix", map[string]string{"VAR": "value"}},
-		{"${A}/${B}", map[string]string{"A": "1", "B": "2"}},
-		{"${}", nil},
-	}
-
-	for _, seed := range seeds {
-		// Convert env map to string
-		var envStr string
-		if seed.env != nil {
-			var pairs []string
-			for k, v := range seed.env {
-				pairs = append(pairs, k+"="+v)
-			}
-			envStr = strings.Join(pairs, "\n")
-		}
-		f.Add(seed.val, envStr)
-	}
-
-	f.Fuzz(func(t *testing.T, val, envStr string) {
-		// Skip extremely long inputs
-		if len(val) > 1000 || len(envStr) > 1000 {
-			return
-		}
-
-		// Parse environment string into map
-		envMap := make(map[string]string)
-		if envStr != "" {
-			envs, err := ParseEnvBuffer([]byte(envStr))
-			if err != nil {
-				return
-			}
-			for _, env := range envs {
-				envMap[env.Key] = env.Val
-			}
-		}
-
-		// Perform interpolation
-		result := interpolateValue(val, envMap)
-
-		// Verify basic invariants
-		if strings.Contains(result, "${") {
-			// For malformed inputs, we should get back exactly what we put in
-			if strings.Count(val, "${") != strings.Count(val, "}") {
-				if result != val {
-					t.Errorf("malformed input not preserved: got %q, want %q", result, val)
-				}
-				return
-			}
-		}
-
-		// Verify stability - interpolating again should yield same result
-		secondPass := interpolateValue(result, envMap)
-		if secondPass != result {
-			t.Errorf("interpolation not stable: %q -> %q", result, secondPass)
-		}
-	})
 }

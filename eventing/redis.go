@@ -74,18 +74,15 @@ func (s *redisSubscriber) IsValid() bool {
 }
 
 type redisQueueSubscriber struct {
-	streamKey string
-	group     string
-	consumer  string
-	rdb       *redis.Client
-	ctx       context.Context
-	running   atomic.Bool
-	wg        sync.WaitGroup
+	closer  context.CancelFunc
+	running atomic.Bool
+	wg      sync.WaitGroup
 }
 
 func (s *redisQueueSubscriber) Close() error {
-	// Remove the consumer from the group
-	return s.rdb.XGroupDelConsumer(s.ctx, s.streamKey, s.group, s.consumer).Err()
+	s.closer()
+	s.wg.Wait()
+	return nil
 }
 
 func (s *redisQueueSubscriber) CloseWithCallback(ctx context.Context, cb func(err error)) {
@@ -94,9 +91,6 @@ func (s *redisQueueSubscriber) CloseWithCallback(ctx context.Context, cb func(er
 
 func (s *redisQueueSubscriber) IsValid() bool {
 	if s == nil {
-		return false
-	}
-	if s.rdb == nil {
 		return false
 	}
 	return s.running.Load()
@@ -467,14 +461,9 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 
 	logger := c.logger.WithContext(ctx).With(map[string]any{"consumer": consumer, "subject": subject, "queue": queue})
 
+	closerCtx, closer := context.WithCancel(context.Background())
 	// Create the subscriber
-	sub := &redisQueueSubscriber{
-		streamKey: subject,
-		group:     queue,
-		consumer:  consumer,
-		rdb:       c.rdb,
-		ctx:       ctx,
-	}
+	sub := &redisQueueSubscriber{closer: closer}
 	sub.running.Store(true)
 
 	// Start a goroutine to handle messages for this subscription
@@ -483,12 +472,18 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 		defer func() {
 			logger.Trace("unsubscribed")
 			sub.running.Store(false)
-			sub.wg.Done() // TODO: probably need to do this in the loop instead
+			// Remove the consumer from the group
+			if err := c.rdb.XGroupDelConsumer(ctx, subject, queue, consumer).Err(); err != nil {
+				logger.Error("failed to delete consumer: %s", err)
+			}
+			sub.wg.Done()
 		}()
 		var failures int
 		for {
 			select {
 			case <-ctx.Done():
+				return
+			case <-closerCtx.Done():
 				return
 			default:
 				logger.Trace("reading messages")
@@ -497,8 +492,8 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					Group:    queue,
 					Consumer: consumer,
 					Streams:  []string{subject, ">"},
-					Count:    10,              // Process up to 10 messages at a time
-					Block:    time.Minute * 1, // Block for 1 minutes then loop
+					Count:    10,               // Process up to 10 messages at a time
+					Block:    time.Second * 15, // Block for 15 seconds then loop
 				}).Result()
 
 				if err != nil {
@@ -529,10 +524,9 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 
 						// Process the message
 						c.receiveMessage(ctx, subject, []byte(payload), cb)
-
 						// Acknowledge the message
 						if err := c.rdb.XAck(ctx, subject, queue, message.ID).Err(); err != nil {
-							logger.Error("failed to acknowledge message %s: %s", message.ID, err)
+							logger.Error("failed to acknowledge messages %s: %s", message.ID, err)
 						}
 					}
 				}

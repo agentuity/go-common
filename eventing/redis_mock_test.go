@@ -33,13 +33,13 @@ func TestRedisQueueSubscriberIsValid(t *testing.T) {
 	})
 
 	t.Run("not running", func(t *testing.T) {
-		sub := &redisQueueSubscriber{rdb: &redis.Client{}}
+		sub := &redisQueueSubscriber{}
 		sub.running.Store(false)
 		assert.False(t, sub.IsValid())
 	})
 
 	t.Run("valid", func(t *testing.T) {
-		sub := &redisQueueSubscriber{rdb: &redis.Client{}}
+		sub := &redisQueueSubscriber{}
 		sub.running.Store(true)
 		assert.True(t, sub.IsValid())
 	})

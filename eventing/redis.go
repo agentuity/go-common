@@ -513,7 +513,6 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 					continue
 				}
 
-				var ids []string
 				for _, stream := range streams {
 					for _, message := range stream.Messages {
 						// Get the payload from the message
@@ -525,12 +524,11 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 
 						// Process the message
 						c.receiveMessage(ctx, subject, []byte(payload), cb)
-						ids = append(ids, message.ID)
+						// Acknowledge the message
+						if err := c.rdb.XAck(ctx, subject, queue, message.ID).Err(); err != nil {
+							logger.Error("failed to acknowledge messages %s: %s", message.ID, err)
+						}
 					}
-				}
-				// Acknowledge the message
-				if err := c.rdb.XAck(ctx, subject, queue, ids...).Err(); err != nil {
-					logger.Error("failed to acknowledge messages %s: %s", ids, err)
 				}
 			}
 		}

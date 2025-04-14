@@ -354,9 +354,11 @@ func WriteEnvFile(fn string, envs []EnvLine) error {
 // FlagOrEnv will try and get a flag from the cobra.Command and if not found, look it up in the environment
 // and fallback to defaultValue if non found
 func FlagOrEnv(cmd *cobra.Command, flagName string, envName string, defaultValue string) string {
-	flagValue, _ := cmd.Flags().GetString(flagName)
-	if flagValue != "" {
-		return flagValue
+	if cmd.Flags().Changed(flagName) {
+		flagValue, _ := cmd.Flags().GetString(flagName)
+		if flagValue != "" {
+			return flagValue
+		}
 	}
 	if val, ok := os.LookupEnv(envName); ok {
 		return val

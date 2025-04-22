@@ -36,6 +36,8 @@ func WithExpiration(expiration time.Time) TokenOpt {
 	return WithNonce(str2duration.String(exp.Round(time.Hour)) + "." + strconv.FormatInt(time.Now().Unix(), 10))
 }
 
+// WithNonce is a TokenOpt that sets the nonce for the token
+//
 // Deprecated: it is better to pass no token and let the function generate a random token
 func WithNonce(nonce string) TokenOpt {
 	return func(opts *tokenOpts) error {
@@ -44,6 +46,7 @@ func WithNonce(nonce string) TokenOpt {
 	}
 }
 
+// NewBearerToken generates a new bearer token
 func NewBearerToken(sharedSecret string, opts ...TokenOpt) (string, error) {
 	hash := sha256.New()
 

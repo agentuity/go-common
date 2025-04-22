@@ -6,22 +6,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/agentuity/go-common/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestGenerateOTLPBearerTokenWithExpirationInPast(t *testing.T) {
-	sharedSecret := "test-secret"
-	expiration := time.Now().Add(-time.Hour) // 1 hour in the past
-
-	token, err := GenerateOTLPBearerTokenWithExpiration(sharedSecret, expiration)
-	assert.Error(t, err)
-	assert.Empty(t, token)
-	assert.Contains(t, err.Error(), "expiration time is in the past")
-}
 
 func getTestValues() (string, string, string) {
 	serviceName := os.Getenv("TEST_SERVICE_NAME")

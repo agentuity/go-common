@@ -2,16 +2,13 @@ package telemetry
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/url"
-	"strconv"
 	"time"
 
+	"github.com/agentuity/go-common/authentication"
 	"github.com/agentuity/go-common/logger"
-	"github.com/xhit/go-str2duration/v2"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -24,28 +21,11 @@ import (
 )
 
 func GenerateOTLPBearerToken(sharedSecret string, token string) (string, error) {
-	hash := sha256.New()
-	if _, err := hash.Write([]byte(sharedSecret + "." + token)); err != nil {
-		return "", fmt.Errorf("error hashing token: %w", err)
-	}
-	secret := hash.Sum(nil)
-	tok2 := base64.StdEncoding.EncodeToString(secret)
-	return token + "." + tok2, nil
+	return authentication.NewBearerToken(sharedSecret)
 }
 
 func GenerateOTLPBearerTokenWithExpiration(sharedSecret string, expiration time.Time) (string, error) {
-	hash := sha256.New()
-	exp := time.Until(expiration)
-	if exp < 0 {
-		return "", fmt.Errorf("expiration time is in the past")
-	}
-	token := str2duration.String(exp.Round(time.Hour)) + "." + strconv.FormatInt(time.Now().Unix(), 10)
-	if _, err := hash.Write([]byte(sharedSecret + "." + token)); err != nil {
-		return "", fmt.Errorf("error hashing token: %w", err)
-	}
-	secret := hash.Sum(nil)
-	tok2 := base64.StdEncoding.EncodeToString(secret)
-	return token + "." + tok2, nil
+	return authentication.NewBearerToken(sharedSecret, authentication.WithExpiration(expiration))
 }
 
 type ShutdownFunc func()

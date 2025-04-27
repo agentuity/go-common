@@ -10,16 +10,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/agentuity/go-common/logger"
 )
-
-type createResponse struct {
-	Expires time.Time `json:"expiresAt"`
-	URL     string    `json:"url"`
-	Token   string    `json:"authorization"`
-}
 
 type bridgeDataEvent struct {
 	ID     string `json:"id"`
@@ -45,21 +38,14 @@ type Client struct {
 	cancel        context.CancelFunc
 	logger        logger.Logger
 	baseurl       string
-	apikey        string
 	url           string
 	authorization string
-	expiresAt     time.Time
 	handler       Handler
 }
 
 // URL returns the ephemeral URL of the bridge connection
 func (c *Client) URL() string {
 	return c.url
-}
-
-// ExpiresAt returns the expiration time of the bridge connection
-func (c *Client) ExpiresAt() time.Time {
-	return c.expiresAt
 }
 
 // Close closes the bridge client and disconnects from the bridge server
@@ -74,7 +60,7 @@ func (c *Client) Connect() error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", c.apikey)
+	req.Header.Set("Authorization", c.authorization)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -85,14 +71,12 @@ func (c *Client) Connect() error {
 		return fmt.Errorf("error: status code %d", resp.StatusCode)
 	}
 
-	var data createResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return err
 	}
 
-	c.url = data.URL
-	c.expiresAt = data.Expires
-	c.authorization = "Bearer " + data.Token
+	c.url = strings.TrimSpace(string(body))
 
 	c.logger.Debug("created bridge connection to: %s", c.url)
 	c.handler.OnConnect(c, c.url)
@@ -287,11 +271,11 @@ func New(opts Options) *Client {
 	}
 	ctx, cancel := context.WithCancel(opts.Context)
 	return &Client{
-		ctx:     ctx,
-		cancel:  cancel,
-		logger:  opts.Logger,
-		baseurl: opts.URL,
-		apikey:  "Bearer " + opts.APIKey,
-		handler: opts.Handler,
+		ctx:           ctx,
+		cancel:        cancel,
+		logger:        opts.Logger,
+		baseurl:       opts.URL,
+		authorization: "Bearer " + opts.APIKey,
+		handler:       opts.Handler,
 	}
 }

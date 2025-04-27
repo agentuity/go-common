@@ -52,6 +52,16 @@ type Client struct {
 	handler       Handler
 }
 
+// URL returns the ephemeral URL of the bridge connection
+func (c *Client) URL() string {
+	return c.url
+}
+
+// ExpiresAt returns the expiration time of the bridge connection
+func (c *Client) ExpiresAt() time.Time {
+	return c.expiresAt
+}
+
 // Close closes the bridge client and disconnects from the bridge server
 func (c *Client) Close() {
 	c.cancel()

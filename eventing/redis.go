@@ -473,7 +473,7 @@ func (c *redisEventingClient) QueueSubscribe(ctx context.Context, subject, queue
 			logger.Trace("unsubscribed")
 			sub.running.Store(false)
 			// Remove the consumer from the group
-			if err := c.rdb.XGroupDelConsumer(ctx, subject, queue, consumer).Err(); err != nil {
+			if err := c.rdb.XGroupDelConsumer(context.Background(), subject, queue, consumer).Err(); err != nil {
 				logger.Error("failed to delete consumer: %s", err)
 			}
 			sub.wg.Done()

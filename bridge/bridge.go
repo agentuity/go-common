@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -41,6 +42,7 @@ type BridgeConnectionInfo struct {
 	StreamURL    string     `json:"stream_url"`
 	ClientURL    string     `json:"client_url"`
 	RepliesURL   string     `json:"replies_url"`
+	RefreshURL   string     `json:"refresh_url"`
 }
 
 // IsExpired returns true if the connection has expired
@@ -58,7 +60,9 @@ type Client struct {
 	streamURL     string
 	clientURL     string
 	repliesURL    string
+	refreshURL    string
 	authorization string
+	authLock      sync.RWMutex
 	handler       Handler
 	once          sync.Once
 	wg            sync.WaitGroup
@@ -72,16 +76,28 @@ func (c *Client) ConnectionInfo() BridgeConnectionInfo {
 		StreamURL:    c.streamURL,
 		ClientURL:    c.clientURL,
 		RepliesURL:   c.repliesURL,
+		RefreshURL:   c.refreshURL,
 	}
 }
 
 // IsExpired returns true if the connection has expired
 func (c *Client) IsExpired() bool {
-	return c.expiresAt != nil && !c.expiresAt.IsZero() && time.Now().After(*c.expiresAt)
+	c.authLock.RLock()
+	defer c.authLock.RUnlock()
+	if c.expiresAt == nil {
+		return true
+	}
+	if c.expiresAt.IsZero() {
+		return true
+	}
+	expiresAt := c.expiresAt.Add(-1 * time.Minute)
+	return time.Now().After(expiresAt)
 }
 
 // ExpiresAt returns the expiration time of the connection
 func (c *Client) ExpiresAt() time.Time {
+	c.authLock.RLock()
+	defer c.authLock.RUnlock()
 	if c.expiresAt == nil {
 		return time.Time{}
 	}
@@ -90,16 +106,22 @@ func (c *Client) ExpiresAt() time.Time {
 
 // WebsocketURL returns the websocket URL of the bridge connection
 func (c *Client) WebsocketURL() string {
+	c.authLock.RLock()
+	defer c.authLock.RUnlock()
 	return c.websocketURL
 }
 
 // StreamURL returns the stream URL of the bridge connection
 func (c *Client) StreamURL() string {
+	c.authLock.RLock()
+	defer c.authLock.RUnlock()
 	return c.streamURL
 }
 
 // ClientURL returns the emphemeral client URL of the bridge connection
 func (c *Client) ClientURL() string {
+	c.authLock.RLock()
+	defer c.authLock.RUnlock()
 	return c.clientURL
 }
 
@@ -111,12 +133,54 @@ func (c *Client) Close() {
 	})
 }
 
+// Refresh refreshes the connection to the bridge server
+func (c *Client) Refresh() error {
+	c.authLock.Lock()
+	defer c.authLock.Unlock()
+	c.logger.Debug("refreshing connection: %s", c.refreshURL)
+	req, err := http.NewRequestWithContext(c.ctx, "POST", c.refreshURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", c.authorization)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("error: status code %d", resp.StatusCode)
+	}
+
+	var response BridgeConnectionInfo
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return err
+	}
+
+	c.expiresAt = response.ExpiresAt
+	c.websocketURL = response.WebsocketURL
+	c.streamURL = response.StreamURL
+	c.clientURL = response.ClientURL
+	c.repliesURL = response.RepliesURL
+	c.refreshURL = response.RefreshURL
+	c.logger.Debug("refreshed bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.expiresAt.Format(time.RFC3339))
+	return nil
+}
+
 // Connect connects to the bridge and returns a new Client
 func (c *Client) Connect() error {
 	c.wg.Add(1)
 	defer c.wg.Done()
 	if c.websocketURL != "" && c.streamURL != "" && c.clientURL != "" && c.repliesURL != "" {
-		c.logger.Debug("using provided connection info")
+		if c.IsExpired() {
+			c.logger.Warn("connection auth token expired, refreshing")
+			if err := c.Refresh(); err != nil {
+				return err
+			}
+		} else {
+			c.logger.Debug("using provided connection info")
+		}
 	} else {
 		c.logger.Debug("connecting to: %s/bridge", c.baseurl)
 		req, err := http.NewRequestWithContext(c.ctx, "POST", c.baseurl+"/bridge", nil)
@@ -139,12 +203,16 @@ func (c *Client) Connect() error {
 			return err
 		}
 
+		c.authLock.Lock()
+		defer c.authLock.Unlock()
+		c.expiresAt = response.ExpiresAt
 		c.websocketURL = response.WebsocketURL
 		c.streamURL = response.StreamURL
 		c.clientURL = response.ClientURL
 		c.repliesURL = response.RepliesURL
+		c.refreshURL = response.RefreshURL
 	}
-	c.logger.Debug("created bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.expiresAt)
+	c.logger.Debug("created bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.expiresAt.Format(time.RFC3339))
 	c.handler.OnConnect(c)
 
 	go c.run()
@@ -156,6 +224,15 @@ func (c *Client) Connect() error {
 func (c *Client) Reply(replyId string, status int, headers map[string]string, reader io.Reader) error {
 	c.wg.Add(1)
 	defer c.wg.Done()
+	if c.IsExpired() {
+		c.logger.Warn("connection auth token expired, refreshing")
+		if err := c.Refresh(); err != nil {
+			return fmt.Errorf("error refreshing auth token: %w", err)
+		}
+	}
+	c.authLock.RLock()
+	auth := c.authorization
+	c.authLock.RUnlock()
 	url := strings.Replace(c.repliesURL, "{replyId}", replyId, 1)
 	c.logger.Trace("replying to: %s, status: %d, headers: %s", url, status, headers)
 	// note: we explicitly do not use a context for the request as we want to ensure the request is sent even if the context is cancelled
@@ -164,7 +241,7 @@ func (c *Client) Reply(replyId string, status int, headers map[string]string, re
 		return err
 	}
 
-	req.Header.Set("Authorization", c.authorization)
+	req.Header.Set("Authorization", auth)
 	req.Header.Set("x-bridge-statuscode", strconv.Itoa(status))
 
 	for k, v := range headers {
@@ -198,7 +275,10 @@ func (c *Client) run() {
 		c.handler.OnError(c, err)
 		return
 	}
-	req.Header.Set("Authorization", c.authorization)
+	c.authLock.RLock()
+	auth := c.authorization
+	c.authLock.RUnlock()
+	req.Header.Set("Authorization", auth)
 	client := http.DefaultClient
 	resp, err := client.Do(req)
 	if err != nil {
@@ -215,6 +295,22 @@ func (c *Client) run() {
 	defer func() {
 		c.logger.Debug("disconnected")
 		c.handler.OnDisconnect(c)
+	}()
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if c.IsExpired() {
+					if err := c.Refresh(); err != nil {
+						c.logger.Error("error refreshing auth token: %s", err)
+					}
+				}
+			case <-c.ctx.Done():
+				return
+			}
+		}
 	}()
 	reader := make(chan []byte, 10) // the bigger the buffer the more memory we use but it will reduce backpressure on the server
 	go func() {
@@ -251,7 +347,7 @@ func (c *Client) run() {
 	for !cancelled {
 		hn, err := resp.Body.Read(headerBuffer)
 		if err != nil {
-			if err == io.EOF || err == context.Canceled {
+			if errors.Is(err, io.EOF) || errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "unexpected EOF") {
 				cancelled = true
 				continue
 			}
@@ -413,12 +509,13 @@ func New(opts Options) *Client {
 		authorization: "Bearer " + opts.APIKey,
 		handler:       opts.Handler,
 	}
-	if opts.ConnectionInfo != nil && !opts.ConnectionInfo.IsExpired() {
+	if opts.ConnectionInfo != nil {
 		client.expiresAt = opts.ConnectionInfo.ExpiresAt
 		client.websocketURL = opts.ConnectionInfo.WebsocketURL
 		client.streamURL = opts.ConnectionInfo.StreamURL
 		client.clientURL = opts.ConnectionInfo.ClientURL
 		client.repliesURL = opts.ConnectionInfo.RepliesURL
+		client.refreshURL = opts.ConnectionInfo.RefreshURL
 	}
 	return client
 }

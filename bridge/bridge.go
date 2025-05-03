@@ -365,7 +365,6 @@ func (c *Client) run() {
 	reader := make(chan []byte, 10) // the bigger the buffer the more memory we use but it will reduce backpressure on the server
 	go func() {
 		for buf := range reader {
-			fmt.Println("reading", string(buf))
 			var data bridgeDataEvent
 			if err := json.Unmarshal(buf, &data); err != nil {
 				c.handler.OnError(c, err)

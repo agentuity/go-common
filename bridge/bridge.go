@@ -35,6 +35,10 @@ type bridgePacketEvent struct {
 type bridgeCloseEvent struct {
 	bridgeDataEvent
 }
+type bridgeControlEvent struct {
+	bridgeDataEvent
+	Data []byte `json:"data"`
+}
 
 type BridgeConnectionInfo struct {
 	ExpiresAt    *time.Time `json:"expires_at"`
@@ -43,6 +47,7 @@ type BridgeConnectionInfo struct {
 	ClientURL    string     `json:"client_url"`
 	RepliesURL   string     `json:"replies_url"`
 	RefreshURL   string     `json:"refresh_url"`
+	ControlURL   string     `json:"control_url"`
 }
 
 // IsExpired returns true if the connection has expired
@@ -60,6 +65,7 @@ type Client struct {
 	streamURL     string
 	clientURL     string
 	repliesURL    string
+	controlURL    string
 	refreshURL    string
 	authorization string
 	authLock      sync.RWMutex
@@ -76,6 +82,7 @@ func (c *Client) ConnectionInfo() BridgeConnectionInfo {
 		StreamURL:    c.streamURL,
 		ClientURL:    c.clientURL,
 		RepliesURL:   c.repliesURL,
+		ControlURL:   c.controlURL,
 		RefreshURL:   c.refreshURL,
 	}
 }
@@ -163,8 +170,9 @@ func (c *Client) Refresh() error {
 	c.streamURL = response.StreamURL
 	c.clientURL = response.ClientURL
 	c.repliesURL = response.RepliesURL
+	c.controlURL = response.ControlURL
 	c.refreshURL = response.RefreshURL
-	c.logger.Debug("refreshed bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.expiresAt.Format(time.RFC3339))
+	c.logger.Debug("refreshed bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, control: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.controlURL, c.expiresAt.Format(time.RFC3339))
 	return nil
 }
 
@@ -172,7 +180,7 @@ func (c *Client) Refresh() error {
 func (c *Client) Connect() error {
 	c.wg.Add(1)
 	defer c.wg.Done()
-	if c.websocketURL != "" && c.streamURL != "" && c.clientURL != "" && c.repliesURL != "" {
+	if c.websocketURL != "" && c.streamURL != "" && c.clientURL != "" && c.repliesURL != "" && c.controlURL != "" {
 		if c.IsExpired() {
 			c.logger.Warn("connection auth token expired, refreshing")
 			if err := c.Refresh(); err != nil {
@@ -211,8 +219,9 @@ func (c *Client) Connect() error {
 		c.clientURL = response.ClientURL
 		c.repliesURL = response.RepliesURL
 		c.refreshURL = response.RefreshURL
+		c.controlURL = response.ControlURL
 	}
-	c.logger.Debug("created bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.expiresAt.Format(time.RFC3339))
+	c.logger.Debug("created bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, control: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.controlURL, c.expiresAt.Format(time.RFC3339))
 	c.handler.OnConnect(c)
 
 	go c.run()
@@ -247,6 +256,47 @@ func (c *Client) Reply(replyId string, status int, headers map[string]string, re
 	for k, v := range headers {
 		req.Header.Set("x-bridge-"+strings.ToLower(k), v)
 	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 299 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("error: status code %d, body: %s", resp.StatusCode, string(body))
+	}
+
+	// just discard the body
+	io.Copy(io.Discard, resp.Body)
+
+	return nil
+}
+
+// Reply sends a reply to the incoming request
+func (c *Client) control(replyId string, data []byte) error {
+	c.wg.Add(1)
+	defer c.wg.Done()
+	if c.IsExpired() {
+		c.logger.Warn("connection auth token expired, refreshing")
+		if err := c.Refresh(); err != nil {
+			return fmt.Errorf("error refreshing auth token: %w", err)
+		}
+	}
+	c.authLock.RLock()
+	auth := c.authorization
+	c.authLock.RUnlock()
+	url := strings.Replace(c.controlURL, "{replyId}", replyId, 1)
+	c.logger.Trace("control reply to: %s", url)
+	// note: we explicitly do not use a context for the request as we want to ensure the request is sent even if the context is cancelled
+	req, err := http.NewRequest("PUT", url, bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Authorization", auth)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -315,6 +365,7 @@ func (c *Client) run() {
 	reader := make(chan []byte, 10) // the bigger the buffer the more memory we use but it will reduce backpressure on the server
 	go func() {
 		for buf := range reader {
+			fmt.Println("reading", string(buf))
 			var data bridgeDataEvent
 			if err := json.Unmarshal(buf, &data); err != nil {
 				c.handler.OnError(c, err)
@@ -338,6 +389,24 @@ func (c *Client) run() {
 					return
 				}
 				c.handler.OnData(c, data.ID, packet.Data)
+			case "control":
+				var control bridgeControlEvent
+				c.logger.Trace("control event parsing => %s", string(buf))
+				if err := json.Unmarshal(buf, &control); err != nil {
+					c.handler.OnError(c, err)
+					return
+				}
+				c.logger.Trace("control event: %s => %s", control.ID, string(buf))
+				controlResponse, err := c.handler.OnControl(c, control.ID, control.Data)
+				c.logger.Trace("control event result: %s, err: %s", controlResponse, err)
+				if err != nil {
+					c.handler.OnError(c, err)
+					return
+				}
+				c.logger.Trace("sending control event result: %s, err: %s", controlResponse, err)
+				if err := c.control(control.ID, controlResponse); err != nil {
+					c.handler.OnError(c, fmt.Errorf("error replying to control event: %w", err))
+				}
 			}
 		}
 	}()
@@ -415,6 +484,9 @@ type Handler interface {
 
 	// OnError is called when an error occurs at any point in the bridge client
 	OnError(client *Client, err error)
+
+	// OnControl is called when a control event is received from the bridge. you can respond with a control event to the bridge by returning a non-nil value.
+	OnControl(client *Client, id string, data []byte) ([]byte, error)
 }
 
 // HandlerCallback is a struct that implements the BridgeHandler interface
@@ -425,6 +497,7 @@ type HandlerCallback struct {
 	OnDataFunc       func(client *Client, id string, data []byte)
 	OnCloseFunc      func(client *Client, id string)
 	OnErrorFunc      func(client *Client, err error)
+	OnControlFunc    func(client *Client, id string, data []byte) ([]byte, error)
 }
 
 var _ Handler = (*HandlerCallback)(nil)
@@ -463,6 +536,13 @@ func (h *HandlerCallback) OnError(client *Client, err error) {
 	if h.OnErrorFunc != nil {
 		h.OnErrorFunc(client, err)
 	}
+}
+
+func (h *HandlerCallback) OnControl(client *Client, id string, data []byte) ([]byte, error) {
+	if h.OnControlFunc != nil {
+		return h.OnControlFunc(client, id, data)
+	}
+	return nil, nil
 }
 
 type Options struct {
@@ -515,6 +595,7 @@ func New(opts Options) *Client {
 		client.streamURL = opts.ConnectionInfo.StreamURL
 		client.clientURL = opts.ConnectionInfo.ClientURL
 		client.repliesURL = opts.ConnectionInfo.RepliesURL
+		client.controlURL = opts.ConnectionInfo.ControlURL
 		client.refreshURL = opts.ConnectionInfo.RefreshURL
 	}
 	return client

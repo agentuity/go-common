@@ -142,10 +142,11 @@ func (c *Client) Close() {
 
 // Refresh refreshes the connection to the bridge server
 func (c *Client) Refresh() error {
-	c.authLock.Lock()
-	defer c.authLock.Unlock()
-	c.logger.Debug("refreshing connection: %s", c.refreshURL)
-	req, err := http.NewRequestWithContext(c.ctx, "POST", c.refreshURL, nil)
+	c.authLock.RLock()
+	refreshURL := c.refreshURL
+	c.authLock.RUnlock()
+	c.logger.Debug("refreshing connection: %s", refreshURL)
+	req, err := http.NewRequestWithContext(c.ctx, "POST", refreshURL, nil)
 	if err != nil {
 		return err
 	}
@@ -165,6 +166,7 @@ func (c *Client) Refresh() error {
 		return err
 	}
 
+	c.authLock.Lock()
 	c.expiresAt = response.ExpiresAt
 	c.websocketURL = response.WebsocketURL
 	c.streamURL = response.StreamURL
@@ -172,7 +174,11 @@ func (c *Client) Refresh() error {
 	c.repliesURL = response.RepliesURL
 	c.controlURL = response.ControlURL
 	c.refreshURL = response.RefreshURL
+	c.authLock.Unlock()
 	c.logger.Debug("refreshed bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, control: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.controlURL, c.expiresAt.Format(time.RFC3339))
+
+	c.handler.OnRefresh(c)
+
 	return nil
 }
 
@@ -212,7 +218,6 @@ func (c *Client) Connect() error {
 		}
 
 		c.authLock.Lock()
-		defer c.authLock.Unlock()
 		c.expiresAt = response.ExpiresAt
 		c.websocketURL = response.WebsocketURL
 		c.streamURL = response.StreamURL
@@ -220,6 +225,7 @@ func (c *Client) Connect() error {
 		c.repliesURL = response.RepliesURL
 		c.refreshURL = response.RefreshURL
 		c.controlURL = response.ControlURL
+		c.authLock.Unlock()
 	}
 	c.logger.Debug("created bridge connection. websocket: %s, stream: %s, client: %s, replies: %s, control: %s, expires at: %s", c.websocketURL, c.streamURL, c.clientURL, c.repliesURL, c.controlURL, c.expiresAt.Format(time.RFC3339))
 	c.handler.OnConnect(c)
@@ -467,7 +473,7 @@ func (c *Client) run() {
 // Handler is an interface that defines the callback methods for a bridge handler to implement
 type Handler interface {
 	// OnConnect is called when the bridge client is connected to the bridge server
-	OnConnect(client *Client)
+	OnConnect(client *Client) error
 
 	// OnDisconnect is called when the bridge client is disconnected from the bridge server
 	OnDisconnect(client *Client)
@@ -486,25 +492,30 @@ type Handler interface {
 
 	// OnControl is called when a control event is received from the bridge. you can respond with a control event to the bridge by returning a non-nil value.
 	OnControl(client *Client, id string, data []byte) ([]byte, error)
+
+	// OnRefresh is called when the bridge client has refreshed its connection
+	OnRefresh(client *Client)
 }
 
 // HandlerCallback is a struct that implements the BridgeHandler interface
 type HandlerCallback struct {
-	OnConnectFunc    func(client *Client)
+	OnConnectFunc    func(client *Client) error
 	OnDisconnectFunc func(client *Client)
 	OnHeaderFunc     func(client *Client, id string, headers map[string]string)
 	OnDataFunc       func(client *Client, id string, data []byte)
 	OnCloseFunc      func(client *Client, id string)
 	OnErrorFunc      func(client *Client, err error)
 	OnControlFunc    func(client *Client, id string, data []byte) ([]byte, error)
+	OnRefreshFunc    func(client *Client)
 }
 
 var _ Handler = (*HandlerCallback)(nil)
 
-func (h *HandlerCallback) OnConnect(client *Client) {
+func (h *HandlerCallback) OnConnect(client *Client) error {
 	if h.OnConnectFunc != nil {
-		h.OnConnectFunc(client)
+		return h.OnConnectFunc(client)
 	}
+	return nil
 }
 
 func (h *HandlerCallback) OnDisconnect(client *Client) {
@@ -542,6 +553,12 @@ func (h *HandlerCallback) OnControl(client *Client, id string, data []byte) ([]b
 		return h.OnControlFunc(client, id, data)
 	}
 	return nil, nil
+}
+
+func (h *HandlerCallback) OnRefresh(client *Client) {
+	if h.OnRefreshFunc != nil {
+		h.OnRefreshFunc(client)
+	}
 }
 
 type Options struct {

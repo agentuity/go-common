@@ -20,6 +20,7 @@ import (
 type bridgeDataEvent struct {
 	ID     string `json:"id"`
 	Action string `json:"action"`
+	Param  string `json:"param,omitempty"`
 }
 
 type bridgeHeaderEvent struct {
@@ -379,21 +380,21 @@ func (c *Client) run() {
 			c.logger.Debug("[%s] action: %s", data.ID, data.Action)
 			switch data.Action {
 			case "close":
-				c.handler.OnClose(c, data.ID)
+				c.handler.OnClose(c, data.ID, data.Param)
 			case "header":
 				var header bridgeHeaderEvent
 				if err := json.Unmarshal(buf, &header); err != nil {
 					c.handler.OnError(c, err)
 					return
 				}
-				c.handler.OnHeader(c, data.ID, header.Headers)
+				c.handler.OnHeader(c, data.ID, data.Param, header.Headers)
 			case "data":
 				var packet bridgePacketEvent
 				if err := json.Unmarshal(buf, &packet); err != nil {
 					c.handler.OnError(c, err)
 					return
 				}
-				c.handler.OnData(c, data.ID, packet.Data)
+				c.handler.OnData(c, data.ID, data.Param, packet.Data)
 			case "control":
 				var control bridgeControlEvent
 				c.logger.Trace("control event parsing => %s", string(buf))
@@ -479,13 +480,13 @@ type Handler interface {
 	OnDisconnect(client *Client)
 
 	// OnHeader is called when a header is received from the bridge. this will only be called once before any data is sent.
-	OnHeader(client *Client, id string, headers map[string]string)
+	OnHeader(client *Client, id string, param string, headers map[string]string)
 
 	// OnData is called when a data is received from the bridge. this will be called multiple times if the data is large.
-	OnData(client *Client, id string, data []byte)
+	OnData(client *Client, id string, param string, data []byte)
 
 	// OnClose is called when the bridge request is completed and no more data will be sent
-	OnClose(client *Client, id string)
+	OnClose(client *Client, id string, param string)
 
 	// OnError is called when an error occurs at any point in the bridge client
 	OnError(client *Client, err error)
@@ -501,9 +502,9 @@ type Handler interface {
 type HandlerCallback struct {
 	OnConnectFunc    func(client *Client) error
 	OnDisconnectFunc func(client *Client)
-	OnHeaderFunc     func(client *Client, id string, headers map[string]string)
-	OnDataFunc       func(client *Client, id string, data []byte)
-	OnCloseFunc      func(client *Client, id string)
+	OnHeaderFunc     func(client *Client, id string, param string, headers map[string]string)
+	OnDataFunc       func(client *Client, id string, param string, data []byte)
+	OnCloseFunc      func(client *Client, id string, param string)
 	OnErrorFunc      func(client *Client, err error)
 	OnControlFunc    func(client *Client, id string, data []byte) ([]byte, error)
 	OnRefreshFunc    func(client *Client)
@@ -524,21 +525,21 @@ func (h *HandlerCallback) OnDisconnect(client *Client) {
 	}
 }
 
-func (h *HandlerCallback) OnHeader(client *Client, id string, headers map[string]string) {
+func (h *HandlerCallback) OnHeader(client *Client, id string, param string, headers map[string]string) {
 	if h.OnHeaderFunc != nil {
-		h.OnHeaderFunc(client, id, headers)
+		h.OnHeaderFunc(client, id, param, headers)
 	}
 }
 
-func (h *HandlerCallback) OnData(client *Client, id string, data []byte) {
+func (h *HandlerCallback) OnData(client *Client, id string, param string, data []byte) {
 	if h.OnDataFunc != nil {
-		h.OnDataFunc(client, id, data)
+		h.OnDataFunc(client, id, param, data)
 	}
 }
 
-func (h *HandlerCallback) OnClose(client *Client, id string) {
+func (h *HandlerCallback) OnClose(client *Client, id string, param string) {
 	if h.OnCloseFunc != nil {
-		h.OnCloseFunc(client, id)
+		h.OnCloseFunc(client, id, param)
 	}
 }
 

@@ -362,14 +362,14 @@ func (c *Client) run() {
 		if headerBuffer[0] == '1' {
 			eof = true
 		}
-		payloadLength, err := strconv.ParseInt(string(headerBuffer[1:]), 10, 64)
+		payloadLength, err := strconv.Atoi(string(headerBuffer[1:])) // only 999999 is supported by realistically on 65336
 		if err != nil {
 			c.handler.OnError(c, err)
 			return
 		}
-		buf := make([]byte, int(payloadLength))
+		buf := make([]byte, payloadLength)
 		pn, err := resp.Body.Read(buf)
-		if err == nil && pn != int(payloadLength) {
+		if err == nil && pn != payloadLength {
 			c.handler.OnError(c, fmt.Errorf("expected %d bytes for payload, got %d", payloadLength, pn))
 			return
 		} else if err == nil {

@@ -189,7 +189,7 @@ func (c *Client) Connect() error {
 	defer c.wg.Done()
 	if c.websocketURL != "" && c.streamURL != "" && c.clientURL != "" && c.repliesURL != "" && c.controlURL != "" {
 		if c.IsExpired() {
-			c.logger.Warn("connection auth token expired, refreshing")
+			c.logger.Debug("connection auth token expired, refreshing")
 			if err := c.Refresh(); err != nil {
 				return err
 			}
@@ -241,7 +241,7 @@ func (c *Client) Reply(replyId string, status int, headers map[string]string, re
 	c.wg.Add(1)
 	defer c.wg.Done()
 	if c.IsExpired() {
-		c.logger.Warn("connection auth token expired, refreshing")
+		c.logger.Debug("connection auth token expired, refreshing")
 		if err := c.Refresh(); err != nil {
 			return fmt.Errorf("error refreshing auth token: %w", err)
 		}
@@ -287,7 +287,7 @@ func (c *Client) control(replyId string, data []byte) error {
 	c.wg.Add(1)
 	defer c.wg.Done()
 	if c.IsExpired() {
-		c.logger.Warn("connection auth token expired, refreshing")
+		c.logger.Debug("connection auth token expired, refreshing")
 		if err := c.Refresh(); err != nil {
 			return fmt.Errorf("error refreshing auth token: %w", err)
 		}

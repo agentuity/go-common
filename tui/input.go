@@ -40,14 +40,15 @@ func InputWithPlaceholder(logger logger.Logger, title string, description string
 }
 
 func InputWithPathCompletion(logger logger.Logger, title string, description string, initial string) string {
-	var value string
+	value := initial
 	if err := huh.NewInput().
+		Title(title).
+		Prompt("> ").
+		Description(description).
+		Value(&value).
 		SuggestionsFunc(func() []string {
 			suggestions := []string{}
-			usePath := ""
-			if value == "" {
-				usePath = initial
-			}
+			usePath := value
 			//clean path up to last valid path separator in case user in the middle of typing something
 			usePath = strings.TrimRight(usePath, string(os.PathSeparator))
 			files, err := os.ReadDir(usePath)
@@ -62,11 +63,7 @@ func InputWithPathCompletion(logger logger.Logger, title string, description str
 				suggestions = append(suggestions, path+string(os.PathSeparator)+file.Name())
 			}
 			return suggestions
-		}, value).
-		Title(title).
-		Prompt("> ").
-		Description(description).
-		Value(&value).
+		}, &value).
 		WithTheme(inputTheme).
 		Run(); err != nil {
 		logger.Fatal("%s", err)

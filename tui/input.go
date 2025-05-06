@@ -45,16 +45,20 @@ func InputWithPathCompletion(logger logger.Logger, title string, description str
 		SuggestionsFunc(func() []string {
 			suggestions := []string{}
 
-			//clean path up to last valid path separator in case user in the middle of typing something
-			value = strings.TrimRight(value, string(os.PathSeparator))
+			if value != "" {
+				//clean path up to last valid path separator in case user in the middle of typing something
+				value = strings.TrimRight(value, string(os.PathSeparator))
+			} else {
+				value = initial
+			}
 
-			files, err := os.ReadDir(initial)
+			files, err := os.ReadDir(value)
 
 			if err != nil {
 				return suggestions
 			}
 
-			path, err := filepath.Abs(initial)
+			path, err := filepath.Abs(value)
 
 			if err != nil {
 				return suggestions

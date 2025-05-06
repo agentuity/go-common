@@ -44,17 +44,17 @@ func InputWithPathCompletion(logger logger.Logger, title string, description str
 	if err := huh.NewInput().
 		SuggestionsFunc(func() []string {
 			suggestions := []string{}
-			if value != "" {
-				//clean path up to last valid path separator in case user in the middle of typing something
-				value = strings.TrimRight(value, string(os.PathSeparator))
-			} else {
-				value = initial
+			usePath := ""
+			if value == "" {
+				usePath = initial
 			}
-			files, err := os.ReadDir(value)
+			//clean path up to last valid path separator in case user in the middle of typing something
+			usePath = strings.TrimRight(usePath, string(os.PathSeparator))
+			files, err := os.ReadDir(usePath)
 			if err != nil {
 				return suggestions
 			}
-			path, err := filepath.Abs(value)
+			path, err := filepath.Abs(usePath)
 			if err != nil {
 				return suggestions
 			}

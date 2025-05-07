@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -34,6 +35,38 @@ func InputWithPlaceholder(logger logger.Logger, title string, description string
 	}
 	if value == "" {
 		return placeholder
+	}
+	return value
+}
+
+func InputWithPathCompletion(logger logger.Logger, title string, description string, initial string) string {
+	value := initial
+	if err := huh.NewInput().
+		Title(title).
+		Prompt("> ").
+		Description(description).
+		Value(&value).
+		SuggestionsFunc(func() []string {
+			suggestions := []string{}
+			usePath := value
+			// clean path up to last valid path separator in case user in the middle of typing something
+			usePath = strings.TrimRight(usePath, string(os.PathSeparator))
+			files, err := os.ReadDir(usePath)
+			if err != nil {
+				return suggestions
+			}
+			path, err := filepath.Abs(usePath)
+			if err != nil {
+				return suggestions
+			}
+			for _, file := range files {
+				suggestions = append(suggestions, path+string(os.PathSeparator)+file.Name())
+			}
+			return suggestions
+		}, &value).
+		WithTheme(inputTheme).
+		Run(); err != nil {
+		logger.Fatal("%s", err)
 	}
 	return value
 }

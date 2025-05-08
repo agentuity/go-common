@@ -71,7 +71,7 @@ func TestDNSAction(t *testing.T) {
 	}
 
 	assert.NoError(t, err)
-	assert.Nil(t, reply)
+	assert.NotNil(t, reply)
 }
 
 func TestDNSCertAction(t *testing.T) {
@@ -91,7 +91,7 @@ func TestDNSCertAction(t *testing.T) {
 	assert.Equal(t, "cert", string(reply.Certificate))
 	assert.Equal(t, "private", string(reply.PrivateKey))
 	assert.True(t, reply.Expires.After(time.Now()))
-	a, err := ActionFromChannel("aether:dns-cert:123")
+	a, err := ActionFromChannel("aether:response:cert:123")
 	assert.NoError(t, err)
-	assert.Equal(t, "dns-cert", a)
+	assert.Equal(t, "cert", a)
 }

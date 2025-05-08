@@ -97,7 +97,7 @@ func CertRequestDNSAction(name string) *DNSCertAction {
 	action := &DNSCertAction{
 		DNSBaseAction: DNSBaseAction{
 			ID:     uuid.New().String(),
-			Action: "cert-request",
+			Action: "cert",
 		},
 		Name: name,
 	}
@@ -231,10 +231,10 @@ func (t *redisTransport) Publish(ctx context.Context, channel string, payload []
 // ActionFromChannel returns the action from the channel string
 func ActionFromChannel(channel string) (string, error) {
 	parts := strings.Split(channel, ":")
-	if len(parts) != 3 {
+	if len(parts) < 3 {
 		return "", fmt.Errorf("invalid channel: %s", channel)
 	}
-	return parts[1], nil
+	return parts[2], nil
 }
 
 var ErrTimeout = errors.New("timeout")
@@ -258,12 +258,12 @@ func SendDNSAction[R any, T DNSAction](ctx context.Context, action T, opts ...op
 	var sub Subscriber
 
 	if o.reply {
-		action.SetReply("aether:dns-reply:" + action.GetID())
+		action.SetReply("aether:response:" + action.GetAction() + ":" + action.GetID())
 		sub = o.transport.Subscribe(ctx, action.GetReply())
 		defer sub.Close()
 	}
 
-	if err := o.transport.Publish(ctx, "aether:"+action.GetAction()+":"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
+	if err := o.transport.Publish(ctx, "aether:request:"+action.GetAction()+":"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
 		return nil, err
 	}
 

@@ -2,9 +2,11 @@ package dns
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -23,7 +25,21 @@ func (t *testTransport) Subscribe(ctx context.Context, channel string) Subscribe
 
 func (t *testTransport) Publish(ctx context.Context, channel string, payload []byte) error {
 	t.publish <- &Message{Payload: payload}
-	t.subscribe <- &Message{Payload: []byte(`{"success": true}`)}
+	var cert DNSCert
+	cert.Certificate = []byte("cert")
+	cert.Expires = time.Now().Add(time.Hour * 24 * 365 * 2)
+	cert.PrivateKey = []byte("private")
+	var response DNSResponse[DNSCert]
+	response.Success = true
+	response.Data = &cert
+	response.ID = uuid.New().String()
+	response.Error = ""
+	response.Data = &cert
+	responseBytes, err := json.Marshal(response)
+	if err != nil {
+		return err
+	}
+	t.subscribe <- &Message{Payload: responseBytes}
 	return nil
 }
 
@@ -56,4 +72,26 @@ func TestDNSAction(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Nil(t, reply)
+}
+
+func TestDNSCertAction(t *testing.T) {
+	var transport testTransport
+
+	action := &DNSCertAction{
+		Name: "test",
+	}
+
+	reply, err := SendDNSAction[DNSCert](context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
+	if err != nil {
+		t.Fatalf("failed to send dns cert action: %v", err)
+	}
+
+	assert.NoError(t, err)
+	assert.NotNil(t, reply)
+	assert.Equal(t, "cert", string(reply.Certificate))
+	assert.Equal(t, "private", string(reply.PrivateKey))
+	assert.True(t, reply.Expires.After(time.Now()))
+	a, err := ActionFromChannel("aether:dns-cert:123")
+	assert.NoError(t, err)
+	assert.Equal(t, "dns-cert", a)
 }

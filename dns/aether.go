@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	cstr "github.com/agentuity/go-common/string"
@@ -49,10 +50,6 @@ type DNSCert struct {
 	Certificate []byte    `json:"certificate"`
 	PrivateKey  []byte    `json:"private_key"`
 	Expires     time.Time `json:"expires"`
-}
-
-type DNSCertResponse struct {
-	DNSResponse[DNSCert]
 }
 
 type DNSRecordType string
@@ -118,6 +115,8 @@ type DNSAction interface {
 	GetReply() string
 	// SetReply sets the reply of the DNS action
 	SetReply(string)
+	// GetAction returns the action of the DNS action
+	GetAction() string
 }
 
 // GetID returns the unique ID of the DNS action
@@ -133,6 +132,11 @@ func (a DNSBaseAction) GetReply() string {
 // SetReply sets the reply of the DNS action
 func (a *DNSBaseAction) SetReply(reply string) {
 	a.Reply = reply
+}
+
+// GetAction returns the action of the DNS action
+func (a DNSBaseAction) GetAction() string {
+	return a.Action
 }
 
 // Transport is an interface for a transport layer for the DNS server
@@ -224,6 +228,15 @@ func (t *redisTransport) Publish(ctx context.Context, channel string, payload []
 	return t.redis.Publish(ctx, channel, payload).Err()
 }
 
+// ActionFromChannel returns the action from the channel string
+func ActionFromChannel(channel string) (string, error) {
+	parts := strings.Split(channel, ":")
+	if len(parts) != 3 {
+		return "", fmt.Errorf("invalid channel: %s", channel)
+	}
+	return parts[1], nil
+}
+
 var ErrTimeout = errors.New("timeout")
 var ErrTransportRequired = errors.New("transport is required")
 var ErrClosed = errors.New("closed")
@@ -250,7 +263,7 @@ func SendDNSAction[R any, T DNSAction](ctx context.Context, action T, opts ...op
 		defer sub.Close()
 	}
 
-	if err := o.transport.Publish(ctx, "aether:dns-add:"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
+	if err := o.transport.Publish(ctx, "aether:"+action.GetAction()+":"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
 		return nil, err
 	}
 

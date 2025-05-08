@@ -131,7 +131,7 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 		return false, nil, err
 	}
 	req.Header.Set("accept", "application/dns-json")
-	req.Header.Set("user-agent", "Shopmonkey (+https://shopmonkey.io)")
+	req.Header.Set("user-agent", "Agentuity (+https://agentuity.com)")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false, nil, err

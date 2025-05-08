@@ -33,10 +33,26 @@ type DNSDeleteAction struct {
 	Name string `json:"name"`
 }
 
-type DNSResponse struct {
+type DNSCertAction struct {
+	DNSBaseAction
+	Name string `json:"name"`
+}
+
+type DNSResponse[T any] struct {
 	ID      string `json:"id"`
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
+	Data    *T     `json:"data,omitempty"`
+}
+
+type DNSCert struct {
+	Certificate []byte    `json:"certificate"`
+	PrivateKey  []byte    `json:"private_key"`
+	Expires     time.Time `json:"expires"`
+}
+
+type DNSCertResponse struct {
+	DNSResponse[DNSCert]
 }
 
 type DNSRecordType string
@@ -79,6 +95,18 @@ func DeleteDNSAction(name string) *DNSDeleteAction {
 	return action
 }
 
+// CertRequestDNSAction requests a certificate from the DNS server
+func CertRequestDNSAction(name string) *DNSCertAction {
+	action := &DNSCertAction{
+		DNSBaseAction: DNSBaseAction{
+			ID:     uuid.New().String(),
+			Action: "cert-request",
+		},
+		Name: name,
+	}
+	return action
+}
+
 // DefaultDNSTimeout is the default timeout for a DNS action which is 10 seconds
 const DefaultDNSTimeout = 10 * time.Second
 
@@ -107,33 +135,145 @@ func (a *DNSBaseAction) SetReply(reply string) {
 	a.Reply = reply
 }
 
+// Transport is an interface for a transport layer for the DNS server
+type Transport interface {
+	Subscribe(ctx context.Context, channel string) Subscriber
+	Publish(ctx context.Context, channel string, payload []byte) error
+}
+
+// Message is a message from the transport layer
+type Message struct {
+	Payload []byte
+}
+
+// Subscriber is an interface for a subscriber to the transport layer
+type Subscriber interface {
+	// Close closes the subscriber
+	Close() error
+	// Channel returns a channel of messages
+	Channel() <-chan *Message
+}
+
+type option struct {
+	transport Transport
+	timeout   time.Duration
+	reply     bool
+}
+
+type optionHandler func(*option)
+
+// WithReply sets whether the DNS action should wait for a reply from the DNS server
+func WithReply(reply bool) optionHandler {
+	return func(o *option) {
+		o.reply = reply
+	}
+}
+
+// WithTransport sets a custom transport for the DNS action
+func WithTransport(transport Transport) optionHandler {
+	return func(o *option) {
+		o.transport = transport
+	}
+}
+
+// WithTimeout sets a custom timeout for the DNS action
+func WithTimeout(timeout time.Duration) optionHandler {
+	return func(o *option) {
+		o.timeout = timeout
+	}
+}
+
+// WithRedis uses a redis client as the transport for the DNS action
+func WithRedis(redis *redis.Client) optionHandler {
+	return func(o *option) {
+		o.transport = &redisTransport{redis: redis}
+	}
+}
+
+type redisSubscriber struct {
+	sub *redis.PubSub
+}
+
+var _ Subscriber = (*redisSubscriber)(nil)
+
+func (s *redisSubscriber) Close() error {
+	return s.sub.Close()
+}
+
+func (s *redisSubscriber) Channel() <-chan *Message {
+	ch := make(chan *Message)
+	go func() {
+		for msg := range s.sub.Channel() {
+			ch <- &Message{Payload: []byte(msg.Payload)}
+		}
+	}()
+	return ch
+}
+
+type redisTransport struct {
+	redis *redis.Client
+}
+
+var _ Transport = (*redisTransport)(nil)
+
+func (t *redisTransport) Subscribe(ctx context.Context, channel string) Subscriber {
+	return &redisSubscriber{sub: t.redis.Subscribe(ctx, channel)}
+}
+
+func (t *redisTransport) Publish(ctx context.Context, channel string, payload []byte) error {
+	return t.redis.Publish(ctx, channel, payload).Err()
+}
+
+var ErrTimeout = errors.New("timeout")
+var ErrTransportRequired = errors.New("transport is required")
+var ErrClosed = errors.New("closed")
+
 // SendDNSAction sends a DNS action to the DNS server with a timeout. If the timeout is 0, the default timeout will be used.
-func SendDNSAction[T DNSAction](ctx context.Context, redis *redis.Client, action T, timeout time.Duration) error {
-	if timeout == 0 {
-		timeout = DefaultDNSTimeout
+func SendDNSAction[R any, T DNSAction](ctx context.Context, action T, opts ...optionHandler) (*R, error) {
+	var o option
+	o.timeout = DefaultDNSTimeout
+	o.reply = true
+
+	for _, opt := range opts {
+		opt(&o)
 	}
-	action.SetReply("aether:dns-reply:" + action.GetID())
-	sub := redis.Subscribe(ctx, action.GetReply())
-	defer sub.Close()
-	if err := redis.Publish(ctx, "aether:dns-add:"+action.GetID(), cstr.JSONStringify(action)).Err(); err != nil {
-		return err
+
+	if o.transport == nil {
+		return nil, ErrTransportRequired
 	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case msg := <-sub.Channel():
-		if msg == nil {
-			return errors.New("closed")
-		}
-		var response DNSResponse
-		if err := json.Unmarshal([]byte(msg.Payload), &response); err != nil {
-			return fmt.Errorf("failed to unmarshal dns action response: %w", err)
-		}
-		if !response.Success {
-			return errors.New(response.Error)
-		}
-	case <-time.After(timeout):
-		return errors.New("timeout")
+
+	var sub Subscriber
+
+	if o.reply {
+		action.SetReply("aether:dns-reply:" + action.GetID())
+		sub = o.transport.Subscribe(ctx, action.GetReply())
+		defer sub.Close()
 	}
-	return nil
+
+	if err := o.transport.Publish(ctx, "aether:dns-add:"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
+		return nil, err
+	}
+
+	if o.reply {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case msg := <-sub.Channel():
+			if msg == nil {
+				return nil, ErrClosed
+			}
+			var response DNSResponse[R]
+			if err := json.Unmarshal([]byte(msg.Payload), &response); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal dns action response: %w", err)
+			}
+			if !response.Success {
+				return nil, errors.New(response.Error)
+			}
+			return response.Data, nil
+		case <-time.After(o.timeout):
+			return nil, ErrTimeout
+		}
+	}
+
+	return nil, nil
 }

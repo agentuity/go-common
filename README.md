@@ -2,11 +2,11 @@
 
 # Overview
 
-This repository contains the public shared utility code for Agenuity as a Golang module.
+This repository contains the public shared utility code for Agentuity as a Golang module.
 
 ## Requirements
 
-You will need [Golang](https://go.dev/dl/) version 1.23 or later to use this package.
+You will need [Golang](https://go.dev/dl/) version 1.24 or later to use this package.
 
 ## Usage
 

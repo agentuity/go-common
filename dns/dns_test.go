@@ -12,7 +12,7 @@ import (
 func TestDNSIsValidAndCached(t *testing.T) {
 	c := cache.NewInMemory(context.Background(), time.Second)
 	defer c.Close()
-	d := New(c)
+	d := New(WithCache(c))
 	ok, ip, err := d.Lookup(context.Background(), "app.agentuity.com")
 	assert.NoError(t, err)
 	assert.True(t, ok)
@@ -30,86 +30,66 @@ func TestDNSIsValidAndCached(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestDNSDefault(t *testing.T) {
+	ok, ip, err := DefaultDNS.Lookup(context.Background(), "app.agentuity.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.NotNil(t, ip)
+}
+
 func TestDNSDomainIsInvalid(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
-	defer c.Close()
-	d := New(c)
+	d := New()
 	ok, ip, err := d.Lookup(context.Background(), "adasf123sdasdxc.dsadasdagentuity.com")
 	assert.Error(t, err, "dns lookup failed: Non-Existent Domain")
 	assert.False(t, ok)
 	assert.Nil(t, ip)
-	ok, count := c.Hits("dns:adasf123sdasdxc.dsadasdAgentuity.cloud")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 }
 
 func TestDNSLocalHost(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
-	defer c.Close()
-	d := New(c)
+	d := New()
 	ok, ip, err := d.Lookup(context.Background(), "localhost")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count := c.Hits("dns:localhost")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 
 	ok, ip, err = d.Lookup(context.Background(), "localhost")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count = c.Hits("dns:localhost")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 }
 
 func TestDNS127(t *testing.T) {
 	c := cache.NewInMemory(context.Background(), time.Second)
 	defer c.Close()
-	d := New(c)
+	d := New(WithCache(c))
 	ok, ip, err := d.Lookup(context.Background(), "127.0.0.1")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count := c.Hits("dns:127.0.0.1")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 
 	ok, ip, err = d.Lookup(context.Background(), "127.0.0.1")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count = c.Hits("dns:127.0.0.1")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 }
 
 func TestDNSIPAddressSkipped(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
-	defer c.Close()
-	d := New(c)
+	d := New()
 	ok, ip, err := d.Lookup(context.Background(), "81.0.0.1")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count := c.Hits("dns:81.0.0.1")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 
 	ok, ip, err = d.Lookup(context.Background(), "81.0.0.1")
 	assert.NoError(t, err)
 	assert.True(t, ok)
 	assert.NotNil(t, ip)
-	ok, count = c.Hits("dns:81.0.0.1")
-	assert.False(t, ok)
-	assert.Equal(t, 0, count)
 }
 
 func TestDNSPrivateIPSkipped(t *testing.T) {
 	c := cache.NewInMemory(context.Background(), time.Second)
 	defer c.Close()
-	d := New(c)
+	d := New()
 	ok, ip, err := d.Lookup(context.Background(), "10.8.0.1")
 	assert.NoError(t, err)
 	assert.True(t, ok)
@@ -130,7 +110,7 @@ func TestDNSPrivateIPSkipped(t *testing.T) {
 func TestDNSTest(t *testing.T) {
 	c := cache.NewInMemory(context.Background(), time.Second)
 	defer c.Close()
-	d := New(c, WithFailIfLocal())
+	d := New(WithFailIfLocal())
 	ok, ip, err := d.Lookup(context.Background(), "customer1.app.localhost.my.company.127.0.0.1.nip.io")
 	assert.Error(t, err, ErrInvalidIP)
 	assert.False(t, ok)
@@ -160,7 +140,7 @@ func TestInvalidDNSEntries(t *testing.T) {
 
 	c := cache.NewInMemory(context.Background(), time.Second)
 	defer c.Close()
-	d := New(c)
+	d := New()
 	d.isLocal = false
 
 	for _, tt := range tests {

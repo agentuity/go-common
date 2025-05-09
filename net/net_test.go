@@ -1,10 +1,7 @@
 package net
 
 import (
-	"context"
-	"net"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -28,7 +25,6 @@ func TestDialerRoundRobin(t *testing.T) {
 
 	var dialedAddresses []string
 
-	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		idx := dialer.counter.Add(1) % uint64(len(dialer.dnsServers))
 		dnsServer := dialer.dnsServers[idx]

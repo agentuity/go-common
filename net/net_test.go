@@ -12,6 +12,11 @@ func TestDialerWithDefaultDNS(t *testing.T) {
 	assert.Equal(t, DefaultDNSServers, dialer.dnsServers)
 }
 
+func TestDefaultDialer(t *testing.T) {
+	assert.NotNil(t, DefaultDialer)
+	assert.Equal(t, DefaultDNSServers, DefaultDialer.dnsServers)
+}
+
 func TestDialerWithCustomDNS(t *testing.T) {
 	customDNS := []string{"8.8.8.8:53", "1.1.1.1:53"}
 	dialer := New(WithDNS(customDNS...))

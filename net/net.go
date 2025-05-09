@@ -16,6 +16,8 @@ var DefaultDNSServers = []string{
 
 const DefaultDialTimeout = 30 * time.Second
 
+var DefaultDialer = New()
+
 type Dialer struct {
 	Timeout       time.Duration
 	Deadline      time.Time

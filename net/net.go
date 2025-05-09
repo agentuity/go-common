@@ -8,7 +8,11 @@ import (
 	"time"
 )
 
-const DefaultDNSServer = "ns1.agentuity.com:53"
+var DefaultDNSServers = []string{
+	"ns1.agentuity.com:53",
+	"ns2.agentuity.com:53",
+	"ns3.agentuity.com:53",
+}
 
 const DefaultDialTimeout = 30 * time.Second
 
@@ -40,7 +44,7 @@ func WithDNS(dnsServers ...string) DialOption {
 
 func New(opts ...DialOption) *Dialer {
 	options := &dialerOptions{
-		dnsServers: []string{DefaultDNSServer},
+		dnsServers: DefaultDNSServers,
 	}
 
 	for _, opt := range opts {

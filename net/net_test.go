@@ -9,7 +9,7 @@ import (
 func TestDialerWithDefaultDNS(t *testing.T) {
 	dialer := New()
 	assert.NotNil(t, dialer)
-	assert.Equal(t, []string{DefaultDNSServer}, dialer.dnsServers)
+	assert.Equal(t, DefaultDNSServers, dialer.dnsServers)
 }
 
 func TestDialerWithCustomDNS(t *testing.T) {

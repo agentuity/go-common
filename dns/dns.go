@@ -16,6 +16,8 @@ import (
 
 var ErrInvalidIP = fmt.Errorf("invalid ip address resolved for hostname")
 
+var DefaultDNS = New()
+
 type DNS interface {
 	// Lookup performs a DNS lookup for the given hostname and returns a valid IP address for the A record.
 	Lookup(ctx context.Context, hostname string) (bool, *net.IP, error)
@@ -75,6 +77,7 @@ type Answer struct {
 
 type dnsConfig struct {
 	FailIfLocal bool
+	Cache       cache.Cache
 }
 
 type Dns struct {
@@ -110,18 +113,21 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 		}
 		return true, &ip, nil
 	}
-	cacheKey := fmt.Sprintf("dns:%s", hostname)
-	ok, val, _ := d.cache.Get(cacheKey)
-	if ok {
-		ip, ok := val.([]net.IP)
+	var cacheKey string
+	if d.cache != nil {
+		cacheKey = fmt.Sprintf("dns:%s", hostname)
+		ok, val, _ := d.cache.Get(cacheKey)
 		if ok {
-			// only 1 ip, return it
-			if len(ip) == 1 {
-				return true, &ip[0], nil
+			ip, ok := val.([]net.IP)
+			if ok {
+				// only 1 ip, return it
+				if len(ip) == 1 {
+					return true, &ip[0], nil
+				}
+				// more than 1 ip, return a random one
+				i := rand.Int31n(int32(len(ip)))
+				return true, &ip[i], nil
 			}
-			// more than 1 ip, return a random one
-			i := rand.Int31n(int32(len(ip)))
-			return true, &ip[i], nil
 		}
 	}
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -166,22 +172,24 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 	if (ips[0].IsPrivate() || ips[0].IsLoopback()) && !d.isLocal {
 		return false, nil, ErrInvalidIP
 	}
-	expires := time.Duration(minTTL) * time.Second
-	if expires > time.Hour*24 {
-		expires = time.Hour * 24
+	if d.cache != nil {
+		expires := time.Duration(minTTL) * time.Second
+		if expires > time.Hour*24 {
+			expires = time.Hour * 24
+		}
+		d.cache.Set(cacheKey, ips, expires)
 	}
-	d.cache.Set(cacheKey, ips, expires)
 	return true, &ips[0], nil
 }
 
 // New creates a new DNS caching resolver.
-func New(cache cache.Cache, opts ...WithConfig) *Dns {
+func New(opts ...WithConfig) *Dns {
 	var config dnsConfig
 	for _, opt := range opts {
 		opt(&config)
 	}
 	val := &Dns{
-		cache:   cache,
+		cache:   config.Cache,
 		isLocal: !config.FailIfLocal,
 	}
 	return val
@@ -193,5 +201,12 @@ type WithConfig func(config *dnsConfig)
 func WithFailIfLocal() WithConfig {
 	return func(config *dnsConfig) {
 		config.FailIfLocal = true
+	}
+}
+
+// WithCache will set the cache for the DNS resolver.
+func WithCache(cache cache.Cache) WithConfig {
+	return func(config *dnsConfig) {
+		config.Cache = cache
 	}
 }

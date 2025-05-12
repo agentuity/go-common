@@ -11,9 +11,9 @@ import (
 )
 
 var DefaultDNSServers = []string{
+	"ns0.agentuity.com:53",
 	"ns1.agentuity.com:53",
 	"ns2.agentuity.com:53",
-	"ns3.agentuity.com:53",
 }
 
 const DefaultDialTimeout = 30 * time.Second

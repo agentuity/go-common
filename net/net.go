@@ -5,12 +5,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
-
-	cdns "github.com/agentuity/go-common/dns"
 )
 
 var DefaultDNSServers = []string{
@@ -69,57 +66,11 @@ func New(opts ...DialOption) (*Dialer, error) {
 
 	dialer := &Dialer{
 		Timeout:    DefaultDialTimeout,
-		dnsServers: []string{},
+		dnsServers: options.dnsServers,
 	}
-
-	var wg sync.WaitGroup
-	errors := make(chan error, len(options.dnsServers))
-	addresses := make([]string, 0)
-	var mu sync.Mutex
-
-	for _, dnsServer := range options.dnsServers {
-		wg.Add(1)
-		go func(dnsServer string) {
-			defer wg.Done()
-			host, port, err := net.SplitHostPort(dnsServer)
-			if err != nil {
-				errors <- err
-				return
-			}
-			if port == "" {
-				port = "53"
-			}
-			ok, ip, err := cdns.DefaultDNS.Lookup(context.Background(), host)
-			if err != nil {
-				errors <- err
-			} else {
-				if ok {
-					mu.Lock()
-					addresses = append(addresses, ip.String()+":"+port)
-					mu.Unlock()
-				}
-			}
-		}(dnsServer)
-	}
-
-	wg.Wait()
-	close(errors)
-
-	select {
-	case err := <-errors:
-		if err != nil {
-			// if we have at least one address, don't fail
-			if len(addresses) == 0 {
-				return nil, err
-			}
-		}
-	default:
-	}
-
-	dialer.dnsServers = addresses
 
 	if len(dialer.dnsServers) == 0 {
-		return nil, fmt.Errorf("no dns servers found")
+		return nil, fmt.Errorf("no dns servers provided")
 	}
 
 	dialer.resolver = &net.Resolver{

@@ -32,7 +32,7 @@ func (t *testTransport) Publish(ctx context.Context, channel string, payload []b
 	var response DNSResponse[DNSCert]
 	response.Success = true
 	response.Data = &cert
-	response.ID = uuid.New().String()
+	response.MsgID = uuid.New().String()
 	response.Error = ""
 	response.Data = &cert
 	responseBytes, err := json.Marshal(response)
@@ -65,7 +65,7 @@ func TestDNSAction(t *testing.T) {
 		Name: "test",
 	}
 
-	reply, err := SendDNSAction[any](context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
+	reply, err := SendDNSAction(context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
 	if err != nil {
 		t.Fatalf("failed to send dns action: %v", err)
 	}

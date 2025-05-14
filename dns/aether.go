@@ -33,9 +33,9 @@ type DNSDeleteAction struct {
 	DNSBaseAction
 	// Name is the name of the DNS record to delete.
 	Name string `json:"name"`
-	// ID is the ID of the DNS record to delete. This allows for clients to manage a specific record if they keep track of the ID.
+	// IDs are the IDs of the DNS records to delete (within a name). This allows for clients to manage a specific record if they keep track of the ID.
 	// If not provided, any name match will be deleted.
-	ID string `json:"id,omitempty"`
+	IDs []string `json:"ids,omitempty"`
 }
 
 type DNSCertAction struct {
@@ -57,7 +57,7 @@ type DNSCert struct {
 }
 
 type DNSRecord struct {
-	ID string `json:"id"`
+	IDs []string `json:"ids"`
 }
 
 type DNSRecordType string
@@ -89,13 +89,14 @@ func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.
 }
 
 // DeleteDNSAction deletes a DNS action from the DNS server
-func DeleteDNSAction(name string) *DNSDeleteAction {
+func DeleteDNSAction(name string, ids ...string) *DNSDeleteAction {
 	action := &DNSDeleteAction{
 		DNSBaseAction: DNSBaseAction{
 			MsgID:  uuid.New().String(),
 			Action: "delete",
 		},
 		Name: name,
+		IDs:  ids,
 	}
 	return action
 }

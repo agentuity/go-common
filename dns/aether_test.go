@@ -81,7 +81,7 @@ func TestDNSCertAction(t *testing.T) {
 		Name: "test",
 	}
 
-	reply, err := SendDNSAction[DNSCert](context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
+	reply, err := SendDNSAction(context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
 	if err != nil {
 		t.Fatalf("failed to send dns cert action: %v", err)
 	}

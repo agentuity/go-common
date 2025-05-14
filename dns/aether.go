@@ -14,7 +14,7 @@ import (
 )
 
 type DNSBaseAction struct {
-	ID     string `json:"id"`
+	MsgID  string `json:"msg_id"`
 	Action string `json:"action"`
 	Reply  string `json:"reply,omitempty"`
 }
@@ -31,7 +31,11 @@ type DNSAddAction struct {
 
 type DNSDeleteAction struct {
 	DNSBaseAction
+	// Name is the name of the DNS record to delete.
 	Name string `json:"name"`
+	// IDs are the IDs of the DNS records to delete (within a name). This allows for clients to manage a specific record if they keep track of the ID.
+	// If not provided, any name match will be deleted.
+	IDs []string `json:"ids,omitempty"`
 }
 
 type DNSCertAction struct {
@@ -40,7 +44,7 @@ type DNSCertAction struct {
 }
 
 type DNSResponse[T any] struct {
-	ID      string `json:"id"`
+	MsgID   string `json:"msg_id"`
 	Success bool   `json:"success"`
 	Error   string `json:"error,omitempty"`
 	Data    *T     `json:"data,omitempty"`
@@ -50,6 +54,10 @@ type DNSCert struct {
 	Certificate []byte    `json:"certificate"`
 	PrivateKey  []byte    `json:"private_key"`
 	Expires     time.Time `json:"expires"`
+}
+
+type DNSRecord struct {
+	IDs []string `json:"ids"`
 }
 
 type DNSRecordType string
@@ -67,7 +75,7 @@ const (
 func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.Duration, expires time.Duration, tlsCert string) *DNSAddAction {
 	action := &DNSAddAction{
 		DNSBaseAction: DNSBaseAction{
-			ID:     uuid.New().String(),
+			MsgID:  uuid.New().String(),
 			Action: "add",
 		},
 		Name:    name,
@@ -81,13 +89,14 @@ func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.
 }
 
 // DeleteDNSAction deletes a DNS action from the DNS server
-func DeleteDNSAction(name string) *DNSDeleteAction {
+func DeleteDNSAction(name string, ids ...string) *DNSDeleteAction {
 	action := &DNSDeleteAction{
 		DNSBaseAction: DNSBaseAction{
-			ID:     uuid.New().String(),
+			MsgID:  uuid.New().String(),
 			Action: "delete",
 		},
 		Name: name,
+		IDs:  ids,
 	}
 	return action
 }
@@ -96,7 +105,7 @@ func DeleteDNSAction(name string) *DNSDeleteAction {
 func CertRequestDNSAction(name string) *DNSCertAction {
 	action := &DNSCertAction{
 		DNSBaseAction: DNSBaseAction{
-			ID:     uuid.New().String(),
+			MsgID:  uuid.New().String(),
 			Action: "cert",
 		},
 		Name: name,
@@ -121,7 +130,7 @@ type DNSAction interface {
 
 // GetID returns the unique ID of the DNS action
 func (a DNSBaseAction) GetID() string {
-	return a.ID
+	return a.MsgID
 }
 
 // GetReply returns the reply of the DNS action
@@ -241,8 +250,32 @@ var ErrTimeout = errors.New("timeout")
 var ErrTransportRequired = errors.New("transport is required")
 var ErrClosed = errors.New("closed")
 
+// TypedDNSAction is an interface for a DNS action that also specifies its expected response data type.
+type TypedDNSAction[R any] interface {
+	DNSAction
+	// responseType is a marker method used for type inference.
+	// It should return a zero value of the expected data type R for the DNSResponse.Data field.
+	responseType() R
+}
+
+func (DNSAddAction) responseType() DNSRecord { return DNSRecord{} }
+func (DNSDeleteAction) responseType() string { return "" }
+func (DNSCertAction) responseType() DNSCert  { return DNSCert{} }
+
+func NewDNSResponse[R any, T TypedDNSAction[R]](action T, data *R, err error) *DNSResponse[R] {
+	var response DNSResponse[R]
+	response.MsgID = action.GetID()
+	if err != nil {
+		response.Error = err.Error()
+	} else {
+		response.Success = true
+	}
+	response.Data = data
+	return &response
+}
+
 // SendDNSAction sends a DNS action to the DNS server with a timeout. If the timeout is 0, the default timeout will be used.
-func SendDNSAction[R any, T DNSAction](ctx context.Context, action T, opts ...optionHandler) (*R, error) {
+func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, opts ...optionHandler) (*R, error) {
 	var o option
 	o.timeout = DefaultDNSTimeout
 	o.reply = true

@@ -26,7 +26,6 @@ type DNSAddAction struct {
 	Value   string        `json:"value,omitempty"`
 	TTL     time.Duration `json:"ttl,omitempty"`
 	Expires time.Duration `json:"expires,omitempty"`
-	TLSCert string        `json:"tls_cert,omitempty"`
 }
 
 type DNSDeleteAction struct {
@@ -54,6 +53,8 @@ type DNSCert struct {
 	Certificate []byte    `json:"certificate"`
 	PrivateKey  []byte    `json:"private_key"`
 	Expires     time.Time `json:"expires"`
+	// Domain is the name for which the certificate is valid, it may be different from the name requested
+	Domain string `json:"domain"`
 }
 
 type DNSRecord struct {
@@ -72,7 +73,7 @@ const (
 )
 
 // AddDNSAction adds a DNS action to the DNS server
-func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.Duration, expires time.Duration, tlsCert string) *DNSAddAction {
+func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.Duration, expires time.Duration) *DNSAddAction {
 	action := &DNSAddAction{
 		DNSBaseAction: DNSBaseAction{
 			MsgID:  uuid.New().String(),
@@ -83,7 +84,6 @@ func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.
 		Value:   value,
 		TTL:     ttl,
 		Expires: expires,
-		TLSCert: tlsCert,
 	}
 	return action
 }

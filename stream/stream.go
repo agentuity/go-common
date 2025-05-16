@@ -7,13 +7,12 @@ import (
 	"io"
 )
 
-type WriteFlusher interface {
-	io.Writer
+type Flusher interface {
 	Flush() error
 }
 
 // Pipe will read data from r and write it to w flushing the data as it comes in
-func Pipe(w WriteFlusher, r io.Reader) error {
+func Pipe(f Flusher, w io.Writer, r io.Reader) error {
 	buf := make([]byte, 1024*512)
 
 	// we want to stream the response to the client as it comes in
@@ -40,7 +39,7 @@ func Pipe(w WriteFlusher, r io.Reader) error {
 		if _, err := w.Write(buf[:n]); err != nil {
 			return fmt.Errorf("write chunk: %w", err)
 		}
-		if err := w.Flush(); err != nil {
+		if err := f.Flush(); err != nil {
 			return fmt.Errorf("flush: %w", err)
 		}
 	}

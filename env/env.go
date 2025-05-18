@@ -27,13 +27,25 @@ type EnvLineComment struct {
 // ParseEnvFile parses an environment file and returns a list of EnvLine structs.
 func ParseEnvFile(filename string, opts ...WithParseEnvOptions) ([]EnvLine, error) {
 	if _, err := os.Stat(filename); os.IsNotExist(err) {
-		return []EnvLine{}, nil
+		return nil, nil
 	}
 	buf, err := os.ReadFile(filename)
 	if err != nil {
 		return nil, err
 	}
 	return ParseEnvBuffer(buf, opts...)
+}
+
+// ParseEnvFileWithComments parses an environment file and returns a list of EnvLineComment structs.
+func ParseEnvFileWithComments(filename string) ([]EnvLineComment, error) {
+	if _, err := os.Stat(filename); os.IsNotExist(err) {
+		return nil, nil
+	}
+	buf, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnvLinesWithComments(buf)
 }
 
 func dequote(s string) string {

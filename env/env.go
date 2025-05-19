@@ -271,7 +271,11 @@ func InterpolateEnvLines(envs []EnvLine) []EnvLine {
 	// Build environment map from input and OS environment
 	envMap := make(map[string]string)
 	for _, env := range envs {
-		envMap[env.Key] = env.Raw
+		if env.Raw != "" {
+			envMap[env.Key] = env.Raw
+		} else {
+			envMap[env.Key] = env.Val
+		}
 	}
 	for _, env := range os.Environ() {
 		parts := strings.SplitN(env, "=", 2)
@@ -282,7 +286,11 @@ func InterpolateEnvLines(envs []EnvLine) []EnvLine {
 
 	// Process each environment variable
 	for _, env := range envs {
-		result = append(result, EnvLine{Key: env.Key, Val: interpolateValue(env.Raw, envMap), Raw: env.Raw})
+		val := env.Raw
+		if val == "" {
+			val = env.Val
+		}
+		result = append(result, EnvLine{Key: env.Key, Val: interpolateValue(val, envMap), Raw: env.Raw})
 	}
 
 	return result

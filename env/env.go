@@ -263,6 +263,31 @@ func WithInterpolate(interpolate bool) WithParseEnvOptions {
 	}
 }
 
+// InterpolateEnvLines interpolates the values of a list of EnvLine structs using the current environment.
+func InterpolateEnvLines(envs []EnvLine) []EnvLine {
+	// Create a copy of the input slice to avoid modifying the original
+	result := make([]EnvLine, 0)
+
+	// Build environment map from input and OS environment
+	envMap := make(map[string]string)
+	for _, env := range envs {
+		envMap[env.Key] = env.Raw
+	}
+	for _, env := range os.Environ() {
+		parts := strings.SplitN(env, "=", 2)
+		if len(parts) == 2 {
+			envMap[parts[0]] = strings.Join(parts[1:], "=")
+		}
+	}
+
+	// Process each environment variable
+	for _, env := range envs {
+		result = append(result, EnvLine{Key: env.Key, Val: interpolateValue(env.Raw, envMap), Raw: env.Raw})
+	}
+
+	return result
+}
+
 // ParseEnvBuffer parses an environment buffer and returns a list of EnvLine structs.
 func ParseEnvBuffer(buf []byte, opts ...WithParseEnvOptions) ([]EnvLine, error) {
 	if len(buf) == 0 {

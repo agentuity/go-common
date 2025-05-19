@@ -794,3 +794,86 @@ DOUBLE_QUOTED="value with spaces"`,
 		assert.Empty(t, got)
 	})
 }
+
+func TestInterpolateEnvLines(t *testing.T) {
+	// Set up some OS environment variables for testing
+	os.Setenv("TEST_OS_VAR", "os_value")
+	os.Setenv("TEST_OS_VAR2", "os_value2")
+	defer func() {
+		os.Unsetenv("TEST_OS_VAR")
+		os.Unsetenv("TEST_OS_VAR2")
+	}()
+
+	tests := []struct {
+		name     string
+		input    []EnvLine
+		expected []EnvLine
+	}{
+		{
+			name:     "empty input",
+			input:    []EnvLine{},
+			expected: []EnvLine{},
+		},
+		{
+			name: "simple values without interpolation",
+			input: []EnvLine{
+				{Key: "KEY1", Val: "value1", Raw: "value1"},
+				{Key: "KEY2", Val: "value2", Raw: "value2"},
+			},
+			expected: []EnvLine{
+				{Key: "KEY1", Val: "value1", Raw: "value1"},
+				{Key: "KEY2", Val: "value2", Raw: "value2"},
+			},
+		},
+		{
+			name: "basic variable interpolation",
+			input: []EnvLine{
+				{Key: "FOO", Val: "foo", Raw: "foo"},
+				{Key: "BAR", Val: "${FOO}", Raw: "${FOO}"},
+			},
+			expected: []EnvLine{
+				{Key: "FOO", Val: "foo", Raw: "foo"},
+				{Key: "BAR", Val: "foo", Raw: "${FOO}"},
+			},
+		},
+		{
+			name: "basic variable interpolation with OS overrides",
+			input: []EnvLine{
+				{Key: "FOO", Val: "${TEST_OS_VAR}", Raw: "${TEST_OS_VAR}"},
+			},
+			expected: []EnvLine{
+				{Key: "FOO", Val: "os_value", Raw: "${TEST_OS_VAR}"},
+			},
+		},
+		{
+			name: "multiple variable interpolation",
+			input: []EnvLine{
+				{Key: "A", Val: "1", Raw: "1"},
+				{Key: "B", Val: "${A}/2", Raw: "${A}/2"},
+				{Key: "C", Val: "${A}/${B}", Raw: "${A}/${B}"},
+			},
+			expected: []EnvLine{
+				{Key: "A", Val: "1", Raw: "1"},
+				{Key: "B", Val: "1/2", Raw: "${A}/2"},
+				{Key: "C", Val: "1/1/2", Raw: "${A}/${B}"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create a copy of the input slice to avoid modifying the test cases
+			input := make([]EnvLine, len(tt.input))
+			copy(input, tt.input)
+
+			got := InterpolateEnvLines(input)
+			assert.Equal(t, len(tt.expected), len(got), "number of entries should match")
+
+			for i, expected := range tt.expected {
+				assert.Equal(t, expected.Key, got[i].Key, "Key %s should match for entry %d", expected.Key, i)
+				assert.Equal(t, expected.Val, got[i].Val, "Value %s should match for entry %d", expected.Val, i)
+				assert.Equal(t, expected.Raw, got[i].Raw, "Raw value %s should match for entry %d", expected.Raw, i)
+			}
+		})
+	}
+}

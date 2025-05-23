@@ -14,6 +14,12 @@ import (
 	"github.com/agentuity/go-common/cache"
 )
 
+var DefaultDNSServers = []string{
+	"ns0.agentuity.com:53",
+	"ns1.agentuity.com:53",
+	"ns2.agentuity.com:53",
+}
+
 var ErrInvalidIP = fmt.Errorf("invalid ip address resolved for hostname")
 
 var DefaultDNS = New()

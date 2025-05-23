@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -44,8 +45,35 @@ func Warning(text string) string {
 	return lipgloss.NewStyle().Foreground(warningStyleColor).Render(text)
 }
 
+func supportsHyperlinks() bool {
+	term := os.Getenv("TERM")
+	termProgram := os.Getenv("TERM_PROGRAM")
+	wtSession := os.Getenv("WT_SESSION")
+
+	// List of known terminal programs that support OSC 8
+	if strings.Contains(termProgram, "iTerm.app") ||
+		strings.Contains(termProgram, "WezTerm") ||
+		strings.Contains(termProgram, "ghostty") ||
+		strings.Contains(termProgram, "Apple_Terminal") || // sometimes Terminal.app may pass through
+		strings.Contains(termProgram, "Hyper") ||
+		strings.Contains(term, "xterm-kitty") ||
+		strings.Contains(term, "xterm-256color") ||
+		wtSession != "" { // Windows Terminal sets this
+		return true
+	}
+	return false
+}
+
+func hyperlink(url string, text string) string {
+	return fmt.Sprintf("\x1b]8;;%s\x07%s\x1b]8;;\x07", url, text)
+}
+
 func Link(url string, args ...any) string {
-	return linkStyle.Render(fmt.Sprintf(url, args...))
+	link := fmt.Sprintf(url, args...)
+	if supportsHyperlinks() {
+		return hyperlink(link, link)
+	}
+	return linkStyle.Render(link)
 }
 
 func Paragraph(text string, lines ...string) string {

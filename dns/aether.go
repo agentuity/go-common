@@ -21,11 +21,57 @@ type DNSBaseAction struct {
 
 type DNSAddAction struct {
 	DNSBaseAction
-	Name    string        `json:"name"`
-	Type    string        `json:"type,omitempty"`
-	Value   string        `json:"value,omitempty"`
-	TTL     time.Duration `json:"ttl,omitempty"`
+	Name  string `json:"name"`
+	Type  string `json:"type,omitempty"`
+	Value string `json:"value,omitempty"`
+	// TTL is the DNS TTL for the record
+	TTL time.Duration `json:"ttl,omitempty"`
+	// Expires is the expiration time of the DNS record
+	// if not provided the record will never expire
 	Expires time.Duration `json:"expires,omitempty"`
+
+	// Priority is the priority of the DNS record
+	// only used for MX and SRV records
+	Priority int `json:"priority,omitempty"`
+	// Weight is the weight of the DNS record
+	// only used for SRV records
+	Weight int `json:"weight,omitempty"`
+	// Port is the port of the DNS record
+	// only used for SRV records
+	Port int `json:"port,omitempty"`
+}
+
+func (a *DNSAddAction) WithTTL(ttl time.Duration) *DNSAddAction {
+	a.TTL = ttl
+	return a
+}
+
+// WithExpires sets the expiration
+// if not provided the record will never expire
+func (a *DNSAddAction) WithExpires(expires time.Duration) *DNSAddAction {
+	a.Expires = expires
+	return a
+}
+
+// WithPriority sets the priority of the DNS action
+// only used for MX and SRV records
+func (a *DNSAddAction) WithPriority(priority int) *DNSAddAction {
+	a.Priority = priority
+	return a
+}
+
+// WithWeight sets the weight of the DNS action
+// only used for SRV records
+func (a *DNSAddAction) WithWeight(weight int) *DNSAddAction {
+	a.Weight = weight
+	return a
+}
+
+// WithPort sets the port of the DNS action
+// only used for SRV records
+func (a *DNSAddAction) WithPort(port int) *DNSAddAction {
+	a.Port = port
+	return a
 }
 
 type DNSDeleteAction struct {
@@ -61,6 +107,13 @@ type DNSRecord struct {
 	IDs []string `json:"ids"`
 }
 
+func (r *DNSRecord) GetID() string {
+	if len(r.IDs) == 0 {
+		return ""
+	}
+	return r.IDs[0]
+}
+
 type DNSRecordType string
 
 const (
@@ -70,20 +123,24 @@ const (
 	RecordTypeMX    DNSRecordType = "MX"
 	RecordTypeNS    DNSRecordType = "NS"
 	RecordTypeTXT   DNSRecordType = "TXT"
+	RecordTypeSRV   DNSRecordType = "SRV"
 )
 
 // AddDNSAction adds a DNS action to the DNS server
 func AddDNSAction(name string, recordType DNSRecordType, value string, ttl time.Duration, expires time.Duration) *DNSAddAction {
+	return NewAddAction(name, recordType, value).WithTTL(ttl).WithExpires(expires)
+}
+
+// NewAddDNSAction creates a new DNS add action
+func NewAddAction(name string, recordType DNSRecordType, value string) *DNSAddAction {
 	action := &DNSAddAction{
 		DNSBaseAction: DNSBaseAction{
 			MsgID:  uuid.New().String(),
 			Action: "add",
 		},
-		Name:    name,
-		Type:    string(recordType),
-		Value:   value,
-		TTL:     ttl,
-		Expires: expires,
+		Name:  name,
+		Type:  string(recordType),
+		Value: value,
 	}
 	return action
 }
@@ -288,15 +345,20 @@ func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, op
 		return nil, ErrTransportRequired
 	}
 
+	id := action.GetID()
+	if id == "" {
+		return nil, errors.New("message ID not found")
+	}
+
 	var sub Subscriber
 
 	if o.reply {
-		action.SetReply("aether:response:" + action.GetAction() + ":" + action.GetID())
+		action.SetReply("aether:response:" + action.GetAction() + ":" + id)
 		sub = o.transport.Subscribe(ctx, action.GetReply())
 		defer sub.Close()
 	}
 
-	if err := o.transport.Publish(ctx, "aether:request:"+action.GetAction()+":"+action.GetID(), []byte(cstr.JSONStringify(action))); err != nil {
+	if err := o.transport.Publish(ctx, "aether:request:"+action.GetAction()+":"+id, []byte(cstr.JSONStringify(action))); err != nil {
 		return nil, err
 	}
 

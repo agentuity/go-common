@@ -77,8 +77,6 @@ func (a *DNSAddAction) WithPort(port int) *DNSAddAction {
 type DNSDeleteAction struct {
 	DNSBaseAction
 	// Name is the name of the DNS record to delete.
-	//
-	// Deprecated: Use IDs instead
 	Name string `json:"name"`
 	// IDs are the IDs of the DNS records to delete (within a name). This allows for clients to manage a specific record if they keep track of the ID.
 	// If not provided, any name match will be deleted.
@@ -148,8 +146,6 @@ func NewAddAction(name string, recordType DNSRecordType, value string) *DNSAddAc
 }
 
 // DeleteDNSAction deletes a DNS action from the DNS server
-//
-// Deprecated: Use NewDeleteAction instead
 func DeleteDNSAction(name string, ids ...string) *DNSDeleteAction {
 	action := &DNSDeleteAction{
 		DNSBaseAction: DNSBaseAction{
@@ -160,17 +156,6 @@ func DeleteDNSAction(name string, ids ...string) *DNSDeleteAction {
 		IDs:  ids,
 	}
 	return action
-}
-
-// NewDeleteAction creates a new DNS delete action
-func NewDeleteAction(ids ...string) *DNSDeleteAction {
-	return &DNSDeleteAction{
-		DNSBaseAction: DNSBaseAction{
-			MsgID:  uuid.New().String(),
-			Action: "delete",
-		},
-		IDs: ids,
-	}
 }
 
 // CertRequestDNSAction requests a certificate from the DNS server

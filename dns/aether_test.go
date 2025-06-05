@@ -62,6 +62,10 @@ func TestDNSAction(t *testing.T) {
 	var transport testTransport
 
 	action := &DNSAddAction{
+		DNSBaseAction: DNSBaseAction{
+			MsgID:  uuid.New().String(),
+			Action: "add",
+		},
 		Name: "test",
 	}
 
@@ -78,6 +82,10 @@ func TestDNSCertAction(t *testing.T) {
 	var transport testTransport
 
 	action := &DNSCertAction{
+		DNSBaseAction: DNSBaseAction{
+			MsgID:  uuid.New().String(),
+			Action: "cert",
+		},
 		Name: "test",
 	}
 

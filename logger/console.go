@@ -28,7 +28,7 @@ func color(val string) string {
 
 const (
 	Reset       = "\033[0m"
-	Gray        = "\033[1;30m"
+	Black       = "\033[1;30m"
 	Red         = "\033[31m"
 	Green       = "\033[32m"
 	Yellow      = "\033[33m"
@@ -42,6 +42,7 @@ const (
 	YellowBold  = "\033[33;1m"
 	WhiteBold   = "\033[37;1m"
 	CyanBold    = "\033[36;1m"
+	Gray        = "\033[1;90m" // This is actually "bright black" but Robin said that's a oximoron.
 	Purple      = "\u001b[38;5;200m"
 )
 

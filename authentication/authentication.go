@@ -33,7 +33,16 @@ func WithExpiration(expiration time.Time) TokenOpt {
 			return fmt.Errorf("expiration time is in the past")
 		}
 	}
-	return WithNonce(str2duration.String(exp.Round(time.Hour)) + "." + strconv.FormatInt(time.Now().Unix(), 10))
+	if exp > 365*24*time.Hour {
+		return func(opts *tokenOpts) error {
+			return fmt.Errorf("expiration time exceeds maximum of 1 year")
+		}
+	}
+	roundedExp := exp.Round(time.Minute)
+	if roundedExp < time.Minute {
+		roundedExp = time.Minute
+	}
+	return WithNonce(str2duration.String(roundedExp) + "." + strconv.FormatInt(time.Now().Unix(), 10))
 }
 
 // WithNonce is a TokenOpt that sets the nonce for the token

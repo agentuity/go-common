@@ -51,7 +51,9 @@ func (p *modelPricing) GetPrice(model string) *ModelPrice {
 
 func (p *modelPricing) Close() {
 	p.once.Do(func() {
-		p.cancelFunc()
+		if p.cancelFunc != nil {
+			p.cancelFunc()
+		}
 	})
 }
 

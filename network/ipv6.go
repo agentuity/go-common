@@ -22,7 +22,7 @@ func hashTo16Bits(ipv4 string) uint16 {
 func ipv4ToHex(ipv4 string) string {
 	ip := net.ParseIP(ipv4).To4()
 	if ip == nil {
-		return ":" // Invalid IPv4 fallback
+		return "0000:0000" // Invalid IPv4 fallback
 	}
 	return fmt.Sprintf("%02x%02x:%02x%02x", ip[0], ip[1], ip[2], ip[3])
 }
@@ -106,13 +106,8 @@ func buildIPv6Address(region Region, network Network, tenantID string, machineID
 	machineHash := hashTo16Bits(machineID)
 	containerHex := ipv4ToHex(hostID)
 	// reparse the validate and make sure we have a valid IP and formatted nicely
-	val := net.ParseIP(fmt.Sprintf("%s:%s:%03x0:%s:%s:%s", agentuityIPV6ULAPrefix, padHex(uint64(rrst)), ttt, padHex(uint64(machineHash)), padHex(uint64(tttt)), containerHex))
+	val := net.ParseIP(fmt.Sprintf("%s:%x:%03x0:%x:%x:%s", agentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt, containerHex))
 	return val.String()
-}
-
-func padHex(hex uint64) string {
-	val := fmt.Sprintf("%x", hex)
-	return val
 }
 
 func buildIPv6MachineSubnet(region Region, network Network, tenantID string, machineID string) string {
@@ -123,7 +118,7 @@ func buildIPv6MachineSubnet(region Region, network Network, tenantID string, mac
 	rrst := uint16(region)<<8 | uint16(network)<<4 | uint16(x)
 	machineHash := hashTo16Bits(machineID)
 	// reparse the validate and make sure we have a valid IP and formatted nicely
-	val := fmt.Sprintf("%s:%s:%03x0:%s:%x::/96", agentuityIPV6ULAPrefix, padHex(uint64(rrst)), ttt, padHex(uint64(machineHash)), tttt)
+	val := fmt.Sprintf("%s:%x:%03x0:%x:%x::/96", agentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt)
 	_, subnet, _ := net.ParseCIDR(val)
 	return subnet.String()
 }

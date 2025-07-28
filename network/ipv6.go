@@ -1,3 +1,5 @@
+//go:generate go run gen_static.go
+
 package network
 
 import (

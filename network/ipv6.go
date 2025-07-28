@@ -1,3 +1,5 @@
+//go:generate go run gen_static.go
+
 package network
 
 import (
@@ -41,6 +43,7 @@ type Network uint8
 const (
 	NetworkPrivateGravity   Network = 0x00
 	NetworkExternalCustomer Network = 0x01
+	NetworkPrivateServices  Network = 0x02
 )
 
 const AgentuityTenantID = "agentuity"

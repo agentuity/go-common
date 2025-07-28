@@ -20,11 +20,19 @@ package network
 
 `
 
+	mapping := `var Services = map[string]string{`
+	mapping += "\n"
+
 	for _, service := range services {
 		ip := genStaticServiceIP(service)
 		varName := fmt.Sprintf("%sServiceIP", capitalize(service))
 		output += fmt.Sprintf("const %s = \"%s\"\n", varName, ip)
+		mapping += fmt.Sprintf("\t\"%s\": \"%s\",\n", ip, service)
 	}
+
+	mapping += `}`
+
+	output += "\n" + mapping + "\n"
 
 	err := os.WriteFile("static_generated.go", []byte(output), 0644)
 	if err != nil {

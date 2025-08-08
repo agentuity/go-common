@@ -57,7 +57,7 @@
 // Public API
 // ──────────
 //
-//	EncryptHybridKEMDEMStream(priv ed25519.PrivateKey, r io.Reader, w io.Writer)
+//	EncryptHybridKEMDEMStream(pub ed25519.PublicKey, r io.Reader, w io.Writer)
 //	DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, r io.Reader, w io.Writer)
 //
 // Both return the number of plaintext bytes processed and ensure that
@@ -122,9 +122,9 @@ func makeNonce(prefix []byte, counter uint64) []byte {
 // ---------------- PUBLIC API ----------------------
 
 // EncryptHybridKEMDEMStream copies src → dst, returns plaintext bytes written.
-func EncryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Writer) (int64, error) {
+func EncryptHybridKEMDEMStream(pub ed25519.PublicKey, src io.Reader, dst io.Writer) (int64, error) {
 	// 1. fleet public key (for sealed box)
-	pubX, err := edPubToX(priv.Public().(ed25519.PublicKey))
+	pubX, err := edPubToX(pub)
 	if err != nil {
 		return 0, err
 	}
@@ -285,11 +285,6 @@ func DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Wr
 		if _, err := io.ReadFull(src, cipher); err != nil {
 			return total, err
 		}
-		defer func(c []byte) {
-			for i := range c {
-				c[i] = 0
-			}
-		}(cipher)
 		nonce := makeNonce(baseNonce, counter)
 		var plain []byte
 		if counter == 0 {
@@ -298,6 +293,10 @@ func DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Wr
 		} else {
 			// Subsequent frames: no associated data
 			plain, err = aead.Open(nil, nonce, cipher, nil)
+		}
+		// Clear cipher immediately after use to prevent memory accumulation
+		for i := range cipher {
+			cipher[i] = 0
 		}
 		if err != nil {
 			return total, err

@@ -36,7 +36,7 @@ func TestBasicEncryptDecrypt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			// Encrypt
 			var encrypted bytes.Buffer
-			written, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(tc.data), &encrypted)
+			written, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(tc.data), &encrypted)
 			if err != nil {
 				t.Fatalf("encryption failed: %v", err)
 			}
@@ -64,7 +64,7 @@ func TestBasicEncryptDecrypt(t *testing.T) {
 
 // Test with different key pairs (should fail)
 func TestDifferentKeys(t *testing.T) {
-	_, priv1, err := ed25519.GenerateKey(rand.Reader)
+	pub1, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestDifferentKeys(t *testing.T) {
 
 	// Encrypt with key 1
 	var encrypted bytes.Buffer
-	_, err = EncryptHybridKEMDEMStream(priv1, bytes.NewReader(data), &encrypted)
+	_, err = EncryptHybridKEMDEMStream(pub1, bytes.NewReader(data), &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +174,7 @@ func TestKeyConversion(t *testing.T) {
 
 // Test memory safety - ensure DEK is cleared
 func TestMemoryClearing(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +183,7 @@ func TestMemoryClearing(t *testing.T) {
 
 	// Encrypt
 	var encrypted bytes.Buffer
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestMemoryClearing(t *testing.T) {
 
 // Test stream behavior with early EOF
 func TestStreamEOF(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +212,7 @@ func TestStreamEOF(t *testing.T) {
 	eofReader := strings.NewReader("")
 
 	var encrypted bytes.Buffer
-	written, err := EncryptHybridKEMDEMStream(priv, eofReader, &encrypted)
+	written, err := EncryptHybridKEMDEMStream(pub, eofReader, &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func TestNonceConstruction(t *testing.T) {
 
 // Benchmark tests
 func BenchmarkEncrypt(b *testing.B) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -266,7 +266,7 @@ func BenchmarkEncrypt(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var encrypted bytes.Buffer
-		_, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+		_, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -274,14 +274,14 @@ func BenchmarkEncrypt(b *testing.B) {
 }
 
 func BenchmarkDecrypt(b *testing.B) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		b.Fatal(err)
 	}
 
 	data := bytes.Repeat([]byte("benchmark data"), 1000)
 	var encrypted bytes.Buffer
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func FuzzEncryptDecrypt(f *testing.F) {
 	f.Add(bytes.Repeat([]byte("A"), 1000))
 	f.Add(bytes.Repeat([]byte("B"), 65536))
 
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -319,7 +319,7 @@ func FuzzEncryptDecrypt(f *testing.F) {
 
 		// Encrypt
 		var encrypted bytes.Buffer
-		written, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+		written, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 		if err != nil {
 			t.Fatalf("encryption failed: %v", err)
 		}
@@ -374,12 +374,13 @@ func TestKnownVectors(t *testing.T) {
 	// Use a deterministic key for reproducible tests
 	seed := bytes.Repeat([]byte{0x42}, 32)
 	priv := ed25519.NewKeyFromSeed(seed)
+	pub := priv.Public().(ed25519.PublicKey)
 
 	testData := []byte("known test vector data for regression testing")
 
 	// Encrypt
 	var encrypted bytes.Buffer
-	written, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(testData), &encrypted)
+	written, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(testData), &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,7 +416,7 @@ func TestKnownVectors(t *testing.T) {
 
 // Test nonce reuse protection
 func TestNonceReuseProtection(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,13 +427,13 @@ func TestNonceReuseProtection(t *testing.T) {
 	var encrypted1, encrypted2 bytes.Buffer
 
 	// First encryption
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted1)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Second encryption of same data
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted2)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -460,7 +461,7 @@ func TestNonceReuseProtection(t *testing.T) {
 
 // Test that tampering with nonce causes authentication failure
 func TestNonceTampering(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +470,7 @@ func TestNonceTampering(t *testing.T) {
 
 	// Encrypt
 	var encrypted bytes.Buffer
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -493,7 +494,7 @@ func TestNonceTampering(t *testing.T) {
 
 // Test frame size boundary conditions
 func TestFrameSizeBoundaries(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +516,7 @@ func TestFrameSizeBoundaries(t *testing.T) {
 
 			// Encrypt
 			var encrypted bytes.Buffer
-			written, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+			written, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 			if err != nil {
 				t.Fatalf("encryption failed: %v", err)
 			}
@@ -555,14 +556,14 @@ func TestUint16OverflowProtection(t *testing.T) {
 	}
 
 	// Test with maximum frame size to ensure no overflow
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	data := bytes.Repeat([]byte("B"), frame)
 	var encrypted bytes.Buffer
-	_, err = EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+	_, err = EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -577,7 +578,7 @@ func FuzzCorruptionPositions(f *testing.F) {
 	f.Add([]byte("longer test data for corruption testing"), 50, byte(0x01))
 	f.Add(bytes.Repeat([]byte("A"), 1000), 500, byte(0x80))
 
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -589,7 +590,7 @@ func FuzzCorruptionPositions(f *testing.F) {
 
 		// Encrypt
 		var encrypted bytes.Buffer
-		_, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+		_, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 		if err != nil {
 			return // Skip if encryption fails for any reason
 		}
@@ -630,7 +631,7 @@ func FuzzCorruptionPositions(f *testing.F) {
 
 // Benchmark various data sizes
 func BenchmarkEncryptDecryptSizes(b *testing.B) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -650,7 +651,7 @@ func BenchmarkEncryptDecryptSizes(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				// Encrypt
 				var encrypted bytes.Buffer
-				_, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+				_, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -668,7 +669,7 @@ func BenchmarkEncryptDecryptSizes(b *testing.B) {
 
 // Test concurrent operations
 func TestConcurrentOperations(t *testing.T) {
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -686,7 +687,7 @@ func TestConcurrentOperations(t *testing.T) {
 
 			// Encrypt
 			var encrypted bytes.Buffer
-			_, err := EncryptHybridKEMDEMStream(priv, bytes.NewReader(data), &encrypted)
+			_, err := EncryptHybridKEMDEMStream(pub, bytes.NewReader(data), &encrypted)
 			if err != nil {
 				results <- fmt.Errorf("goroutine %d encrypt failed: %v", id, err)
 				return

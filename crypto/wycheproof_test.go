@@ -37,15 +37,27 @@ type wycheproofTestSuite struct {
 }
 
 // Generate our own test vectors for ChaCha20-Poly1305 verification
-func generateTestVectors() []wycheproofTestCase {
+func generateTestVectors(t *testing.T) []wycheproofTestCase {
 	vectors := make([]wycheproofTestCase, 0)
 
 	// Test case 1: Basic encryption
-	key1, _ := hex.DecodeString("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
-	nonce1, _ := hex.DecodeString("070000004041424344454647")
-	plaintext1, _ := hex.DecodeString("4c616469657320616e642047656e746c656d656e")
+	key1, err := hex.DecodeString("808182838485868788898a8b8c8d8e8f909192939495969798999a9b9c9d9e9f")
+	if err != nil {
+		t.Fatalf("failed to decode key1: %v", err)
+	}
+	nonce1, err := hex.DecodeString("070000004041424344454647")
+	if err != nil {
+		t.Fatalf("failed to decode nonce1: %v", err)
+	}
+	plaintext1, err := hex.DecodeString("4c616469657320616e642047656e746c656d656e")
+	if err != nil {
+		t.Fatalf("failed to decode plaintext1: %v", err)
+	}
 
-	aead1, _ := chacha20poly1305.New(key1)
+	aead1, err := chacha20poly1305.New(key1)
+	if err != nil {
+		t.Fatalf("failed to create aead1: %v", err)
+	}
 	ciphertext1 := aead1.Seal(nil, nonce1, plaintext1, nil)
 	ct1 := ciphertext1[:len(ciphertext1)-16]
 	tag1 := ciphertext1[len(ciphertext1)-16:]
@@ -79,7 +91,10 @@ func generateTestVectors() []wycheproofTestCase {
 	})
 
 	// Test case 3: With AAD
-	aad3, _ := hex.DecodeString("50515253c0c1c2c3c4c5c6c7")
+	aad3, err := hex.DecodeString("50515253c0c1c2c3c4c5c6c7")
+	if err != nil {
+		t.Fatalf("failed to decode aad3: %v", err)
+	}
 	ciphertext3 := aead1.Seal(nil, nonce1, plaintext1, aad3)
 	ct3 := ciphertext3[:len(ciphertext3)-16]
 	tag3 := ciphertext3[len(ciphertext3)-16:]
@@ -113,7 +128,7 @@ func generateTestVectors() []wycheproofTestCase {
 }
 
 func TestWycheproofChaCha20Poly1305(t *testing.T) {
-	wycheproofVectors := generateTestVectors()
+	wycheproofVectors := generateTestVectors(t)
 	for _, tc := range wycheproofVectors {
 		t.Run(tc.Comment, func(t *testing.T) {
 			// Decode test vector

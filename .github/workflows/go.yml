@@ -33,4 +33,6 @@ jobs:
       - name: Fuzz Testing
         run: |
           go test -fuzz=FuzzEncryptDecrypt ./crypto -fuzztime=3s
+          go test -fuzz=FuzzDecryptMalformed ./crypto -fuzztime=3s
+          go test -fuzz=FuzzCorruptionPositions ./crypto -fuzztime=3s
           go test -fuzz=FuzzPEMEncoding ./crypto -fuzztime=3s

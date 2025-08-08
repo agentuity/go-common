@@ -1,8 +1,9 @@
 module github.com/agentuity/go-common
 
-go 1.24.5
+go 1.24.6
 
 require (
+	filippo.io/edwards25519 v1.1.0
 	github.com/buger/goterm v1.0.4
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/huh v0.6.0
@@ -25,6 +26,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.34.0
 	go.opentelemetry.io/otel/sdk/log v0.10.0
 	go.opentelemetry.io/otel/trace v1.34.0
+	golang.org/x/crypto v0.36.0
 	golang.org/x/sync v0.12.0
 	golang.org/x/term v0.30.0
 )

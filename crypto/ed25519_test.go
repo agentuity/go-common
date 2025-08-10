@@ -27,8 +27,13 @@ func TestParseAndValidateEd25519PrivateKey(t *testing.T) {
 			expectErr: false,
 		},
 		{
+			name:      "Valid raw seed (32 bytes)",
+			keyData:   privateKey[:ed25519.SeedSize],
+			expectErr: false,
+		},
+		{
 			name:      "Invalid raw private key - wrong size",
-			keyData:   make([]byte, 32), // ed25519 private key should be 64 bytes
+			keyData:   make([]byte, 31),
 			expectErr: true,
 		},
 		{

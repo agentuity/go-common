@@ -15,40 +15,39 @@ func ParseAndValidateEd25519PrivateKey(keyData []byte) (ed25519.PrivateKey, erro
 
 	// Try to decode as PEM first
 	if block, _ := pem.Decode(keyData); block != nil {
+		// Check for encrypted PEM blocks
+		if x509.IsEncryptedPEMBlock(block) {
+			return nil, fmt.Errorf("encrypted PEM blocks are not supported")
+		}
+
 		switch block.Type {
-		case "PRIVATE KEY":
-			// PKCS#8 format
+		case "PRIVATE KEY", "ED25519 PRIVATE KEY":
+			// Parse as PKCS#8 format (both standard and non-standard ED25519 types)
 			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err != nil {
-				return nil, fmt.Errorf("failed to parse PKCS#8 private key: %w", err)
+				return nil, fmt.Errorf("failed to parse PKCS#8 private key (type: %s): %w", block.Type, err)
 			}
 
 			var ok bool
 			privateKey, ok = key.(ed25519.PrivateKey)
 			if !ok {
-				return nil, fmt.Errorf("key is not an ed25519 private key")
-			}
-		case "ED25519 PRIVATE KEY":
-			// Ed25519 specific format
-			key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse ed25519 private key: %w", err)
-			}
-
-			var ok bool
-			privateKey, ok = key.(ed25519.PrivateKey)
-			if !ok {
-				return nil, fmt.Errorf("key is not an ed25519 private key")
+				return nil, fmt.Errorf("PKCS#8 key is not an ed25519 private key, got %T", key)
 			}
 		default:
-			return nil, fmt.Errorf("unsupported PEM block type: %s", block.Type)
+			return nil, fmt.Errorf("unsupported PEM block type: %s (expected PRIVATE KEY)", block.Type)
 		}
 	} else {
-		// Try to parse as raw ed25519 private key
-		if len(keyData) != ed25519.PrivateKeySize {
-			return nil, fmt.Errorf("invalid ed25519 private key size: expected %d bytes, got %d", ed25519.PrivateKeySize, len(keyData))
+		// Try to parse as raw ed25519 private key or seed
+		switch len(keyData) {
+		case ed25519.SeedSize: // 32 bytes
+			// Generate full private key from seed
+			privateKey = ed25519.NewKeyFromSeed(keyData)
+		case ed25519.PrivateKeySize: // 64 bytes
+			// Use as complete private key
+			privateKey = ed25519.PrivateKey(keyData)
+		default:
+			return nil, fmt.Errorf("invalid ed25519 key size: expected %d bytes (seed) or %d bytes (private key), got %d", ed25519.SeedSize, ed25519.PrivateKeySize, len(keyData))
 		}
-		privateKey = ed25519.PrivateKey(keyData)
 	}
 
 	// Validate the private key by checking its length

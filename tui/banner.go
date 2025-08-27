@@ -9,7 +9,7 @@ import (
 var (
 	bannerForegroupColor = lipgloss.AdaptiveColor{Light: "#a60853", Dark: "#F652A0"}
 	bannerBorderColor    = lipgloss.AdaptiveColor{Light: "#999999", Dark: "#AAAAAA"}
-	bannerTitleColor     = lipgloss.AdaptiveColor{Light: "#36EEE0", Dark: "#00FFFF"}
+	bannerTitleColor     = lipgloss.AdaptiveColor{Light: "#00AAAA", Dark: "#00FFFF"}
 	bannerMaxWidth       = 80
 	bannerPadding        = 1
 	bannerMargin         = 0

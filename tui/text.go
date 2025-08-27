@@ -12,7 +12,7 @@ var (
 	linkForegroupColor  = lipgloss.AdaptiveColor{Light: "#000099", Dark: "#9F9FFF"}
 	linkStyle           = lipgloss.NewStyle().Foreground(linkForegroupColor).Underline(true)
 	paragraphStyle      = lipgloss.NewStyle().AlignVertical(lipgloss.Top).AlignHorizontal(lipgloss.Left)
-	textStyleColor      = lipgloss.AdaptiveColor{Light: "#36EEE0", Dark: "#00FFFF"}
+	textStyleColor      = lipgloss.AdaptiveColor{Light: "#00AAAA", Dark: "#00FFFF"}
 	mutedStyleColor     = lipgloss.AdaptiveColor{Light: "#666666", Dark: "#999999"}
 	warningStyleColor   = lipgloss.AdaptiveColor{Light: "#FFA500", Dark: "#FFA500"}
 	titleStyleColor     = lipgloss.AdaptiveColor{Light: "#071330", Dark: "#F652A0"}

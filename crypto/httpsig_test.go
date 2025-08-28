@@ -21,7 +21,7 @@ func TestSignAndVerifyHTTPRequest(t *testing.T) {
 	err = SignHTTPRequest(testKey, r, body)
 	assert.NoError(t, err)
 
-	err = VerifyHTTPRequest(&testKey.PublicKey, r, body, func() error {
+	err = VerifyHTTPRequest(&testKey.PublicKey, r, body, func(nonce string) error {
 		return nil
 	})
 	assert.NoError(t, err)

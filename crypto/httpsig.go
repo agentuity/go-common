@@ -24,9 +24,21 @@ func keyIDfromECDSAPublic(pub *ecdsa.PublicKey) (string, error) {
 }
 
 func hashSignature(req *http.Request, body []byte, timestamp string, nonce string) []byte {
-	canon := fmt.Append(body, req.Method, req.URL.RequestURI(), timestamp, nonce)
-	hash := sha256.Sum256(canon)
-	return hash[:]
+	h := sha256.New()
+
+	addHash := func(label string, item string) {
+		h.Write(fmt.Appendf([]byte{}, "%s: %s\n", label, item))
+	}
+	addHash("method", req.Method)
+	addHash("uri", req.URL.RequestURI())
+	addHash("timestamp", timestamp)
+	addHash("nonce", nonce)
+
+	// Body integrity via digest to avoid huge buffers and delimiter issues
+	sum := sha256.Sum256(body)
+	addHash("body-sha256: ", hex.EncodeToString(sum[:]))
+
+	return h.Sum(nil)
 }
 
 func SignHTTPRequest(key *ecdsa.PrivateKey, req *http.Request, body []byte) error {
@@ -49,20 +61,50 @@ func SignHTTPRequest(key *ecdsa.PrivateKey, req *http.Request, body []byte) erro
 	return nil
 }
 
-func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, checkNonce func() error) error {
+func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, checkNonce func(string) error) error {
+	// Validate algorithm
+	alg := req.Header.Get("X-Signature-Alg")
+	if alg != "ecdsa-sha256" {
+		return fmt.Errorf("unsupported signature algorithm: %q", alg)
+	}
+
+	// Validate key ID
+	kid := req.Header.Get("X-Signature-KeyID")
+	if kid == "" {
+		return fmt.Errorf("missing key id")
+	}
+
+	// Bind provided key to header to prevent mismatches
+	if expected, err := keyIDfromECDSAPublic(key); err != nil {
+		return err
+	} else if kid != expected {
+		return fmt.Errorf("key id mismatch")
+	}
+
 	sig, err := base64.StdEncoding.DecodeString(req.Header.Get("Signature"))
 	if err != nil {
 		return err
 	}
+
 	timestamp := req.Header.Get("X-Signature-Timestamp")
 	if timestamp == "" {
 		return fmt.Errorf("missing timestamp")
 	}
+
+	// Parse and enforce timestamp skew
+	ts, err := time.Parse(time.RFC3339Nano, timestamp)
+	if err != nil {
+		return fmt.Errorf("invalid timestamp: %w", err)
+	}
+	if skew := time.Since(ts); skew < -time.Minute || skew > time.Minute {
+		return fmt.Errorf("timestamp outside acceptable skew")
+	}
+
 	nonce := req.Header.Get("X-Signature-Nonce")
 	if nonce == "" {
 		return fmt.Errorf("missing nonce")
 	}
-	if err := checkNonce(); err != nil {
+	if err := checkNonce(nonce); err != nil {
 		return err
 	}
 	hash := hashSignature(req, body, timestamp, nonce)

@@ -36,7 +36,7 @@ func hashSignature(req *http.Request, body []byte, timestamp string, nonce strin
 
 	// Body integrity via digest to avoid huge buffers and delimiter issues
 	sum := sha256.Sum256(body)
-	addHash("body-sha256: ", hex.EncodeToString(sum[:]))
+	addHash("body-sha256", hex.EncodeToString(sum[:]))
 
 	return h.Sum(nil)
 }
@@ -81,7 +81,11 @@ func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, che
 		return fmt.Errorf("key id mismatch")
 	}
 
-	sig, err := base64.StdEncoding.DecodeString(req.Header.Get("Signature"))
+	b64Sig := req.Header.Get("Signature")
+	if b64Sig == "" {
+		return fmt.Errorf("missing signature")
+	}
+	sig, err := base64.StdEncoding.DecodeString(b64Sig)
 	if err != nil {
 		return err
 	}
@@ -96,6 +100,7 @@ func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, che
 	if err != nil {
 		return fmt.Errorf("invalid timestamp: %w", err)
 	}
+
 	if skew := time.Since(ts); skew < -time.Minute || skew > time.Minute {
 		return fmt.Errorf("timestamp outside acceptable skew")
 	}
@@ -103,6 +108,9 @@ func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, che
 	nonce := req.Header.Get("X-Signature-Nonce")
 	if nonce == "" {
 		return fmt.Errorf("missing nonce")
+	}
+	if checkNonce == nil {
+		checkNonce = func(string) error { return nil }
 	}
 	if err := checkNonce(nonce); err != nil {
 		return err

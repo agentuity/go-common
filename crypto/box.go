@@ -138,16 +138,7 @@ func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) 
 	}()
 
 	// Derive AES key from shared secret using SP800-56A Concat KDF
-	ephemeralPubBytes := ephemeralPriv.PublicKey().Bytes()
-	recipientPubBytesRaw := recipientECDH.Bytes()
-
-	otherInfo := [][]byte{
-		[]byte("AES-256-GCM"), // Algorithm identifier
-		ephemeralPubBytes,     // Ephemeral public key
-		recipientPubBytesRaw,  // Recipient public key
-	}
-
-	kekBytes := concatKDFSHA256(sharedSecret, 32, otherInfo...)
+	kekBytes := concatKDFSHA256(sharedSecret, 32, []byte("AES-256-GCM"))
 	var kek [32]byte
 	copy(kek[:], kekBytes)
 	defer func() {
@@ -177,6 +168,7 @@ func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) 
 	ciphertext := gcm.Seal(nil, nonce, dek, nil)
 
 	// Format: ephemeral_pubkey || nonce || ciphertext
+	ephemeralPubBytes := ephemeralPriv.PublicKey().Bytes()
 	result := make([]byte, 0, len(ephemeralPubBytes)+len(nonce)+len(ciphertext))
 	result = append(result, ephemeralPubBytes...)
 	result = append(result, nonce...)
@@ -219,15 +211,7 @@ func unwrapDEKWithECDH(wrapped []byte, recipientPriv *ecdsa.PrivateKey) ([]byte,
 	}()
 
 	// Derive AES key from shared secret using SP800-56A Concat KDF
-	recipientPubBytesRaw := recipientECDH.Bytes()
-
-	otherInfo := [][]byte{
-		[]byte("AES-256-GCM"), // Algorithm identifier
-		ephemeralPubBytes,     // Ephemeral public key
-		recipientPubBytesRaw,  // Recipient public key
-	}
-
-	kekBytes := concatKDFSHA256(sharedSecret, 32, otherInfo...)
+	kekBytes := concatKDFSHA256(sharedSecret, 32, []byte("AES-256-GCM"))
 	var kek [32]byte
 	copy(kek[:], kekBytes)
 	defer func() {

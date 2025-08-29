@@ -29,3 +29,6 @@ fuzz:
 	@go test -fuzz=FuzzDecryptMalformed ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzCorruptionPositions ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzPEMEncoding ./crypto -fuzztime=3s
+	@go test -fuzz=FuzzStreamingPatterns ./crypto -fuzztime=3s
+	@go test -fuzz=FuzzPartialCorruption ./crypto -fuzztime=3s
+	@go test -fuzz=FuzzDifferentKeyPairs ./crypto -fuzztime=3s

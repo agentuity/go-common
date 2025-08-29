@@ -6,7 +6,7 @@ This repository contains the public shared utility code for Agentuity as a Golan
 
 ## Requirements
 
-You will need [Golang](https://go.dev/dl/) version 1.24 or later to use this package.
+You will need [Golang](https://go.dev/dl/) version 1.25 or later to use this package.
 
 ## Usage
 

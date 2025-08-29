@@ -57,8 +57,8 @@ func TestCacheBackgroundExpire(t *testing.T) {
 	time.Sleep(time.Millisecond * 200)
 	c := cache.(*inMemoryCache)
 	c.mutex.Lock()
-	defer c.mutex.Unlock()
 	assert.Empty(t, c.cache)
+	c.mutex.Unlock()
 	cache.Close()
 	cancel()
 }

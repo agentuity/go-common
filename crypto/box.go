@@ -1,5 +1,5 @@
 // Package crypto implements a **FIPS 140-3 compliant KEM-DEM envelope encryption scheme**
-// suitable for multi-gigabyte streams using ECDSA P-256 and AES-256-GCM.
+// suitable for multi-gigabyte streams using ECDH P-256 and AES-256-GCM.
 // This design is Go 1.24+ FIPS compatible (GOFIPS140=v1.0.0) and depends only
 // on standard library crypto packages.
 //
@@ -23,7 +23,7 @@
 //
 //	File layout
 //	 ┌─────────────────────────────────────────────────────────────────────────┐
-//	 │ uint16 wrappedLen │ 97B wrapped DEK │ 12B base nonce │ frames... │
+//	 │ uint16 wrappedLen │ 125B wrapped DEK │ 12B base nonce │ frames... │
 //	 └─────────────────────────────────────────────────────────────────────────┘
 //	                             ▲                    ▲
 //	                             │                    └─ AES-256-GCM frames
@@ -32,8 +32,8 @@
 //	Security properties
 //	• Confidentiality & integrity: AES-256-GCM per frame
 //	• Header authentication: first frame includes header as associated data
-//	• Forward-secrecy per object: new ephemeral ECDSA key each encryption
-//	• Key rotation: requires re-wrapping only the ~100-byte header
+//	• Forward-secrecy per object: new ephemeral ECDH key each encryption
+//	• Key rotation: requires re-wrapping only the ~139-byte header
 //	• FIPS 140-3 compliant: uses only approved algorithms
 //
 //	Typical workflow
@@ -41,7 +41,7 @@
 //	  Publisher:
 //	    1) generate DEK, encrypt stream → dst
 //	    2) ephemeral ECDH + AES-GCM wrap DEK with fleet public key
-//	    3) write header {len, wrapped DEK, nonce} - ~109 bytes total
+//	    3) write header {len, wrapped DEK, nonce} - ~139 bytes total
 //	    4) first frame includes header as associated data for authentication
 //
 //	  Machine node:
@@ -77,12 +77,40 @@ const (
 	dekSize   = 32    // AES-256 key size
 	gcmTag    = 16    // GCM authentication tag size
 	pubkeyLen = 65    // uncompressed P-256 public key (1 byte + 32 + 32 bytes)
-	// wrapped DEK = ephemeral pubkey + encrypted DEK + GCM tag
-	wrappedDEKSize = pubkeyLen + dekSize + gcmTag // 65 + 32 + 16 = 113 bytes
-	baseHdr        = 2 + wrappedDEKSize + 12      // len field + wrapped DEK + base nonce = 127 bytes
+	// wrapped DEK = ephemeral pubkey + nonce + ciphertext + GCM tag
+	wrappedDEKSize = pubkeyLen + 12 + dekSize + gcmTag // 65 + 12 + 32 + 16 = 125 bytes
+	baseHdr        = 2 + wrappedDEKSize + 12           // len field + wrapped DEK + base nonce = 139 bytes
 )
 
 // ---------------- internal helpers ----------------
+
+// concatKDFSHA256 implements SP800-56A Concat KDF using SHA-256 for single-block output.
+// It computes Hash(Counter || Z || OtherInfo || KeyDataLen) where Counter=0x00000001.
+func concatKDFSHA256(z []byte, keyDataLen int, otherInfo ...[]byte) []byte {
+	h := sha256.New()
+
+	// Counter = 0x00000001 (big-endian)
+	h.Write([]byte{0x00, 0x00, 0x00, 0x01})
+
+	// Z (shared secret)
+	h.Write(z)
+
+	// OtherInfo
+	for _, info := range otherInfo {
+		h.Write(info)
+	}
+
+	// KeyDataLen in bits as 4-byte big-endian
+	keyDataLenBits := keyDataLen * 8
+	h.Write([]byte{
+		byte(keyDataLenBits >> 24),
+		byte(keyDataLenBits >> 16),
+		byte(keyDataLenBits >> 8),
+		byte(keyDataLenBits),
+	})
+
+	return h.Sum(nil)
+}
 
 // wrapDEKWithECDH wraps a DEK using ECDH + AES-GCM
 func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) {
@@ -109,11 +137,25 @@ func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) 
 		}
 	}()
 
-	// Derive AES key from shared secret using SHA-256
-	kek := sha256.Sum256(sharedSecret)
+	// Derive AES key from shared secret using SP800-56A Concat KDF
+	ephemeralPubBytes := ephemeralPriv.PublicKey().Bytes()
+	recipientPubBytesRaw := recipientECDH.Bytes()
+
+	otherInfo := [][]byte{
+		[]byte("AES-256-GCM"), // Algorithm identifier
+		ephemeralPubBytes,     // Ephemeral public key
+		recipientPubBytesRaw,  // Recipient public key
+	}
+
+	kekBytes := concatKDFSHA256(sharedSecret, 32, otherInfo...)
+	var kek [32]byte
+	copy(kek[:], kekBytes)
 	defer func() {
 		for i := range kek {
 			kek[i] = 0
+		}
+		for i := range kekBytes {
+			kekBytes[i] = 0
 		}
 	}()
 
@@ -135,7 +177,6 @@ func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) 
 	ciphertext := gcm.Seal(nil, nonce, dek, nil)
 
 	// Format: ephemeral_pubkey || nonce || ciphertext
-	ephemeralPubBytes := ephemeralPriv.PublicKey().Bytes()
 	result := make([]byte, 0, len(ephemeralPubBytes)+len(nonce)+len(ciphertext))
 	result = append(result, ephemeralPubBytes...)
 	result = append(result, nonce...)
@@ -177,11 +218,24 @@ func unwrapDEKWithECDH(wrapped []byte, recipientPriv *ecdsa.PrivateKey) ([]byte,
 		}
 	}()
 
-	// Derive AES key from shared secret
-	kek := sha256.Sum256(sharedSecret)
+	// Derive AES key from shared secret using SP800-56A Concat KDF
+	recipientPubBytesRaw := recipientECDH.Bytes()
+
+	otherInfo := [][]byte{
+		[]byte("AES-256-GCM"), // Algorithm identifier
+		ephemeralPubBytes,     // Ephemeral public key
+		recipientPubBytesRaw,  // Recipient public key
+	}
+
+	kekBytes := concatKDFSHA256(sharedSecret, 32, otherInfo...)
+	var kek [32]byte
+	copy(kek[:], kekBytes)
 	defer func() {
 		for i := range kek {
 			kek[i] = 0
+		}
+		for i := range kekBytes {
+			kekBytes[i] = 0
 		}
 	}()
 

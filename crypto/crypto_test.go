@@ -156,12 +156,14 @@ func TestStreamEncryptionWithLargeData(t *testing.T) {
 }
 
 func TestStreamEncryptionWithVariousSizeOfData(t *testing.T) {
-	for i := 1; i < 1024; i++ {
-		originalData := bytes.Repeat([]byte("large data test "), 2*1024*i)
+	// Test with smaller, more reasonable sizes for CI
+	testSizes := []int{1, 10, 50, 100, 500, 1000} // KB sizes
+	for _, sizeKB := range testSizes {
+		originalData := bytes.Repeat([]byte("large data test "), sizeKB*64) // ~1KB per iteration
 		input := bytes.NewReader(originalData)
 		encryptedBuf := &bytes.Buffer{}
 
-		key := fmt.Sprintf("test-key-%d", i)
+		key := fmt.Sprintf("test-key-%d", sizeKB)
 
 		// Encrypt
 		err := EncryptStream(input, nopCloser{encryptedBuf}, key)

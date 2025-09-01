@@ -82,7 +82,6 @@ func (c *inMemoryCache) Close() error {
 }
 
 func (c *inMemoryCache) run() {
-	c.waitGroup.Add(1)
 	timer := time.NewTicker(c.expiryCheck)
 	defer func() {
 		timer.Stop()
@@ -120,6 +119,7 @@ func NewInMemory(parent context.Context, expiryCheck time.Duration) Cache {
 		cache:       make(map[string]*value),
 		expiryCheck: expiryCheck,
 	}
+	c.waitGroup.Add(1)
 	go c.run()
 	return c
 }

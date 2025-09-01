@@ -2,9 +2,9 @@ package crypto
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"testing"
 )
 
@@ -130,8 +130,10 @@ func TestStreamDecryptionWithTamperedData(t *testing.T) {
 }
 
 func TestStreamEncryptionWithLargeData(t *testing.T) {
-	// Test with 10MB of data
-	originalData := bytes.Repeat([]byte("large data test "), 10*1024*1024)
+	// Test with exactly 10 MiB of data
+	pattern := []byte("large data test ")
+	repeats := (10 * 1024 * 1024) / len(pattern)
+	originalData := bytes.Repeat(pattern, repeats)
 	input := bytes.NewReader(originalData)
 	encryptedBuf := &bytes.Buffer{}
 
@@ -157,32 +159,39 @@ func TestStreamEncryptionWithLargeData(t *testing.T) {
 
 func TestStreamEncryptionWithVariousSizeOfData(t *testing.T) {
 	// Test with smaller, more reasonable sizes for CI
-	testSizes := []int{1, 10, 50, 100, 500, 1000} // KB sizes
-	for _, sizeKB := range testSizes {
-		originalData := bytes.Repeat([]byte("large data test "), sizeKB*64) // ~1KB per iteration
-		input := bytes.NewReader(originalData)
-		encryptedBuf := &bytes.Buffer{}
+	testSizes := []int{1, 10, 50, 100, 500, 1000} // KiB sizes
+	pattern := []byte("large data test ")
 
-		key := fmt.Sprintf("test-key-%d", sizeKB)
+	for _, sizeKiB := range testSizes {
+		t.Run(fmt.Sprintf("%dKiB", sizeKiB), func(t *testing.T) {
+			// Compute exact repeats for the target size in KiB
+			targetBytes := sizeKiB * 1024
+			repeats := targetBytes / len(pattern)
+			originalData := bytes.Repeat(pattern, repeats)
+			input := bytes.NewReader(originalData)
+			encryptedBuf := &bytes.Buffer{}
 
-		// Encrypt
-		err := EncryptStream(input, nopCloser{encryptedBuf}, key)
-		if err != nil {
-			t.Fatalf("EncryptStream() error = %v", err)
-		}
+			key := fmt.Sprintf("test-key-%d", sizeKiB)
 
-		// Decrypt
-		encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
-		decryptedBuf := &bytes.Buffer{}
-		err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, key)
-		if err != nil {
-			t.Fatalf("DecryptStream() error = %v", err)
-		}
+			// Encrypt
+			err := EncryptStream(input, nopCloser{encryptedBuf}, key)
+			if err != nil {
+				t.Fatalf("EncryptStream() error = %v", err)
+			}
 
-		// Verify
-		if !bytes.Equal(originalData, decryptedBuf.Bytes()) {
-			t.Error("Decrypted large data doesn't match original")
-		}
+			// Decrypt
+			encryptedReader := bytes.NewReader(encryptedBuf.Bytes())
+			decryptedBuf := &bytes.Buffer{}
+			err = DecryptStream(encryptedReader, nopCloser{decryptedBuf}, key)
+			if err != nil {
+				t.Fatalf("DecryptStream() error = %v", err)
+			}
+
+			// Verify
+			if !bytes.Equal(originalData, decryptedBuf.Bytes()) {
+				t.Error("Decrypted large data doesn't match original")
+			}
+		})
 	}
 }
 
@@ -333,12 +342,12 @@ func TestStreamInvalidChunkSize(t *testing.T) {
 	decryptedBuf := &bytes.Buffer{}
 	err := DecryptStream(bytes.NewReader(invalidData), nopCloser{decryptedBuf}, "test-key")
 
-	// Should fail with "chunk size too large" error
+	// Should fail with chunk size error
 	if err == nil {
 		t.Error("DecryptStream() should fail with invalid chunk size")
 	}
-	if !strings.Contains(err.Error(), "chunk size too large") {
-		t.Errorf("Expected 'chunk size too large' error, got: %v", err)
+	if !errors.Is(err, ErrChunkSizeTooLarge) {
+		t.Errorf("Expected ErrChunkSizeTooLarge, got: %v", err)
 	}
 }
 

@@ -82,11 +82,13 @@ func (c *inMemoryCache) Close() error {
 }
 
 func (c *inMemoryCache) run() {
-	timer := time.NewTicker(c.expiryCheck)
-	defer func() {
-		timer.Stop()
-		c.waitGroup.Done()
-	}()
+	defer c.waitGroup.Done()
+	interval := c.expiryCheck
+	if interval <= 0 {
+		interval = time.Minute
+	}
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -94,14 +96,8 @@ func (c *inMemoryCache) run() {
 		case <-timer.C:
 			now := time.Now()
 			c.mutex.Lock()
-			var expired []string
 			for key, val := range c.cache {
 				if val.expires.Before(now) {
-					expired = append(expired, key)
-				}
-			}
-			if len(expired) > 0 {
-				for _, key := range expired {
 					delete(c.cache, key)
 				}
 			}
@@ -118,6 +114,9 @@ func NewInMemory(parent context.Context, expiryCheck time.Duration) Cache {
 		cancel:      cancel,
 		cache:       make(map[string]*value),
 		expiryCheck: expiryCheck,
+	}
+	if c.expiryCheck <= 0 {
+		c.expiryCheck = time.Minute
 	}
 	c.waitGroup.Add(1)
 	go c.run()

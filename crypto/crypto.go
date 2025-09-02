@@ -5,9 +5,16 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"io"
 )
+
+// MaxChunkSize is the maximum allowed ciphertext chunk length (bytes).
+const MaxChunkSize = 10 * 1024 * 1024 // 10 MiB
+
+// ErrChunkSizeTooLarge is returned when a chunk size exceeds the maximum allowed size.
+var ErrChunkSizeTooLarge = errors.New("chunk size too large")
 
 // deriveKey derives a 32-byte encryption key from a string using SHA-256
 func deriveKey(key string) []byte {
@@ -134,8 +141,8 @@ func DecryptStream(reader io.Reader, writer io.WriteCloser, key string) error {
 			uint32(sizeBuffer[3])<<24
 
 		// Sanity check on chunk size
-		if chunkSize > 10*1024*1024 { // 10MB max chunk size
-			return fmt.Errorf("chunk size too large: %d", chunkSize)
+		if chunkSize > MaxChunkSize {
+			return ErrChunkSizeTooLarge
 		}
 
 		// Read nonce
@@ -145,7 +152,7 @@ func DecryptStream(reader io.Reader, writer io.WriteCloser, key string) error {
 		}
 
 		// Read encrypted chunk
-		encryptedChunk := make([]byte, chunkSize)
+		encryptedChunk := make([]byte, int(chunkSize))
 		if _, err := io.ReadFull(reader, encryptedChunk); err != nil {
 			return fmt.Errorf("failed to read encrypted chunk: %w", err)
 		}

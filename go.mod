@@ -1,9 +1,8 @@
 module github.com/agentuity/go-common
 
-go 1.24.6
+go 1.25.0
 
 require (
-	filippo.io/edwards25519 v1.1.0
 	github.com/buger/goterm v1.0.4
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/huh v0.6.0

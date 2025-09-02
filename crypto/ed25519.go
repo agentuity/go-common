@@ -15,11 +15,6 @@ func ParseAndValidateEd25519PrivateKey(keyData []byte) (ed25519.PrivateKey, erro
 
 	// Try to decode as PEM first
 	if block, _ := pem.Decode(keyData); block != nil {
-		// Check for encrypted PEM blocks
-		if x509.IsEncryptedPEMBlock(block) {
-			return nil, fmt.Errorf("encrypted PEM blocks are not supported")
-		}
-
 		switch block.Type {
 		case "PRIVATE KEY", "ED25519 PRIVATE KEY":
 			// Parse as PKCS#8 format (both standard and non-standard ED25519 types)

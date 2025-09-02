@@ -1,119 +1,257 @@
-// Package crypto implements a **KEM-DEM envelope encryption scheme**
-// suitable for multi-gigabyte streams.  The design is intentionally simple
-// and “pure Go”: it depends only on `x/crypto` and `filippo.io/edwards25519`
-// (both CGO-free) and compiles to a single static binary.
+// Package crypto implements a **FIPS 140-3 compliant KEM-DEM envelope encryption scheme**
+// suitable for multi-gigabyte streams using ECDH P-256 and AES-256-GCM.
+// This design is Go 1.24+ FIPS compatible (GOFIPS140=v1.0.0) and depends only
+// on standard library crypto packages.
 //
 // ──────────────────────────  Design summary  ─────────────────────────────
 //
 //	⚙  KEM  (Key-Encapsulation Mechanism)
-//	    • X25519 + XSalsa20-Poly1305 via `box.SealAnonymous`
-//	    • Output: 80-byte “sealed box” containing a fresh 256-bit DEK
+//	    • ECDH P-256 + AES-256-GCM for DEK wrapping
+//	    • Output: variable-size encrypted DEK (48-byte DEK + 16-byte GCM tag + ephemeral pubkey)
 //	    • Provides forward secrecy for each blob
 //
 //	⚙  DEM  (Data-Encapsulation Mechanism)
-//	    • ChaCha20-Poly1305 (IETF) in ~64 KiB framed chunks (65519 bytes max)
+//	    • AES-256-GCM in ~64 KiB framed chunks (65519 bytes max)
 //	    • Nonce = 4-byte random prefix ∥ 8-byte little-endian counter
 //	    • First frame authenticates header via associated data (prevents tampering)
 //	    • Constant ~64 KiB RAM, O(1) header re-wrap for key rotation
 //
 //	⚙  Fleet key
-//	    • Single Ed25519 key-pair per customer
-//	    • Public half is converted → X25519 for the KEM
-//	    • Private half is stored in a cloud secret store (AWS Secrets
-//	      Manager / Google Secret Manager) and fetched at boot
+//	    • Single ECDSA P-256 key-pair per customer
+//	    • Public key used directly for ECDH operations
+//	    • Private key stored in cloud secret store and fetched at boot
 //
 //	File layout
-//	 ┌───────────────────────────────────────────────────────────┐
-//	│ uint16 sealedLen │ 80B sealed DEK │ 12B base nonce │ …    │
-//	└───────────────────────────────────────────────────────────┘
-//	                           ▲                ▲
-//	                           │                └─ ChaCha20-Poly1305 frames
-//	                           └─ X25519 sealed box
+//	 ┌─────────────────────────────────────────────────────────────────────────┐
+//	 │ uint16 wrappedLen │ 125B wrapped DEK │ 12B base nonce │ frames... │
+//	 └─────────────────────────────────────────────────────────────────────────┘
+//	                             ▲                    ▲
+//	                             │                    └─ AES-256-GCM frames
+//	                             └─ ECDH + AES-GCM wrapped DEK
 //
 //	Security properties
-//	• Confidentiality & integrity: ChaCha20-Poly1305 per frame
+//	• Confidentiality & integrity: AES-256-GCM per frame
 //	• Header authentication: first frame includes header as associated data
-//	• Forward-secrecy per object: new ephemeral X25519 key each seal
-//	• Key rotation: requires re-wrapping only the 80-byte header
-//	• No CGO / no OpenSSL: entire TCB is Go std-lib + x/crypto
+//	• Forward-secrecy per object: new ephemeral ECDH key each encryption
+//	• Key rotation: requires re-wrapping only the ~139-byte header
+//	• FIPS 140-3 compliant: uses only approved algorithms
 //
 //	Typical workflow
 //	────────────────
 //	  Publisher:
 //	    1) generate DEK, encrypt stream → dst
-//	    2) sealed = SealAnonymous(DEK, fleetPub)
-//	    3) write header {len, sealed, nonce} - 94 bytes total
+//	    2) ephemeral ECDH + AES-GCM wrap DEK with fleet public key
+//	    3) write header {len, wrapped DEK, nonce} - ~139 bytes total
 //	    4) first frame includes header as associated data for authentication
 //
 //	  Machine node:
-//	    1) read header, unseal DEK with fleet **private** key
+//	    1) read header, unwrap DEK with fleet private key via ECDH
 //	    2) stream-decrypt frames on the fly (first frame verifies header)
-//
-//	Threat-model notes
-//	• Relay never sees plaintext or DEK
-//	• Deregistering a node revokes access at the transport layer, so
-//	  per-node keys are unnecessary in this model.
 //
 // Public API
 // ──────────
 //
-//	EncryptHybridKEMDEMStream(pub ed25519.PublicKey, r io.Reader, w io.Writer)
-//	DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, r io.Reader, w io.Writer)
+//	EncryptFIPSKEMDEMStream(pub *ecdsa.PublicKey, r io.Reader, w io.Writer)
+//	DecryptFIPSKEMDEMStream(priv *ecdsa.PrivateKey, r io.Reader, w io.Writer)
 //
 // Both return the number of plaintext bytes processed and ensure that
-// every error path is authenticated-failure-safe (no partial plaintext
-// leaks before MAC verification).
-//
-// This comment is intentionally verbose so that a security reviewer can
-// evaluate the construction without reading the code first.
+// every error path is authenticated-failure-safe.
 package crypto
 
 import (
-	"crypto/ed25519"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha512"
+	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"io"
 	"math"
-
-	"filippo.io/edwards25519"
-	"golang.org/x/crypto/chacha20poly1305"
-	"golang.org/x/crypto/nacl/box"
 )
 
 const (
-	frame    = 65519            // max frame size that fits in uint16 with overhead
-	hdrSeal  = 80               // sealed-box = 32-byte eph-pub + 32-byte message + 16-byte tag
-	baseHdr  = 2 + hdrSeal + 12 // len field + sealed DEK + base nonce
-	tagBytes = chacha20poly1305.Overhead
+	frame     = 65519 // max frame size that fits in uint16 with GCM overhead
+	dekSize   = 32    // AES-256 key size
+	gcmTag    = 16    // GCM authentication tag size
+	pubkeyLen = 65    // uncompressed P-256 public key (1 byte + 32 + 32 bytes)
+	// wrapped DEK = ephemeral pubkey + nonce + ciphertext + GCM tag
+	wrappedDEKSize = pubkeyLen + 12 + dekSize + gcmTag // 65 + 12 + 32 + 16 = 125 bytes
+	baseHdr        = 2 + wrappedDEKSize + 12           // len field + wrapped DEK + base nonce = 139 bytes
 )
 
 // ---------------- internal helpers ----------------
 
-func edPubToX(pub ed25519.PublicKey) (*[32]byte, error) {
-	var P edwards25519.Point
-	if _, err := P.SetBytes(pub); err != nil {
-		return nil, err
+// concatKDFSHA256 implements SP800-56A Concat KDF using SHA-256 for single-block output.
+// It computes Hash(Counter || Z || OtherInfo || KeyDataLen) where Counter=0x00000001.
+func concatKDFSHA256(z []byte, keyDataLen int, otherInfo ...[]byte) []byte {
+	h := sha256.New()
+
+	// Counter = 0x00000001 (big-endian)
+	h.Write([]byte{0x00, 0x00, 0x00, 0x01})
+
+	// Z (shared secret)
+	h.Write(z)
+
+	// OtherInfo
+	for _, info := range otherInfo {
+		h.Write(info)
 	}
-	var out [32]byte
-	copy(out[:], P.BytesMontgomery())
-	return &out, nil
+
+	// KeyDataLen in bits as 4-byte big-endian
+	keyDataLenBits := keyDataLen * 8
+	h.Write([]byte{
+		byte(keyDataLenBits >> 24),
+		byte(keyDataLenBits >> 16),
+		byte(keyDataLenBits >> 8),
+		byte(keyDataLenBits),
+	})
+
+	return h.Sum(nil)
 }
 
-func edPrivToX(priv ed25519.PrivateKey) *[32]byte {
-	h := sha512.Sum512(priv.Seed())
-	h[0] &= 248
-	h[31] &= 127
-	h[31] |= 64
-	var out [32]byte
-	copy(out[:], h[:32])
-	return &out
+// wrapDEKWithECDH wraps a DEK using ECDH + AES-GCM
+func wrapDEKWithECDH(dek []byte, recipientPub *ecdsa.PublicKey) ([]byte, error) {
+	// Convert ECDSA public key to ECDH public key
+	recipientECDH, err := recipientPub.ECDH()
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate ephemeral ECDH key pair
+	ephemeralPriv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform ECDH
+	sharedSecret, err := ephemeralPriv.ECDH(recipientECDH)
+	if err != nil {
+		return nil, errors.New("ECDH failed")
+	}
+	defer func() {
+		for i := range sharedSecret {
+			sharedSecret[i] = 0
+		}
+	}()
+
+	// Derive AES key from shared secret using SP800-56A Concat KDF
+	kekBytes := concatKDFSHA256(sharedSecret, 32, []byte("AES-256-GCM"))
+	var kek [32]byte
+	copy(kek[:], kekBytes)
+	defer func() {
+		for i := range kek {
+			kek[i] = 0
+		}
+		for i := range kekBytes {
+			kekBytes[i] = 0
+		}
+	}()
+
+	// Encrypt DEK with AES-256-GCM
+	block, err := aes.NewCipher(kek[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+
+	ciphertext := gcm.Seal(nil, nonce, dek, nil)
+
+	// Format: ephemeral_pubkey || nonce || ciphertext
+	ephemeralPubBytes := ephemeralPriv.PublicKey().Bytes()
+	result := make([]byte, 0, len(ephemeralPubBytes)+len(nonce)+len(ciphertext))
+	result = append(result, ephemeralPubBytes...)
+	result = append(result, nonce...)
+	result = append(result, ciphertext...)
+
+	return result, nil
+}
+
+// unwrapDEKWithECDH unwraps a DEK using ECDH + AES-GCM
+func unwrapDEKWithECDH(wrapped []byte, recipientPriv *ecdsa.PrivateKey) ([]byte, error) {
+	if len(wrapped) < pubkeyLen+12+dekSize+gcmTag {
+		return nil, errors.New("wrapped DEK too short")
+	}
+
+	// Parse components
+	ephemeralPubBytes := wrapped[:pubkeyLen]
+	remaining := wrapped[pubkeyLen:]
+
+	// Convert recipient private key to ECDH
+	recipientECDH, err := recipientPriv.ECDH()
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse ephemeral public key
+	ephemeralPubECDH, err := ecdh.P256().NewPublicKey(ephemeralPubBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// Perform ECDH
+	sharedSecret, err := recipientECDH.ECDH(ephemeralPubECDH)
+	if err != nil {
+		return nil, errors.New("ECDH failed")
+	}
+	defer func() {
+		for i := range sharedSecret {
+			sharedSecret[i] = 0
+		}
+	}()
+
+	// Derive AES key from shared secret using SP800-56A Concat KDF
+	kekBytes := concatKDFSHA256(sharedSecret, 32, []byte("AES-256-GCM"))
+	var kek [32]byte
+	copy(kek[:], kekBytes)
+	defer func() {
+		for i := range kek {
+			kek[i] = 0
+		}
+		for i := range kekBytes {
+			kekBytes[i] = 0
+		}
+	}()
+
+	// Decrypt DEK
+	block, err := aes.NewCipher(kek[:])
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(remaining) < nonceSize {
+		return nil, errors.New("invalid wrapped DEK format")
+	}
+
+	nonce := remaining[:nonceSize]
+	ciphertext := remaining[nonceSize:]
+
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return nil, errors.New("DEK unwrap failed")
+	}
+
+	return plaintext, nil
 }
 
 // build chunk nonce = 4-byte random prefix (from base) || 8-byte counter
 func makeNonce(prefix []byte, counter uint64) []byte {
-	nonce := make([]byte, chacha20poly1305.NonceSize)
+	nonce := make([]byte, 12) // AES-GCM standard nonce size
 	copy(nonce, prefix)
 	binary.LittleEndian.PutUint64(nonce[4:], counter)
 	return nonce
@@ -121,17 +259,15 @@ func makeNonce(prefix []byte, counter uint64) []byte {
 
 // ---------------- PUBLIC API ----------------------
 
-// EncryptHybridKEMDEMStream copies src → dst, returns plaintext bytes written.
-func EncryptHybridKEMDEMStream(pub ed25519.PublicKey, src io.Reader, dst io.Writer) (int64, error) {
-	// 1. fleet public key (for sealed box)
-	pubX, err := edPubToX(pub)
-	if err != nil {
-		return 0, err
+// EncryptFIPSKEMDEMStream copies src → dst using FIPS-approved algorithms, returns plaintext bytes written.
+func EncryptFIPSKEMDEMStream(pub *ecdsa.PublicKey, src io.Reader, dst io.Writer) (int64, error) {
+	if pub.Curve != elliptic.P256() {
+		return 0, errors.New("only P-256 keys supported")
 	}
 
-	// 2. random DEK
-	dek := make([]byte, chacha20poly1305.KeySize)
-	if _, err := rand.Read(dek); err != nil {
+	// 1. Generate random DEK for AES-256-GCM
+	dek := make([]byte, dekSize)
+	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
 		return 0, err
 	}
 	defer func() {
@@ -140,34 +276,40 @@ func EncryptHybridKEMDEMStream(pub ed25519.PublicKey, src io.Reader, dst io.Writ
 		}
 	}()
 
-	// 3. sealed-box the DEK (80 B)
-	sealed, err := box.SealAnonymous(nil, dek, pubX, rand.Reader)
+	// 2. Wrap DEK using ECDH + AES-GCM
+	wrapped, err := wrapDEKWithECDH(dek, pub)
 	if err != nil {
 		return 0, err
 	}
 
-	// 4. random base nonce prefix (4 B random + 8 B counter)
+	// 3. Generate random base nonce prefix (4 B random + 8 B counter)
 	baseNonce := make([]byte, 12)
-	if _, err := rand.Read(baseNonce[:4]); err != nil {
+	if _, err := io.ReadFull(rand.Reader, baseNonce[:4]); err != nil {
 		return 0, err
 	}
 
-	// 5. header: [uint16 len][sealed-DEK][base nonce]
-	if err := binary.Write(dst, binary.BigEndian, uint16(len(sealed))); err != nil {
+	// 4. Write header: [uint16 len][wrapped-DEK][base nonce]
+	if err := binary.Write(dst, binary.BigEndian, uint16(len(wrapped))); err != nil {
 		return 0, err
 	}
-	if _, err := dst.Write(sealed); err != nil {
+	if _, err := dst.Write(wrapped); err != nil {
 		return 0, err
 	}
 	if _, err := dst.Write(baseNonce); err != nil {
 		return 0, err
 	}
 
-	// 6. stream encrypt payload in frames
-	aead, err := chacha20poly1305.New(dek)
+	// 5. Initialize AES-256-GCM
+	block, err := aes.NewCipher(dek)
 	if err != nil {
 		return 0, err
 	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return 0, err
+	}
+
+	// 6. Stream encrypt payload in frames
 	buf := make([]byte, frame)
 	defer func() {
 		for i := range buf {
@@ -178,8 +320,8 @@ func EncryptHybridKEMDEMStream(pub ed25519.PublicKey, src io.Reader, dst io.Writ
 	var total int64
 
 	// Prepare header for authentication with first frame
-	headerAD := make([]byte, 2+12) // sealedLen + baseNonce
-	binary.BigEndian.PutUint16(headerAD[0:2], uint16(len(sealed)))
+	headerAD := make([]byte, 2+12) // wrappedLen + baseNonce
+	binary.BigEndian.PutUint16(headerAD[0:2], uint16(len(wrapped)))
 	copy(headerAD[2:], baseNonce)
 
 	for {
@@ -222,52 +364,59 @@ func EncryptHybridKEMDEMStream(pub ed25519.PublicKey, src io.Reader, dst io.Writ
 	return total, nil
 }
 
-// DecryptHybridKEMDEMStream reverses EncryptHybridKEMDEMStream.
-func DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Writer) (int64, error) {
-	// 1. read header
-	var sealedLen uint16
-	if err := binary.Read(src, binary.BigEndian, &sealedLen); err != nil {
+// DecryptFIPSKEMDEMStream reverses EncryptFIPSKEMDEMStream using FIPS-approved algorithms.
+func DecryptFIPSKEMDEMStream(priv *ecdsa.PrivateKey, src io.Reader, dst io.Writer) (int64, error) {
+	if priv.Curve != elliptic.P256() {
+		return 0, errors.New("only P-256 keys supported")
+	}
+
+	// 1. Read header
+	var wrappedLen uint16
+	if err := binary.Read(src, binary.BigEndian, &wrappedLen); err != nil {
 		return 0, err
 	}
-	if sealedLen != hdrSeal { // sealed box must be exactly the expected size
-		return 0, errors.New("invalid sealed length")
+	if wrappedLen == 0 || wrappedLen > 200 { // reasonable bounds check
+		return 0, errors.New("invalid wrapped DEK length")
 	}
-	sealed := make([]byte, sealedLen)
-	if _, err := io.ReadFull(src, sealed); err != nil {
+
+	wrapped := make([]byte, wrappedLen)
+	if _, err := io.ReadFull(src, wrapped); err != nil {
 		return 0, err
 	}
+
 	baseNonce := make([]byte, 12)
 	if _, err := io.ReadFull(src, baseNonce); err != nil {
 		return 0, err
 	}
 
-	// 2. unseal DEK
-	pubX, err := edPubToX(priv.Public().(ed25519.PublicKey))
+	// 2. Unwrap DEK using ECDH + AES-GCM
+	dek, err := unwrapDEKWithECDH(wrapped, priv)
 	if err != nil {
 		return 0, err
-	}
-	privX := edPrivToX(priv)
-	dek, ok := box.OpenAnonymous(nil, sealed, pubX, privX)
-	if !ok {
-		return 0, errors.New("sealed box decrypt failed")
 	}
 	defer func() {
 		for i := range dek {
 			dek[i] = 0
 		}
 	}()
-	aead, err := chacha20poly1305.New(dek)
+
+	// 3. Initialize AES-256-GCM
+	block, err := aes.NewCipher(dek)
+	if err != nil {
+		return 0, err
+	}
+	aead, err := cipher.NewGCM(block)
 	if err != nil {
 		return 0, err
 	}
 
-	// 3. stream decrypt frames
+	// 4. Stream decrypt frames
 	var counter uint64
 	var total int64
 
 	// Prepare header for authentication with first frame
-	headerAD := make([]byte, 2+12) // sealedLen + baseNonce
-	binary.BigEndian.PutUint16(headerAD[0:2], sealedLen)
+	headerAD := make([]byte, 2+12) // wrappedLen + baseNonce
+	binary.BigEndian.PutUint16(headerAD[0:2], wrappedLen)
 	copy(headerAD[2:], baseNonce)
 
 	for {
@@ -278,7 +427,7 @@ func DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Wr
 			}
 			return total, err
 		}
-		if int(chunkLen) > frame+tagBytes { // frame + ChaCha20-Poly1305 overhead
+		if int(chunkLen) > frame+gcmTag { // frame + GCM overhead
 			return total, errors.New("chunk too large")
 		}
 		cipher := make([]byte, chunkLen)
@@ -294,7 +443,7 @@ func DecryptHybridKEMDEMStream(priv ed25519.PrivateKey, src io.Reader, dst io.Wr
 			// Subsequent frames: no associated data
 			plain, err = aead.Open(nil, nonce, cipher, nil)
 		}
-		// Clear cipher immediately after use to prevent memory accumulation
+		// Clear cipher immediately after use
 		for i := range cipher {
 			cipher[i] = 0
 		}

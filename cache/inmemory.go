@@ -20,21 +20,17 @@ var _ Cache = (*inMemoryCache)(nil)
 
 func (c *inMemoryCache) Get(key string) (bool, any, error) {
 	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	val, ok := c.cache[key]
-	if ok {
-		val.hits++
+	if !ok {
+		return false, nil, nil
 	}
-	c.mutex.Unlock()
-	if ok {
-		if val.expires.Before(time.Now()) {
-			c.mutex.Lock()
-			delete(c.cache, key)
-			c.mutex.Unlock()
-			return false, nil, nil
-		}
-		return true, val.object, nil
+	if val.expires.Before(time.Now()) {
+		delete(c.cache, key)
+		return false, nil, nil
 	}
-	return false, nil, nil
+	val.hits++
+	return true, val.object, nil
 }
 
 // Hits returns the number of times a key has been accessed.
@@ -83,17 +79,13 @@ func (c *inMemoryCache) Close() error {
 
 func (c *inMemoryCache) run() {
 	defer c.waitGroup.Done()
-	interval := c.expiryCheck
-	if interval <= 0 {
-		interval = time.Minute
-	}
-	timer := time.NewTicker(interval)
-	defer timer.Stop()
+	ticker := time.NewTicker(c.expiryCheck)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
-		case <-timer.C:
+		case <-ticker.C:
 			now := time.Now()
 			c.mutex.Lock()
 			for key, val := range c.cache {

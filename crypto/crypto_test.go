@@ -168,6 +168,9 @@ func TestStreamEncryptionWithVariousSizeOfData(t *testing.T) {
 			targetBytes := sizeKiB * 1024
 			repeats := targetBytes / len(pattern)
 			originalData := bytes.Repeat(pattern, repeats)
+			if rem := targetBytes - repeats*len(pattern); rem > 0 {
+				originalData = append(originalData, pattern[:rem]...)
+			}
 			input := bytes.NewReader(originalData)
 			encryptedBuf := &bytes.Buffer{}
 

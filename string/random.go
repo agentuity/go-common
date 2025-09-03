@@ -2,6 +2,7 @@ package string
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -50,6 +51,15 @@ func GenerateRandomString(n int) (string, error) {
 }
 
 func GenerateRandomStringFrom(letters string, n int) (string, error) {
+	if n < 0 {
+		return "", errors.New("n must be >= 0")
+	}
+	if n == 0 {
+		return "", nil
+	}
+	if len(letters) == 0 {
+		return "", errors.New("letters must be non-empty")
+	}
 	ret := make([]byte, n)
 	max := big.NewInt(int64(len(letters)))
 	for i := range n {

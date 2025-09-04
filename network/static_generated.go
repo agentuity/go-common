@@ -14,9 +14,9 @@ var Services = map[string]string{
 }
 
 var Addresses = map[string]string{
-	"aether":   "fd15:d710:2d:c580:9dc5:aeeb::",
+	"aether": "fd15:d710:2d:c580:9dc5:aeeb::",
 	"catalyst": "fd15:d710:25:c500:9dc5:d408::",
-	"otel":     "fd15:d710:2a:68d0:9dc5:2763::",
+	"otel": "fd15:d710:2a:68d0:9dc5:2763::",
 }
 
-var ServiceSubnet = "fd15:d710:20/44"
+var ServiceSubnet = "fd15:d710:20::/44"

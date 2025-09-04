@@ -73,5 +73,8 @@ func genStaticServiceNetIP() string {
 	// 32 bits (first two hextets)
 	// 12 bits (from the third hextet)
 	// = 44 bits total.
-	return addr.String()[0:11] + "0/44"
+	// ip := addr.String()
+	// // Take the first 11 characters and ensure proper formatting
+	// return fmt.Sprintf("%s0::/44", ip[:11])
+	return addr.String()[0:11] + "0::/44"
 }

@@ -3,6 +3,7 @@ package network
 import (
 	"fmt"
 	"net"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -346,6 +347,19 @@ func TestGenerateServerIPv6SubnetContainment(t *testing.T) {
 }
 
 func TestIPv6EdgeCasesInSubnet(t *testing.T) {
+	// Parse the service subnet for validation
+	serviceSubnetStr := ServiceSubnet
+	// Fix the ServiceSubnet format if it's incomplete
+	if !strings.Contains(serviceSubnetStr, "::") {
+		// ServiceSubnet is in format "fd15:d710:20/44", need to make it a valid CIDR
+		parts := strings.Split(serviceSubnetStr, "/")
+		if len(parts) == 2 {
+			serviceSubnetStr = parts[0] + "::/44"
+		}
+	}
+	_, serviceSubnet, err := net.ParseCIDR(serviceSubnetStr)
+	assert.NoError(t, err, "ServiceSubnet should be a valid CIDR")
+
 	// Test edge cases to ensure they're still contained in subnets
 	testCases := []struct {
 		name      string
@@ -360,6 +374,8 @@ func TestIPv6EdgeCasesInSubnet(t *testing.T) {
 		{"invalid IPv4 host", RegionUSCentral1, NetworkAgent, "test-tenant", "10.0.0.1", "invalid-ip"},
 		{"numeric host ID", RegionUSWest1, NetworkHadron, "numeric-test", "172.16.1.1", "12345"},
 		{"long string host", RegionUSEast1, NetworkExternalCustomer, "long-test", "203.0.113.5", "very-long-host-identifier-string"},
+		// Add a NetworkPrivateServices case to test against ServiceSubnet
+		{"private services network", RegionGlobal, NetworkPrivateServices, "service-tenant", "198.51.100.1", "172.21.0.1"},
 	}
 
 	for _, tc := range testCases {
@@ -375,10 +391,152 @@ func TestIPv6EdgeCasesInSubnet(t *testing.T) {
 			ip := net.ParseIP(addr.String())
 			assert.NotNil(t, ip, "IPv6 address should be parseable")
 
-			// Verify containment
+			// Verify containment in machine subnet
 			assert.True(t, subnet.Contains(ip),
 				"IPv6 address %s should be in subnet %s for case %s",
 				addr.String(), machineSubnet, tc.name)
+
+			// For NetworkPrivateServices, validate that the address and machine subnet
+			// are within the ServiceSubnet
+			if tc.network == NetworkPrivateServices {
+				assert.True(t, serviceSubnet.Contains(ip),
+					"IPv6 address %s should be contained in ServiceSubnet %s for NetworkPrivateServices",
+					addr.String(), serviceSubnetStr)
+
+				// Verify that the machine subnet is within the service subnet
+				// Parse the machine subnet IP to check if it's within service subnet
+				machineSubnetIP := subnet.IP
+				assert.True(t, serviceSubnet.Contains(machineSubnetIP),
+					"Machine subnet IP %s should be contained in ServiceSubnet %s for NetworkPrivateServices",
+					machineSubnetIP.String(), serviceSubnetStr)
+			}
+
+			// For all cases, verify the address has the Agentuity prefix
+			assert.True(t, IsAgentuityIPv6Prefix(ip),
+				"IPv6 address should have Agentuity prefix for case %s", tc.name)
+		})
+	}
+}
+
+func TestServicesMapInServiceSubnet(t *testing.T) {
+	// Parse the service subnet from the generated constants
+	_, serviceSubnet, err := net.ParseCIDR(ServiceSubnet)
+	assert.NoError(t, err, "ServiceSubnet should be a valid CIDR")
+
+	// Validate each service IP in the Services map
+	for ipStr, serviceName := range Services {
+		t.Run(serviceName, func(t *testing.T) {
+			// Parse the service IP address
+			ip := net.ParseIP(ipStr)
+			assert.NotNil(t, ip, "Service IP %s for %s should be valid", ipStr, serviceName)
+
+			// Verify the service IP is contained within the service subnet
+			assert.True(t, serviceSubnet.Contains(ip),
+				"Service IP %s for %s should be contained in service subnet %s",
+				ipStr, serviceName, ServiceSubnet)
+
+			// Verify it's an IPv6 address (not IPv4)
+			assert.NotNil(t, ip.To16(), "Service IP should be IPv6")
+			assert.Nil(t, ip.To4(), "Service IP should not be IPv4")
+
+			// Verify it has the Agentuity prefix
+			assert.True(t, IsAgentuityIPv6Prefix(ip),
+				"Service IP %s should have Agentuity IPv6 prefix", ipStr)
+		})
+	}
+}
+
+func TestAddressesMapConsistency(t *testing.T) {
+	// Verify that Addresses map is consistent with Services map
+	for serviceName, ipStr := range Addresses {
+		t.Run(serviceName, func(t *testing.T) {
+			// Check that the IP exists in Services map
+			actualServiceName, exists := Services[ipStr]
+			assert.True(t, exists, "IP %s should exist in Services map", ipStr)
+			assert.Equal(t, serviceName, actualServiceName,
+				"Service name should match between Addresses and Services maps")
+		})
+	}
+
+	// Verify reverse mapping consistency
+	for ipStr, serviceName := range Services {
+		t.Run(serviceName+"_reverse", func(t *testing.T) {
+			// Check that the service name exists in Addresses map
+			actualIP, exists := Addresses[serviceName]
+			assert.True(t, exists, "Service %s should exist in Addresses map", serviceName)
+			assert.Equal(t, ipStr, actualIP,
+				"IP address should match between Services and Addresses maps")
+		})
+	}
+}
+
+func TestServiceSubnetSize(t *testing.T) {
+	// Parse the service subnet
+	serviceSubnetStr := ServiceSubnet
+	// Fix the ServiceSubnet format if it's incomplete
+	if !strings.Contains(serviceSubnetStr, "::") {
+		// ServiceSubnet is in format "fd15:d710:20/44", need to make it a valid CIDR
+		parts := strings.Split(serviceSubnetStr, "/")
+		if len(parts) == 2 {
+			serviceSubnetStr = parts[0] + "::/44"
+		}
+	}
+	_, serviceSubnet, err := net.ParseCIDR(serviceSubnetStr)
+	assert.NoError(t, err, "ServiceSubnet should be a valid CIDR")
+
+	// Verify it's the expected size (/44)
+	ones, bits := serviceSubnet.Mask.Size()
+	assert.Equal(t, 44, ones, "Service subnet should be /44")
+	assert.Equal(t, 128, bits, "Service subnet should be IPv6 (128 bits)")
+
+	// Verify it has the Agentuity prefix
+	assert.True(t, IsAgentuityIPv6Prefix(serviceSubnet.IP),
+		"Service subnet should have Agentuity IPv6 prefix")
+}
+
+func TestAllServiceConstants(t *testing.T) {
+	// Test individual service constants are in the service subnet
+	serviceSubnetStr := ServiceSubnet
+	// Fix the ServiceSubnet format if it's incomplete
+	if !strings.Contains(serviceSubnetStr, "::") {
+		// ServiceSubnet is in format "fd15:d710:20/44", need to make it a valid CIDR
+		parts := strings.Split(serviceSubnetStr, "/")
+		if len(parts) == 2 {
+			serviceSubnetStr = parts[0] + "::/44"
+		}
+	}
+	_, serviceSubnet, err := net.ParseCIDR(serviceSubnetStr)
+	assert.NoError(t, err, "ServiceSubnet should be a valid CIDR")
+
+	testCases := []struct {
+		name string
+		ip   string
+	}{
+		{"aether", AetherServiceIP},
+		{"catalyst", CatalystServiceIP},
+		{"otel", OtelServiceIP},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			ip := net.ParseIP(tc.ip)
+			assert.NotNil(t, ip, "Service IP constant should be valid")
+
+			assert.True(t, serviceSubnet.Contains(ip),
+				"Service IP constant %s should be in service subnet %s",
+				tc.ip, serviceSubnetStr)
+
+			assert.True(t, IsAgentuityIPv6Prefix(ip),
+				"Service IP constant should have Agentuity prefix")
+
+			// Verify consistency with maps
+			serviceName, existsInServices := Services[tc.ip]
+			assert.True(t, existsInServices, "Service IP should exist in Services map")
+			assert.Equal(t, tc.name, serviceName, "Service name should match")
+
+			addressIP, existsInAddresses := Addresses[tc.name]
+			assert.True(t, existsInAddresses, "Service name should exist in Addresses map")
+			assert.Equal(t, tc.ip, addressIP, "Service IP should match")
 		})
 	}
 }

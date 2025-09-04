@@ -32,16 +32,32 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	parentIP := parent.IP.Mask(parent.Mask)
 	parentOnes, _ := parent.Mask.Size()
 
-	hostBits := prefixLen - parentOnes
+	hostBits := 32 - prefixLen
 	if hostBits < 0 {
 		return nil
 	}
 
-	randBytes := make([]byte, 4)
-	copy(randBytes, parentIP.To4())
-	// Randomly add offset in the host bits
-	offset := rand.Intn(1 << hostBits)
-	randBytes[3] += byte(offset)
+	// Convert parent IP to 32-bit big-endian integer
+	parentInt := uint32(parentIP[0])<<24 | uint32(parentIP[1])<<16 | uint32(parentIP[2])<<8 | uint32(parentIP[3])
+
+	// Mask to parent prefix to get the base network
+	parentMask := ^uint32(0) << (32 - parentOnes)
+	baseNetwork := parentInt & parentMask
+
+	// Generate random offset within the available host bits for the new prefix
+	maxOffset := uint32(1) << hostBits
+	offset := uint32(rand.Intn(int(maxOffset)))
+
+	// Add offset to base network
+	newIP := baseNetwork + offset
+
+	// Convert back to 4 bytes
+	randBytes := []byte{
+		byte(newIP >> 24),
+		byte(newIP >> 16),
+		byte(newIP >> 8),
+		byte(newIP),
+	}
 
 	newSubnet := fmt.Sprintf("%s/%d", net.IP(randBytes).String(), prefixLen)
 	_, result, _ := net.ParseCIDR(newSubnet)
@@ -50,6 +66,11 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 
 // GenerateNonOverlappingIPv4Subnet generates a non-overlapping ipv4 subnet with the given prefix size within the given range.
 func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen int) (*net.IPNet, *net.IP, error) {
+	// Validate prefix length is within acceptable range
+	if prefixLen < 8 || prefixLen > 30 {
+		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 8 and 30", prefixLen)
+	}
+
 	for _, rng := range privateRanges {
 		for range 1000 { // Try 1000 times to find non-overlapping subnet
 			candidate := generateRandomSubnet(rng.network, prefixLen)

@@ -3,10 +3,12 @@
 package network
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net"
+	"strings"
 )
 
 func hashTo49Bits(tenantID string) uint64 {
@@ -22,9 +24,15 @@ func hashTo16Bits(ipv4 string) uint16 {
 }
 
 func ipv4ToHex(ipv4 string) string {
+	if ipv4 == "" || ipv4 == "0" {
+		return "0000:0000" // Invalid IPv4 fallback
+	}
 	ip := net.ParseIP(ipv4).To4()
 	if ip == nil {
-		return "0000:0000" // Invalid IPv4 fallback
+		v := hashTo16Bits(ipv4)
+		a := v >> 8
+		b := v & 0xFF
+		return fmt.Sprintf("%04x:%04x", a, b)
 	}
 	return fmt.Sprintf("%02x%02x:%02x%02x", ip[0], ip[1], ip[2], ip[3])
 }
@@ -44,12 +52,14 @@ const (
 	NetworkPrivateGravity   Network = 0x00
 	NetworkExternalCustomer Network = 0x01
 	NetworkPrivateServices  Network = 0x02
+	NetworkHadron           Network = 0x03
+	NetworkAgent            Network = 0x04
 )
 
 const AgentuityTenantID = "agentuity"
 
 // this is the agentuity IPV6 ULA prefix
-const agentuityIPV6ULAPrefix = "fd15:d710"
+const AgentuityIPV6ULAPrefix = "fd15:d710"
 
 /*
  * IPv6 Address Format:
@@ -109,7 +119,7 @@ func buildIPv6Address(region Region, network Network, tenantID string, machineID
 	machineHash := hashTo16Bits(machineID)
 	containerHex := ipv4ToHex(hostID)
 	// reparse the validate and make sure we have a valid IP and formatted nicely
-	val := net.ParseIP(fmt.Sprintf("%s:%x:%03x0:%x:%x:%s", agentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt, containerHex))
+	val := net.ParseIP(fmt.Sprintf("%s:%x:%03x0:%x:%x:%s", AgentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt, containerHex))
 	return val.String()
 }
 
@@ -121,7 +131,7 @@ func buildIPv6MachineSubnet(region Region, network Network, tenantID string, mac
 	rrst := uint16(region)<<8 | uint16(network)<<4 | uint16(x)
 	machineHash := hashTo16Bits(machineID)
 	// reparse the validate and make sure we have a valid IP and formatted nicely
-	val := fmt.Sprintf("%s:%x:%03x0:%x:%x::/96", agentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt)
+	val := fmt.Sprintf("%s:%x:%03x0:%x:%x::/96", AgentuityIPV6ULAPrefix, rrst, ttt, machineHash, tttt)
 	_, subnet, _ := net.ParseCIDR(val)
 	return subnet.String()
 }
@@ -166,4 +176,39 @@ func (a *IPv6Address) MarshalJSON() ([]byte, error) {
 // MachineSubnet returns the subnet for the machine with a /96 mask.
 func (a *IPv6Address) MachineSubnet() string {
 	return buildIPv6MachineSubnet(a.Region, a.Network, a.TenantID, a.MachineID)
+}
+
+// GenerateUniqueIPv6 generates a unique IPv6 address with the Agentuity prefix
+func GenerateUniqueIPv6() (net.IP, error) {
+	// Generate 10 random bytes for the remaining suffix (128 - 32 bits = 96 bits = 12 bytes)
+	suffix := make([]byte, 12)
+	_, err := rand.Read(suffix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	}
+
+	// Construct final 16-byte IPv6 address
+	result := make(net.IP, 16)
+	copy(result[:4], AgentuityIPV6ULAPrefix) // First 32 bits (prefix)
+	copy(result[4:], suffix[:12])            // Remaining 96 bits (random)
+
+	return result, nil
+}
+
+// GenerateServerIPv6FromIPv4 generates a predictable IPv6 address by encoding the IPv4 address
+func GenerateServerIPv6FromIPv4(region Region, network Network, tenantID string, ipv4 net.IP) (net.IP, *net.IPNet, error) {
+	ipv6 := NewIPv6Address(region, network, tenantID, ipv4.String(), "")
+
+	ip := net.ParseIP(ipv6.String())
+	_, ipNet, err := net.ParseCIDR(ipv6.MachineSubnet())
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse IPv6 subnet: %w", err)
+	}
+
+	return ip, ipNet, nil
+}
+
+// IsAgentuityIPv6Prefix checks if the given IP address has the Agentuity prefix
+func IsAgentuityIPv6Prefix(ip net.IP) bool {
+	return strings.HasPrefix(ip.String(), AgentuityIPV6ULAPrefix)
 }

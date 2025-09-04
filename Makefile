@@ -1,4 +1,4 @@
-.PHONY: all lint test vet tidy vuln fuzz
+.PHONY: all lint test vet tidy vuln fuzz gen
 
 all: test
 
@@ -32,3 +32,7 @@ fuzz:
 	@go test -fuzz=FuzzStreamingPatterns ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzPartialCorruption ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzDifferentKeyPairs ./crypto -fuzztime=3s
+
+gen:
+	@echo "generating..."
+	@go generate ./...

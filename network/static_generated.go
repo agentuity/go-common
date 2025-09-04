@@ -3,12 +3,18 @@
 
 package network
 
+const AetherServiceIP = "fd15:d710:2d:c580:9dc5:aeeb::"
 const CatalystServiceIP = "fd15:d710:25:c500:9dc5:d408::"
 const OtelServiceIP = "fd15:d710:2a:68d0:9dc5:2763::"
-const PulseServiceIP = "fd15:d710:26:5d00:9dc5:336f::"
 
 var Services = map[string]string{
+	"fd15:d710:2d:c580:9dc5:aeeb::": "aether",
 	"fd15:d710:25:c500:9dc5:d408::": "catalyst",
 	"fd15:d710:2a:68d0:9dc5:2763::": "otel",
-	"fd15:d710:26:5d00:9dc5:336f::": "pulse",
+}
+
+var Addresses = map[string]string{
+	"aether":   "fd15:d710:2d:c580:9dc5:aeeb::",
+	"catalyst": "fd15:d710:25:c500:9dc5:d408::",
+	"otel":     "fd15:d710:2a:68d0:9dc5:2763::",
 }

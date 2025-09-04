@@ -46,6 +46,10 @@ package network
 
 	output += "\n" + mapping + "\n"
 
+	serviceNet := genStaticServiceNetIP()
+
+	output += fmt.Sprintf("\nvar ServiceSubnet = \"%s\"\n", serviceNet)
+
 	err := os.WriteFile("static_generated.go", []byte(output), 0644)
 	if err != nil {
 		panic(err)
@@ -62,4 +66,12 @@ func capitalize(s string) string {
 func genStaticServiceIP(serviceName string) string {
 	addr := network.NewIPv6Address(network.RegionGlobal, network.NetworkPrivateServices, serviceName, "", "")
 	return addr.String()
+}
+
+func genStaticServiceNetIP() string {
+	addr := network.NewIPv6Address(network.RegionGlobal, network.NetworkPrivateServices, "", "", "")
+	// 32 bits (first two hextets)
+	// 12 bits (from the third hextet)
+	// = 44 bits total.
+	return addr.String()[0:11] + "0/44"
 }

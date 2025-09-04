@@ -178,14 +178,19 @@ func (a *IPv6Address) MachineSubnet() string {
 	return buildIPv6MachineSubnet(a.Region, a.Network, a.TenantID, a.MachineID)
 }
 
-// GenerateUniqueIPv6 generates a unique IPv6 address with the Agentuity prefix
-func GenerateUniqueIPv6() (net.IP, error) {
+var ourPrefix net.IP
+
+func init() {
 	// Parse the textual prefix into binary form
 	prefixIP := net.ParseIP(AgentuityIPV6ULAPrefix + "::")
 	if prefixIP == nil {
-		return nil, fmt.Errorf("invalid IPv6 prefix: %s", AgentuityIPV6ULAPrefix)
+		panic(fmt.Sprintf("invalid IPv6 prefix: %s", AgentuityIPV6ULAPrefix)) // this should never happen
 	}
-	prefix := prefixIP.To16()
+	ourPrefix = prefixIP.To16()
+}
+
+// GenerateUniqueIPv6 generates a unique IPv6 address with the Agentuity prefix
+func GenerateUniqueIPv6() (net.IP, error) {
 
 	// Generate 12 random bytes for the remaining suffix (128 - 32 bits = 96 bits = 12 bytes)
 	suffix := make([]byte, 12)
@@ -196,8 +201,8 @@ func GenerateUniqueIPv6() (net.IP, error) {
 
 	// Construct final 16-byte IPv6 address
 	result := make(net.IP, 16)
-	copy(result[:4], prefix[:4]) // First 32 bits (/32 prefix)
-	copy(result[4:], suffix)     // Remaining 96 bits (random)
+	copy(result[:4], ourPrefix[:4]) // First 32 bits (/32 prefix)
+	copy(result[4:], suffix)        // Remaining 96 bits (random)
 
 	return result, nil
 }
@@ -217,18 +222,11 @@ func GenerateServerIPv6FromIPv4(region Region, network Network, tenantID string,
 
 // IsAgentuityIPv6Prefix checks if the given IP address has the Agentuity prefix
 func IsAgentuityIPv6Prefix(ip net.IP) bool {
-	// Parse the textual prefix into binary form
-	prefixIP := net.ParseIP(AgentuityIPV6ULAPrefix + "::")
-	if prefixIP == nil {
-		return false
-	}
-	prefix := prefixIP.To16()
-
 	// Compare first 32 bits (4 bytes) of the IP addresses
 	inputIP := ip.To16()
 	if inputIP == nil {
 		return false
 	}
 
-	return bytes.Equal(inputIP[:4], prefix[:4])
+	return bytes.Equal(inputIP[:4], ourPrefix[:4])
 }

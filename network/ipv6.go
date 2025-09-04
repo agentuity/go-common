@@ -3,12 +3,12 @@
 package network
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
 	"net"
-	"strings"
 )
 
 func hashTo49Bits(tenantID string) uint64 {
@@ -180,7 +180,14 @@ func (a *IPv6Address) MachineSubnet() string {
 
 // GenerateUniqueIPv6 generates a unique IPv6 address with the Agentuity prefix
 func GenerateUniqueIPv6() (net.IP, error) {
-	// Generate 10 random bytes for the remaining suffix (128 - 32 bits = 96 bits = 12 bytes)
+	// Parse the textual prefix into binary form
+	prefixIP := net.ParseIP(AgentuityIPV6ULAPrefix + "::")
+	if prefixIP == nil {
+		return nil, fmt.Errorf("invalid IPv6 prefix: %s", AgentuityIPV6ULAPrefix)
+	}
+	prefix := prefixIP.To16()
+
+	// Generate 12 random bytes for the remaining suffix (128 - 32 bits = 96 bits = 12 bytes)
 	suffix := make([]byte, 12)
 	_, err := rand.Read(suffix)
 	if err != nil {
@@ -189,8 +196,8 @@ func GenerateUniqueIPv6() (net.IP, error) {
 
 	// Construct final 16-byte IPv6 address
 	result := make(net.IP, 16)
-	copy(result[:4], AgentuityIPV6ULAPrefix) // First 32 bits (prefix)
-	copy(result[4:], suffix[:12])            // Remaining 96 bits (random)
+	copy(result[:4], prefix[:4]) // First 32 bits (/32 prefix)
+	copy(result[4:], suffix)     // Remaining 96 bits (random)
 
 	return result, nil
 }
@@ -210,5 +217,18 @@ func GenerateServerIPv6FromIPv4(region Region, network Network, tenantID string,
 
 // IsAgentuityIPv6Prefix checks if the given IP address has the Agentuity prefix
 func IsAgentuityIPv6Prefix(ip net.IP) bool {
-	return strings.HasPrefix(ip.String(), AgentuityIPV6ULAPrefix)
+	// Parse the textual prefix into binary form
+	prefixIP := net.ParseIP(AgentuityIPV6ULAPrefix + "::")
+	if prefixIP == nil {
+		return false
+	}
+	prefix := prefixIP.To16()
+
+	// Compare first 32 bits (4 bytes) of the IP addresses
+	inputIP := ip.To16()
+	if inputIP == nil {
+		return false
+	}
+
+	return bytes.Equal(inputIP[:4], prefix[:4])
 }

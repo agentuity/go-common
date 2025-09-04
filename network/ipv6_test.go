@@ -82,11 +82,9 @@ func TestGenerateUniqueIPv6(t *testing.T) {
 	assert.NotNil(t, ip)
 	assert.Equal(t, 16, len(ip))
 
-	// Test that it has the correct Agentuity prefix (copies string "fd15:d710")
-	assert.Equal(t, byte('f'), ip[0])
-	assert.Equal(t, byte('d'), ip[1])
-	assert.Equal(t, byte('1'), ip[2])
-	assert.Equal(t, byte('5'), ip[3])
+	// Must be IPv6 and carry the Agentuity prefix
+	assert.Nil(t, ip.To4())
+	assert.True(t, IsAgentuityIPv6Prefix(ip))
 
 	// Test that multiple calls return different addresses (randomness)
 	ip1, err := GenerateUniqueIPv6()
@@ -100,6 +98,15 @@ func TestGenerateUniqueIPv6(t *testing.T) {
 	// Both should be valid IPv6 addresses
 	assert.True(t, ip1.To16() != nil)
 	assert.True(t, ip2.To16() != nil)
+}
+
+func TestIsAgentuityIPv6Prefix(t *testing.T) {
+	ip, err := GenerateUniqueIPv6()
+	assert.NoError(t, err)
+	assert.True(t, IsAgentuityIPv6Prefix(ip))
+
+	notAgent := net.ParseIP("2001:db8::1")
+	assert.False(t, IsAgentuityIPv6Prefix(notAgent))
 }
 
 func TestGenerateServerIPv6FromIPv4(t *testing.T) {

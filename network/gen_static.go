@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"os"
 	"strings"
@@ -18,14 +19,20 @@ func main() {
 
 package network
 
+import (
+	"net"
+)
+
 `
 
-	mapping := `var Services = map[string]string{`
+	mapping := "// Services is a map of service names to their IP addresses\n"
+	mapping += `var Services = map[string]string{`
 	mapping += "\n"
 
 	for _, service := range services {
 		ip := genStaticServiceIP(service)
 		varName := fmt.Sprintf("%sServiceIP", capitalize(service))
+		output += "// " + varName + " is the IP address for the " + service + " service\n"
 		output += fmt.Sprintf("const %s = \"%s\"\n", varName, ip)
 		mapping += fmt.Sprintf("\t\"%s\": \"%s\",\n", ip, service)
 	}
@@ -34,12 +41,13 @@ package network
 
 	output += "\n" + mapping + "\n"
 
-	mapping = `var Addresses = map[string]string{`
+	mapping = "// Addresses is a map of service names to their IP addresses\n"
+	mapping += `var Addresses = map[string]net.IP{`
 	mapping += "\n"
 
 	for _, service := range services {
 		ip := genStaticServiceIP(service)
-		mapping += fmt.Sprintf("\t\"%s\": \"%s\",\n", service, ip)
+		mapping += fmt.Sprintf("\t\"%s\": net.ParseIP(\"%s\"),\n", service, ip)
 	}
 
 	mapping += `}`
@@ -48,12 +56,69 @@ package network
 
 	serviceNet := genStaticServiceNetIP()
 
-	output += fmt.Sprintf("\nvar ServiceSubnet = \"%s\"\n", serviceNet)
+	output += "// InternalServiceSubnet is the subnet for the internal service network\n"
+	output += fmt.Sprintf("const InternalServiceSubnet = \"%s\"\n\n", serviceNet)
+
+	for name, region := range network.Regions {
+		agentSubnet := genStaticAgentNetIP(network.Region(region))
+		hadronSubnet := genStaticHadronNetIP(network.Region(region))
+		regionName := makeRegion(name)
+		output += "// AgentSubnet" + regionName + " is the subnet for the agent network in the " + name + " region\n"
+		output += fmt.Sprintf("const AgentSubnet%s = \"%s\"\n", regionName, agentSubnet)
+		output += "// HadronSubnet" + regionName + " is the subnet for the hadron network in the " + name + " region\n"
+		output += fmt.Sprintf("const HadronSubnet%s = \"%s\"\n", regionName, hadronSubnet)
+		output += "\n"
+	}
+
+	output += "\n\n"
+	output += "// AgentSubnetForRegion will return the subnet for the agent network in the given region\n"
+	output += "func AgentSubnetForRegion(region Region) string {\n"
+	output += "\tswitch region {\n"
+	for name, region := range network.Regions {
+		if region == network.RegionGlobal {
+			continue
+		}
+		output += fmt.Sprintf("\t\tcase %d: // %s\n", region, name)
+		output += fmt.Sprintf("\t\t\treturn AgentSubnet%s\n", makeRegion(name))
+	}
+	output += "\t\tdefault:\n"
+	output += fmt.Sprintf("\t\t\treturn AgentSubnet%s\n", makeRegion("global"))
+	output += "\t}\n"
+	output += "}\n\n"
+
+	output += "\n\n"
+
+	output += "// HadronSubnetForRegion will return the subnet for the hadron network in the given region\n"
+	output += "func HadronSubnetForRegion(region Region) string {\n"
+	output += "\tswitch region {\n"
+	for name, region := range network.Regions {
+		if region == network.RegionGlobal {
+			continue
+		}
+		output += fmt.Sprintf("\t\tcase %d: // %s\n", region, name)
+		output += fmt.Sprintf("\t\t\treturn HadronSubnet%s\n", makeRegion(name))
+	}
+	output += "\t\tdefault:\n"
+	output += fmt.Sprintf("\t\t\treturn HadronSubnet%s\n", makeRegion("global"))
+	output += "\t}\n"
+	output += "}\n\n"
+
+	output += "\n\n"
 
 	err := os.WriteFile("static_generated.go", []byte(output), 0644)
 	if err != nil {
 		panic(err)
 	}
+}
+
+func makeRegion(name string) string {
+	toks := strings.Split(name, "-")
+	prefix := strings.ToUpper(toks[0])
+	var remainder []string
+	for _, tok := range toks[1:] {
+		remainder = append(remainder, capitalize(tok))
+	}
+	return prefix + strings.Join(remainder, "")
 }
 
 func capitalize(s string) string {
@@ -68,13 +133,42 @@ func genStaticServiceIP(serviceName string) string {
 	return addr.String()
 }
 
-func genStaticServiceNetIP() string {
-	addr := network.NewIPv6Address(network.RegionGlobal, network.NetworkPrivateServices, "", "", "")
+func genStaticNetIP(region network.Region, net network.Network) string {
+	addr := network.NewIPv6Address(region, net, "", "", "")
 	// 32 bits (first two hextets)
 	// 12 bits (from the third hextet)
 	// = 44 bits total.
-	// ip := addr.String()
-	// // Take the first 11 characters and ensure proper formatting
-	// return fmt.Sprintf("%s0::/44", ip[:11])
-	return addr.String()[0:11] + "0::/44"
+
+	// Parse IPv6 into 16 bytes
+	ip := addr.IP()
+	if ip == nil {
+		return ""
+	}
+
+	// Extract hextets (each hextet is 2 bytes, 16 bits)
+	hextet0 := binary.BigEndian.Uint16(ip[0:2])
+	hextet1 := binary.BigEndian.Uint16(ip[2:4])
+	hextet2 := binary.BigEndian.Uint16(ip[4:6])
+
+	// Compute 12-bit third piece by right-shifting third hextet by 4
+	thirdPiece := hextet2 >> 4
+
+	// For /44, we need the first 12 bits of the third hextet, which means 3 hex digits
+	// Shift the 12-bit piece back to the left to get the proper prefix
+	thirdHextetPrefix := thirdPiece << 4
+
+	// Format as proper canonical prefix string
+	return fmt.Sprintf("%x:%x:%x::/44", hextet0, hextet1, thirdHextetPrefix)
+}
+
+func genStaticServiceNetIP() string {
+	return genStaticNetIP(network.RegionGlobal, network.NetworkPrivateServices)
+}
+
+func genStaticAgentNetIP(region network.Region) string {
+	return genStaticNetIP(region, network.NetworkAgent)
+}
+
+func genStaticHadronNetIP(region network.Region) string {
+	return genStaticNetIP(region, network.NetworkHadron)
 }

@@ -46,6 +46,13 @@ const (
 	RegionUSEast1    Region = 0x03
 )
 
+var Regions = map[string]Region{
+	"global":      RegionGlobal,
+	"us-central1": RegionUSCentral1,
+	"us-west1":    RegionUSWest1,
+	"us-east1":    RegionUSEast1,
+}
+
 type Network uint8
 
 const (
@@ -64,10 +71,10 @@ const AgentuityIPV6ULAPrefix = "fd15:d710"
 /*
  * IPv6 Address Format:
  *
- * Base: fd15:d710::/28 (28 bits).
+ * Base: fd15:d710::/32 (32 bits).
  * - Compute the SHA-256 hash of "agentuity" => 15d71ecdfd86fe859f20f40a94a3a05511d0eb068089883837434e241b9cfa1a.
  * - For a ULA prefix, take the first 40 bits (10 hex digits) of the hash: 15d71ecdfd.
- * - the derived /28 ULA base prefix is fd15:d710::/28 (Non-routable to the internet)
+ * - the derived /32 ULA base prefix is fd15:d710::/32 (Non-routable to the internet)
  *
  * Subnet field (to /96):
  * - Region: 8 bits (256 values).
@@ -167,6 +174,14 @@ func NewIPv6Address(region Region, network Network, tenantID string, machineID s
 
 func (a *IPv6Address) String() string {
 	return a.ipv6Address
+}
+
+func (a *IPv6Address) IP() net.IP {
+	ip := net.ParseIP(a.ipv6Address)
+	if ip == nil {
+		return nil
+	}
+	return ip.To16()
 }
 
 func (a *IPv6Address) MarshalJSON() ([]byte, error) {

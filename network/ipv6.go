@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"net"
+	"strings"
 )
 
 func hashTo49Bits(tenantID string) uint64 {
@@ -46,11 +47,27 @@ const (
 	RegionUSEast1    Region = 0x03
 )
 
+// Regions maps canonical region strings to Region. Treat as read-only; do not mutate at runtime.
 var Regions = map[string]Region{
 	"global":      RegionGlobal,
 	"us-central1": RegionUSCentral1,
 	"us-west1":    RegionUSWest1,
 	"us-east1":    RegionUSEast1,
+}
+
+// GetRegion returns a Region from a string.
+func GetRegion(region string) Region {
+	region = strings.ToLower(region)
+	switch {
+	case strings.Contains(region, "us-central1"):
+		return RegionUSCentral1
+	case strings.Contains(region, "us-east1"):
+		return RegionUSEast1
+	case strings.Contains(region, "us-west1"):
+		return RegionUSWest1
+	default:
+		return RegionGlobal
+	}
 }
 
 type Network uint8
@@ -73,8 +90,8 @@ const AgentuityIPV6ULAPrefix = "fd15:d710"
  *
  * Base: fd15:d710::/32 (32 bits).
  * - Compute the SHA-256 hash of "agentuity" => 15d71ecdfd86fe859f20f40a94a3a05511d0eb068089883837434e241b9cfa1a.
- * - For a ULA prefix, take the first 40 bits (10 hex digits) of the hash: 15d71ecdfd.
- * - the derived /32 ULA base prefix is fd15:d710::/32 (Non-routable to the internet)
+ * - We intentionally use a fixed /32 ULA-style prefix (fd15:d710::/32) for all addresses. This is non-routable
+ *   on the public internet.
  *
  * Subnet field (to /96):
  * - Region: 8 bits (256 values).
@@ -239,7 +256,7 @@ func GenerateServerIPv6FromIPv4(region Region, network Network, tenantID string,
 func IsAgentuityIPv6Prefix(ip net.IP) bool {
 	// Compare first 32 bits (4 bytes) of the IP addresses
 	inputIP := ip.To16()
-	if inputIP == nil {
+	if inputIP == nil || ip.To4() != nil {
 		return false
 	}
 

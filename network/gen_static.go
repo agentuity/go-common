@@ -3,9 +3,9 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/agentuity/go-common/network"
@@ -25,7 +25,7 @@ import (
 
 `
 
-	mapping := "// Services is a map of service names to their IP addresses\n"
+	mapping := "// Services maps IP address strings to service names\n"
 	mapping += `var Services = map[string]string{`
 	mapping += "\n"
 
@@ -34,7 +34,7 @@ import (
 		varName := fmt.Sprintf("%sServiceIP", capitalize(service))
 		output += "// " + varName + " is the IP address for the " + service + " service\n"
 		output += fmt.Sprintf("const %s = \"%s\"\n", varName, ip)
-		mapping += fmt.Sprintf("\t\"%s\": \"%s\",\n", ip, service)
+		mapping += fmt.Sprintf("\t%s: \"%s\",\n", varName, service)
 	}
 
 	mapping += `}`
@@ -46,8 +46,8 @@ import (
 	mapping += "\n"
 
 	for _, service := range services {
-		ip := genStaticServiceIP(service)
-		mapping += fmt.Sprintf("\t\"%s\": net.ParseIP(\"%s\"),\n", service, ip)
+		varName := fmt.Sprintf("%sServiceIP", capitalize(service))
+		mapping += fmt.Sprintf("\t\"%s\": net.ParseIP(%s),\n", service, varName)
 	}
 
 	mapping += `}`
@@ -59,7 +59,13 @@ import (
 	output += "// InternalServiceSubnet is the subnet for the internal service network\n"
 	output += fmt.Sprintf("const InternalServiceSubnet = \"%s\"\n\n", serviceNet)
 
-	for name, region := range network.Regions {
+	var names []string
+	for name := range network.Regions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		region := network.Regions[name]
 		agentSubnet := genStaticAgentNetIP(network.Region(region))
 		hadronSubnet := genStaticHadronNetIP(network.Region(region))
 		regionName := makeRegion(name)
@@ -74,7 +80,8 @@ import (
 	output += "// AgentSubnetForRegion will return the subnet for the agent network in the given region\n"
 	output += "func AgentSubnetForRegion(region Region) string {\n"
 	output += "\tswitch region {\n"
-	for name, region := range network.Regions {
+	for _, name := range names {
+		region := network.Regions[name]
 		if region == network.RegionGlobal {
 			continue
 		}
@@ -91,7 +98,8 @@ import (
 	output += "// HadronSubnetForRegion will return the subnet for the hadron network in the given region\n"
 	output += "func HadronSubnetForRegion(region Region) string {\n"
 	output += "\tswitch region {\n"
-	for name, region := range network.Regions {
+	for _, name := range names {
+		region := network.Regions[name]
 		if region == network.RegionGlobal {
 			continue
 		}
@@ -133,32 +141,9 @@ func genStaticServiceIP(serviceName string) string {
 	return addr.String()
 }
 
-func genStaticNetIP(region network.Region, net network.Network) string {
-	addr := network.NewIPv6Address(region, net, "", "", "")
-	// 32 bits (first two hextets)
-	// 12 bits (from the third hextet)
-	// = 44 bits total.
-
-	// Parse IPv6 into 16 bytes
-	ip := addr.IP()
-	if ip == nil {
-		return ""
-	}
-
-	// Extract hextets (each hextet is 2 bytes, 16 bits)
-	hextet0 := binary.BigEndian.Uint16(ip[0:2])
-	hextet1 := binary.BigEndian.Uint16(ip[2:4])
-	hextet2 := binary.BigEndian.Uint16(ip[4:6])
-
-	// Compute 12-bit third piece by right-shifting third hextet by 4
-	thirdPiece := hextet2 >> 4
-
-	// For /44, we need the first 12 bits of the third hextet, which means 3 hex digits
-	// Shift the 12-bit piece back to the left to get the proper prefix
-	thirdHextetPrefix := thirdPiece << 4
-
-	// Format as proper canonical prefix string
-	return fmt.Sprintf("%x:%x:%x::/44", hextet0, hextet1, thirdHextetPrefix)
+func genStaticNetIP(region network.Region, netw network.Network) string {
+	rrn := (uint16(region) << 4) | uint16(netw) // 8 bits region + 4 bits network
+	return fmt.Sprintf("%s:%03x0::/44", network.AgentuityIPV6ULAPrefix, rrn)
 }
 
 func genStaticServiceNetIP() string {

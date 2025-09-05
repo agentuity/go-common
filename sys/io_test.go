@@ -142,6 +142,7 @@ func TestUnzipZipSlipComprehensive(t *testing.T) {
 		{
 			name: "RelativeTraversalAttacks",
 			filenames: []string{
+				"...../etc/passwd",
 				"../../../etc/passwd",
 				"../../malicious.txt",
 				"./../../evil.sh",

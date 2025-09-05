@@ -385,8 +385,15 @@ func Unzip(src, dest string, flatten bool) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if strings.Contains(f.Name, "..") {
-			return fmt.Errorf("invalid file path: %s", f.Name)
+		// Check for directory traversal attacks by examining path components
+		// Split the path and check each component
+		pathParts := strings.Split(filepath.ToSlash(f.Name), "/")
+		for _, part := range pathParts {
+			// Block path components that could be used for directory traversal
+			// ".." is obvious, but also block pure dot sequences (3+ dots) that might be interpreted as ".."
+			if part == ".." || (len(part) >= 3 && strings.Trim(part, ".") == "") {
+				return fmt.Errorf("invalid file path: %s", f.Name)
+			}
 		}
 
 		rc, err := f.Open()
@@ -399,7 +406,33 @@ func Unzip(src, dest string, flatten bool) error {
 			f.Name = filepath.Base(f.Name)
 		}
 
+		// Validate file name before path construction to catch absolute paths and other attacks
+		if filepath.IsAbs(f.Name) {
+			return fmt.Errorf("invalid file path, absolute path not allowed: %s", f.Name)
+		}
+
+		// Check for Windows-style absolute paths and UNC paths (platform-independent)
+		if len(f.Name) >= 3 && f.Name[1] == ':' && (f.Name[2] == '\\' || f.Name[2] == '/') {
+			return fmt.Errorf("invalid file path, Windows drive path not allowed: %s", f.Name)
+		}
+		if strings.HasPrefix(f.Name, "\\\\") {
+			return fmt.Errorf("invalid file path, UNC path not allowed: %s", f.Name)
+		}
+
 		fpath := filepath.Join(dest, f.Name)
+
+		// Canonicalize paths and validate against directory traversal
+		destRoot := filepath.Clean(dest)
+		if !strings.HasSuffix(destRoot, string(os.PathSeparator)) {
+			destRoot += string(os.PathSeparator)
+		}
+		cleanedFpath := filepath.Clean(fpath)
+
+		// Ensure the cleaned file path is within the destination directory
+		if !strings.HasPrefix(cleanedFpath+string(os.PathSeparator), destRoot) {
+			return fmt.Errorf("invalid file path, outside destination directory: %s", f.Name)
+		}
+
 		if f.FileInfo().IsDir() && !flatten {
 			os.MkdirAll(fpath, os.ModePerm)
 		} else {

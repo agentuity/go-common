@@ -2,6 +2,7 @@ package string
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -39,15 +40,30 @@ func GenerateRandomBytes(n int) ([]byte, error) {
 	return b, nil
 }
 
+const randletters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
+
 // GenerateRandomString returns a securely generated random string.
 // It will return an error if the system's secure random
 // number generator fails to function correctly, in which
 // case the caller should not continue.
 func GenerateRandomString(n int) (string, error) {
-	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-"
+	return GenerateRandomStringFrom(randletters, n)
+}
+
+func GenerateRandomStringFrom(letters string, n int) (string, error) {
+	if n < 0 {
+		return "", errors.New("n must be >= 0")
+	}
+	if n == 0 {
+		return "", nil
+	}
+	if len(letters) == 0 {
+		return "", errors.New("letters must be non-empty")
+	}
 	ret := make([]byte, n)
-	for i := 0; i < n; i++ {
-		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
+	max := big.NewInt(int64(len(letters)))
+	for i := range n {
+		num, err := rand.Int(rand.Reader, max)
 		if err != nil {
 			return "", err
 		}

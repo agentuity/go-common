@@ -13,6 +13,9 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  GOFIPS140: v1.0.0
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -29,8 +32,13 @@ jobs:
       - name: Build
         run: go build -v ./...
       - name: Test
-        run: go test -v ./...
+        run: go test -v -race ./...
       - name: Fuzz Testing
         run: |
           go test -fuzz=FuzzEncryptDecrypt ./crypto -fuzztime=3s
+          go test -fuzz=FuzzDecryptMalformed ./crypto -fuzztime=3s
+          go test -fuzz=FuzzCorruptionPositions ./crypto -fuzztime=3s
           go test -fuzz=FuzzPEMEncoding ./crypto -fuzztime=3s
+          go test -fuzz=FuzzStreamingPatterns ./crypto -fuzztime=3s
+          go test -fuzz=FuzzPartialCorruption ./crypto -fuzztime=3s
+          go test -fuzz=FuzzDifferentKeyPairs ./crypto -fuzztime=3s

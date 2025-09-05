@@ -27,7 +27,7 @@ const logoHeader = `
 `
 
 var (
-	logoColor = lipgloss.AdaptiveColor{Light: "#36EEE0", Dark: "#00FFFF"}
+	logoColor = lipgloss.AdaptiveColor{Light: "#00AAAA", Dark: "#00FFFF"}
 	logoStyle = lipgloss.NewStyle().Foreground(logoColor)
 
 	logoBox = lipgloss.NewStyle().

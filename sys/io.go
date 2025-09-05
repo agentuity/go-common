@@ -385,7 +385,8 @@ func Unzip(src, dest string, flatten bool) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if strings.Contains(f.Name, "..") {
+		// Check for directory traversal attacks - look for "../" or ".." at path boundaries
+		if strings.Contains(f.Name, "../") || strings.HasPrefix(f.Name, "../") || strings.HasSuffix(f.Name, "/..") || f.Name == ".." {
 			return fmt.Errorf("invalid file path: %s", f.Name)
 		}
 

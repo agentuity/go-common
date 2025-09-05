@@ -20,21 +20,17 @@ var _ Cache = (*inMemoryCache)(nil)
 
 func (c *inMemoryCache) Get(key string) (bool, any, error) {
 	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	val, ok := c.cache[key]
-	if ok {
-		val.hits++
+	if !ok {
+		return false, nil, nil
 	}
-	c.mutex.Unlock()
-	if ok {
-		if val.expires.Before(time.Now()) {
-			c.mutex.Lock()
-			delete(c.cache, key)
-			c.mutex.Unlock()
-			return false, nil, nil
-		}
-		return true, val.object, nil
+	if val.expires.Before(time.Now()) {
+		delete(c.cache, key)
+		return false, nil, nil
 	}
-	return false, nil, nil
+	val.hits++
+	return true, val.object, nil
 }
 
 // Hits returns the number of times a key has been accessed.
@@ -82,27 +78,18 @@ func (c *inMemoryCache) Close() error {
 }
 
 func (c *inMemoryCache) run() {
-	c.waitGroup.Add(1)
-	timer := time.NewTicker(c.expiryCheck)
-	defer func() {
-		timer.Stop()
-		c.waitGroup.Done()
-	}()
+	defer c.waitGroup.Done()
+	ticker := time.NewTicker(c.expiryCheck)
+	defer ticker.Stop()
 	for {
 		select {
 		case <-c.ctx.Done():
 			return
-		case <-timer.C:
+		case <-ticker.C:
 			now := time.Now()
 			c.mutex.Lock()
-			var expired []string
 			for key, val := range c.cache {
 				if val.expires.Before(now) {
-					expired = append(expired, key)
-				}
-			}
-			if len(expired) > 0 {
-				for _, key := range expired {
 					delete(c.cache, key)
 				}
 			}
@@ -120,6 +107,10 @@ func NewInMemory(parent context.Context, expiryCheck time.Duration) Cache {
 		cache:       make(map[string]*value),
 		expiryCheck: expiryCheck,
 	}
+	if c.expiryCheck <= 0 {
+		c.expiryCheck = time.Minute
+	}
+	c.waitGroup.Add(1)
 	go c.run()
 	return c
 }

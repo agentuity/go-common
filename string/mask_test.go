@@ -299,10 +299,11 @@ func TestMaskedSprintfs_Behavior_Comparison(t *testing.T) {
 }
 
 func captureOutput(f func()) string {
+	prev := log.Writer()
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
 	f()
-	log.SetOutput(nil)
 	return strings.TrimSpace(buf.String())
 }
 

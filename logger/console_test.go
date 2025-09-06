@@ -4,17 +4,19 @@ import (
 	"bytes"
 	"log"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func captureOutput(f func()) string {
+	prev := log.Writer()
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
+	defer log.SetOutput(prev)
 	f()
-	log.SetOutput(nil)
-	return buf.String()
+	return strings.TrimSpace(buf.String())
 }
 
 func TestConsoleLogger(t *testing.T) {

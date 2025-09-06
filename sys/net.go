@@ -21,5 +21,5 @@ func GetFreePort() (port int, err error) {
 // IsLocalhost returns true if the URL is localhost or 127.0.0.1 or 0.0.0.0.
 func IsLocalhost(url string) bool {
 	// technically 127.0.0.0 – 127.255.255.255 is the loopback range but most people use 127.0.0.1
-	return strings.Contains(url, "localhost") || strings.Contains(url, "127.0.0.1") || strings.Contains(url, "0.0.0.0")
+	return strings.Contains(url, "localhost") || strings.Contains(url, "127.0.0.1") || strings.Contains(url, "0.0.0.0") || strings.Contains(url, "::1") || strings.Contains(url, "0:0:0:0:0:0:0:1")
 }

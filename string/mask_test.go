@@ -243,6 +243,23 @@ func TestMaskedString_Behavior_Comparison(t *testing.T) {
 	}
 }
 
+func TestMaskedGoString_Behavior_Comparison(t *testing.T) {
+	testCases := []string{
+		"",
+		"a",
+		"password123",
+		"very_long_secret_value_that_should_be_masked",
+	}
+
+	for _, input := range testCases {
+		t.Run(fmt.Sprintf("input_%#v", input), func(t *testing.T) {
+			ms := NewMaskedString(input)
+			val := fmt.Sprintf("%#v", ms)
+			assert.Equal(t, val, ms.String())
+		})
+	}
+}
+
 type TestStruct struct {
 	Value    MaskedString `json:"value" yaml:"value"`
 	Name     string       `json:"name" yaml:"name"`

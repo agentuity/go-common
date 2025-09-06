@@ -134,6 +134,11 @@ func (ms MaskedString) MarshalYAML() (any, error) {
 	return string(ms), nil
 }
 
+// GoString implements fmt.GoStringer so %#v also prints masked.
+func (ms MaskedString) GoString() string {
+	return ms.String()
+}
+
 // NewMaskedString returns a string using the special type MaskedString.
 func NewMaskedString(s string) MaskedString {
 	return MaskedString(s)

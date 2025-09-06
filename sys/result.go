@@ -19,10 +19,19 @@ func (r Result[T]) IsOk() bool {
 
 // IsErr returns true if the Result contains an error.
 func (r Result[T]) IsErr(checks ...error) bool {
+	// Fast-path: if no error, return false immediately
+	if r.Err == nil {
+		return false
+	}
+
 	if len(checks) == 0 {
 		return r.Err != nil
 	}
 	for _, err := range checks {
+		// Skip nil checks to avoid calling errors.Is with nil target
+		if err == nil {
+			continue
+		}
 		if errors.Is(r.Err, err) {
 			return true
 		}
@@ -34,6 +43,9 @@ func (r Result[T]) IsErr(checks ...error) bool {
 func (r Result[T]) IsErrMatches(checks ...string) bool {
 	if len(checks) == 0 {
 		return r.Err != nil
+	}
+	if r.Err == nil {
+		return false
 	}
 	val := r.Err.Error()
 	for _, err := range checks {

@@ -1,10 +1,14 @@
 package string
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
+	"strings"
 	"testing"
 
+	"github.com/agentuity/go-common/logger"
 	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )
@@ -255,7 +259,69 @@ func TestMaskedGoString_Behavior_Comparison(t *testing.T) {
 		t.Run(fmt.Sprintf("input_%#v", input), func(t *testing.T) {
 			ms := NewMaskedString(input)
 			val := fmt.Sprintf("%#v", ms)
-			assert.Equal(t, val, ms.String())
+			assert.Equal(t, ms.String(), val)
+		})
+	}
+}
+
+func TestMaskedSprintf_Behavior_Comparison(t *testing.T) {
+	testCases := []string{
+		"",
+		"a",
+		"password123",
+		"very_long_secret_value_that_should_be_masked",
+	}
+
+	for _, input := range testCases {
+		t.Run(fmt.Sprintf("input_%v", input), func(t *testing.T) {
+			ms := NewMaskedString(input)
+			val := fmt.Sprintf("%v", ms)
+			assert.Equal(t, ms.String(), val)
+		})
+	}
+}
+
+func TestMaskedSprintfs_Behavior_Comparison(t *testing.T) {
+	testCases := []string{
+		"",
+		"a",
+		"password123",
+		"very_long_secret_value_that_should_be_masked",
+	}
+
+	for _, input := range testCases {
+		t.Run(fmt.Sprintf("input_%s", input), func(t *testing.T) {
+			ms := NewMaskedString(input)
+			val := fmt.Sprintf("%s", ms)
+			assert.Equal(t, ms.String(), val)
+		})
+	}
+}
+
+func captureOutput(f func()) string {
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	f()
+	log.SetOutput(nil)
+	return strings.TrimSpace(buf.String())
+}
+
+func TestMaskedLogger(t *testing.T) {
+	testCases := []string{
+		"",
+		"a",
+		"password123",
+		"very_long_secret_value_that_should_be_masked",
+	}
+
+	for _, input := range testCases {
+		t.Run(fmt.Sprintf("logger %s", input), func(t *testing.T) {
+			ms := NewMaskedString(input)
+			log := logger.NewConsoleLogger()
+			output := captureOutput(func() {
+				log.Info("msg: %s", ms)
+			})
+			assert.Contains(t, output, ms.String())
 		})
 	}
 }

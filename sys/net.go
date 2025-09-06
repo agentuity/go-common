@@ -2,6 +2,7 @@ package sys
 
 import (
 	"net"
+	neturl "net/url"
 	"strings"
 )
 
@@ -18,8 +19,22 @@ func GetFreePort() (port int, err error) {
 	return
 }
 
-// IsLocalhost returns true if the URL is localhost or 127.0.0.1 or 0.0.0.0.
+// IsLocalhost returns true if the input points to localhost/loopback or an unspecified address.
 func IsLocalhost(url string) bool {
-	// technically 127.0.0.0 – 127.255.255.255 is the loopback range but most people use 127.0.0.1
-	return strings.Contains(url, "localhost") || strings.Contains(url, "127.0.0.1") || strings.Contains(url, "0.0.0.0")
+	// Accept either a full URL or a bare host[:port].
+	host := url
+	if u, err := neturl.Parse(url); err == nil && u.Host != "" {
+		host = u.Hostname() // strips [] for IPv6
+	} else if h, _, err := net.SplitHostPort(url); err == nil {
+		host = h
+	} else {
+		host = strings.Trim(host, "[]")
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback() || ip.IsUnspecified() // 127/8, ::1, 0.0.0.0, ::
+	}
+	return false
 }

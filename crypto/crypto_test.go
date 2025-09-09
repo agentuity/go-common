@@ -8,12 +8,6 @@ import (
 	"testing"
 )
 
-type nopCloser struct {
-	io.Writer
-}
-
-func (nopCloser) Close() error { return nil }
-
 func TestStreamEncryptionDecryption(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -682,5 +676,50 @@ func TestStreamKeyReuse(t *testing.T) {
 	err = DecryptStream(bytes.NewReader(encryptedBuf1.Bytes()), nopCloser{decryptedBuf3}, modifiedKey)
 	if err == nil {
 		t.Error("DecryptStream() should fail with wrong key")
+	}
+}
+
+func TestBytesEncryptionDecryption(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		key  string
+	}{
+		{
+			name: "simple data",
+			data: []byte("hello world"),
+			key:  "test-key",
+		},
+		{
+			name: "empty data",
+			data: []byte{},
+			key:  "test-key",
+		},
+		{
+			name: "large data",
+			data: bytes.Repeat([]byte("test"), 1000),
+			key:  "test-key",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Encrypt
+			encrypted, err := EncryptBytes(tt.data, tt.key)
+			if err != nil {
+				t.Fatalf("EncryptBytes() error = %v", err)
+			}
+
+			// Decrypt
+			decrypted, err := DecryptBytes(encrypted, tt.key)
+			if err != nil {
+				t.Fatalf("DecryptBytes() error = %v", err)
+			}
+
+			// Verify
+			if !bytes.Equal(decrypted, tt.data) {
+				t.Errorf("Decrypted data doesn't match original")
+			}
+		})
 	}
 }

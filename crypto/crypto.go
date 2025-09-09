@@ -1,6 +1,7 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -169,5 +170,44 @@ func DecryptStream(reader io.Reader, writer io.WriteCloser, key string) error {
 		}
 	}
 
+	return nil
+}
+
+// EncryptBytes encrypts a byte array and returns the encrypted bytes.
+// For better performance with large data or when you have readers/writers available,
+// use EncryptStream instead.
+func EncryptBytes(data []byte, key string) ([]byte, error) {
+	reader := bytes.NewReader(data)
+	var buf bytes.Buffer
+	writer := &nopCloser{&buf}
+
+	if err := EncryptStream(reader, writer, key); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// DecryptBytes decrypts a byte array and returns the decrypted bytes.
+// For better performance with large data or when you have readers/writers available,
+// use DecryptStream instead.
+func DecryptBytes(encryptedData []byte, key string) ([]byte, error) {
+	reader := bytes.NewReader(encryptedData)
+	var buf bytes.Buffer
+	writer := &nopCloser{&buf}
+
+	if err := DecryptStream(reader, writer, key); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+// nopCloser wraps an io.Writer to implement io.WriteCloser with a no-op Close method
+type nopCloser struct {
+	io.Writer
+}
+
+func (nc nopCloser) Close() error {
 	return nil
 }

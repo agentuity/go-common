@@ -32,24 +32,26 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	parentIP := parent.IP.Mask(parent.Mask)
 	parentOnes, _ := parent.Mask.Size()
 
-	hostBits := 32 - prefixLen
-	if hostBits < 0 {
+	// Check if the requested prefix length is valid
+	if prefixLen <= parentOnes {
 		return nil
 	}
+
+	// Calculate how many subnets of the requested size can fit in the parent
+	subnetBits := prefixLen - parentOnes
+	maxSubnets := uint32(1) << subnetBits
+
+	// Generate random subnet index
+	subnetIndex := uint32(rand.Intn(int(maxSubnets)))
 
 	// Convert parent IP to 32-bit big-endian integer
 	parentInt := uint32(parentIP[0])<<24 | uint32(parentIP[1])<<16 | uint32(parentIP[2])<<8 | uint32(parentIP[3])
 
-	// Mask to parent prefix to get the base network
-	parentMask := ^uint32(0) << (32 - parentOnes)
-	baseNetwork := parentInt & parentMask
+	// Calculate the size of each subnet in terms of IP addresses
+	subnetSize := uint32(1) << (32 - prefixLen)
 
-	// Generate random offset within the available host bits for the new prefix
-	maxOffset := uint32(1) << hostBits
-	offset := uint32(rand.Intn(int(maxOffset)))
-
-	// Add offset to base network
-	newIP := baseNetwork + offset
+	// Calculate the starting IP of the chosen subnet
+	newIP := parentInt + (subnetIndex * subnetSize)
 
 	// Convert back to 4 bytes
 	randBytes := []byte{
@@ -71,7 +73,14 @@ func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen i
 		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 8 and 30", prefixLen)
 	}
 
-	for _, rng := range privateRanges {
+	// Create a shuffled copy of private ranges for better distribution
+	ranges := make([]struct{ network *net.IPNet }, len(privateRanges))
+	copy(ranges, privateRanges)
+	rand.Shuffle(len(ranges), func(i, j int) {
+		ranges[i], ranges[j] = ranges[j], ranges[i]
+	})
+
+	for _, rng := range ranges {
 		for range 1000 { // Try 1000 times to find non-overlapping subnet
 			candidate := generateRandomSubnet(rng.network, prefixLen)
 			if candidate != nil {

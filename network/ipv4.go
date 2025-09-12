@@ -6,6 +6,10 @@ import (
 	"net"
 )
 
+// rng is the random number generator used for subnet selection.
+// Can be overridden in tests for deterministic behavior.
+var rng = rand.New(rand.NewSource(rand.Int63()))
+
 var privateRanges = []struct {
 	network *net.IPNet
 }{
@@ -42,7 +46,7 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	maxSubnets := uint32(1) << subnetBits
 
 	// Generate random subnet index
-	subnetIndex := uint32(rand.Intn(int(maxSubnets)))
+	subnetIndex := uint32(rng.Intn(int(maxSubnets)))
 
 	// Convert parent IP to 32-bit big-endian integer
 	parentInt := uint32(parentIP[0])<<24 | uint32(parentIP[1])<<16 | uint32(parentIP[2])<<8 | uint32(parentIP[3])
@@ -53,36 +57,34 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	// Calculate the starting IP of the chosen subnet
 	newIP := parentInt + (subnetIndex * subnetSize)
 
-	// Convert back to 4 bytes
-	randBytes := []byte{
+	// Convert back to 4 bytes and build IPNet directly
+	ipBytes := net.IP{
 		byte(newIP >> 24),
 		byte(newIP >> 16),
 		byte(newIP >> 8),
 		byte(newIP),
 	}
-
-	newSubnet := fmt.Sprintf("%s/%d", net.IP(randBytes).String(), prefixLen)
-	_, result, _ := net.ParseCIDR(newSubnet)
-	return result
+	mask := net.CIDRMask(prefixLen, 32)
+	return &net.IPNet{IP: ipBytes.Mask(mask), Mask: mask}
 }
 
 // GenerateNonOverlappingIPv4Subnet generates a non-overlapping ipv4 subnet with the given prefix size within the given range.
 func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen int) (*net.IPNet, *net.IP, error) {
 	// Validate prefix length is within acceptable range
-	if prefixLen < 8 || prefixLen > 30 {
-		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 8 and 30", prefixLen)
+	if prefixLen < 9 || prefixLen > 30 {
+		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 9 and 30", prefixLen)
 	}
 
 	// Create a shuffled copy of private ranges for better distribution
 	ranges := make([]struct{ network *net.IPNet }, len(privateRanges))
 	copy(ranges, privateRanges)
-	rand.Shuffle(len(ranges), func(i, j int) {
+	rng.Shuffle(len(ranges), func(i, j int) {
 		ranges[i], ranges[j] = ranges[j], ranges[i]
 	})
 
-	for _, rng := range ranges {
+	for _, rangeSpec := range ranges {
 		for range 1000 { // Try 1000 times to find non-overlapping subnet
-			candidate := generateRandomSubnet(rng.network, prefixLen)
+			candidate := generateRandomSubnet(rangeSpec.network, prefixLen)
 			if candidate != nil {
 				hasOverlap := false
 				for _, existing := range existingNetworks {

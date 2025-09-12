@@ -177,6 +177,8 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 		defer cancel()
 		logProvider.Shutdown(ctx)
 		tracerProvider.Shutdown(ctx)
+		traceExporter.Shutdown(ctx)
+		logExporter.Shutdown(ctx)
 	}
 
 	return ctx,

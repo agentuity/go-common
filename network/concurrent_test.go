@@ -142,7 +142,7 @@ func TestConcurrentThreadSafety(t *testing.T) {
 	errors := make([]error, 0)
 	totalGenerated := 0
 
-	for range i := numGoroutines {
+	for i := range numGoroutines {
 		wg.Add(1)
 		go func(goroutineID int) {
 			defer wg.Done()

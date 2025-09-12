@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/agentuity/go-common/authentication"
@@ -30,7 +33,45 @@ func GenerateOTLPBearerTokenWithExpiration(sharedSecret string, expiration time.
 
 type ShutdownFunc func()
 
-func new(ctx context.Context, oltpServerURL string, authToken string, serviceName string) (context.Context, logger.Logger, ShutdownFunc, error) {
+// Option is a functional option for configuring telemetry
+type Option func(*config)
+
+// config holds the configuration options for telemetry
+type config struct {
+	dialer  *net.Dialer
+	timeout time.Duration
+	headers http.Header
+}
+
+// WithDialer sets a custom dialer for HTTP connections
+func WithDialer(dialer *net.Dialer) Option {
+	return func(c *config) {
+		c.dialer = dialer
+	}
+}
+
+// WithTimeout sets a custom timeout for HTTP connections
+func WithTimeout(dur time.Duration) Option {
+	return func(c *config) {
+		c.timeout = dur
+	}
+}
+
+// WithHeaders sets custom headers for HTTP connections
+func WithHeaders(headers http.Header) Option {
+	return func(c *config) {
+		c.headers = headers
+	}
+}
+
+func new(ctx context.Context, oltpServerURL string, authToken string, serviceName string, opts ...Option) (context.Context, logger.Logger, ShutdownFunc, error) {
+	// Apply options
+	cfg := &config{
+		timeout: time.Second * 10,
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
 	// parse oltpURL
 	oltpURL, err := url.Parse(oltpServerURL)
 	if err != nil {
@@ -64,15 +105,31 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 		headers["Authorization"] = "Bearer " + authToken
 	}
 
+	for k, v := range cfg.headers {
+		headers[k] = strings.Join(v, ",")
+	}
+
+	// Create HTTP client with custom dialer if provided
+	var httpClient *http.Client
+	if cfg.dialer != nil {
+		transport := &http.Transport{
+			DialContext: cfg.dialer.DialContext,
+		}
+		httpClient = &http.Client{Transport: transport}
+	}
+
 	// Setup log exporter
 	logExporterOpts := []otlploghttp.Option{
 		otlploghttp.WithEndpointURL(logURL),
 		otlploghttp.WithHeaders(headers),
-		otlploghttp.WithTimeout(time.Second * 10),
+		otlploghttp.WithTimeout(cfg.timeout),
 		otlploghttp.WithCompression(otlploghttp.GzipCompression),
 	}
 	if oltpURL.Scheme == "http" {
 		logExporterOpts = append(logExporterOpts, otlploghttp.WithInsecure())
+	}
+	if httpClient != nil {
+		logExporterOpts = append(logExporterOpts, otlploghttp.WithHTTPClient(httpClient))
 	}
 	logExporter, err := otlploghttp.New(ctx, logExporterOpts...)
 	if err != nil {
@@ -83,11 +140,14 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	traceExporterOpts := []otlptracehttp.Option{
 		otlptracehttp.WithEndpointURL(traceURL),
 		otlptracehttp.WithHeaders(headers),
-		otlptracehttp.WithTimeout(time.Second * 10),
+		otlptracehttp.WithTimeout(cfg.timeout),
 		otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
 	}
 	if oltpURL.Scheme == "http" {
 		traceExporterOpts = append(traceExporterOpts, otlptracehttp.WithInsecure())
+	}
+	if httpClient != nil {
+		traceExporterOpts = append(traceExporterOpts, otlptracehttp.WithHTTPClient(httpClient))
 	}
 	traceExporter, err := otlptracehttp.New(ctx, traceExporterOpts...)
 	if err != nil {
@@ -113,7 +173,7 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	otel.SetTextMapPropagator(tc)
 
 	shutdown := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second*11)
+		ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout+time.Second)
 		defer cancel()
 		logProvider.Shutdown(ctx)
 		tracerProvider.Shutdown(ctx)
@@ -125,12 +185,12 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 		nil
 }
 
-func New(ctx context.Context, serviceName string, telemetrySecret string, telemetryURL string, consoleLogger logger.Logger) (context.Context, logger.Logger, func(), error) {
+func New(ctx context.Context, serviceName string, telemetrySecret string, telemetryURL string, consoleLogger logger.Logger, opts ...Option) (context.Context, logger.Logger, func(), error) {
 	token, err := GenerateOTLPBearerToken(telemetrySecret, serviceName)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error generating otel token: %w", err)
 	}
-	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName)
+	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, token, serviceName, opts...)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error creating otel: %w", err)
 	}
@@ -140,8 +200,8 @@ func New(ctx context.Context, serviceName string, telemetrySecret string, teleme
 	return ctx2, olog.Stack(consoleLogger), shutdownMetrics, nil
 }
 
-func NewWithAPIKey(ctx context.Context, serviceName string, telemetryURL string, telemetryAPIKey string, consoleLogger logger.Logger) (context.Context, logger.Logger, func(), error) {
-	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, telemetryAPIKey, serviceName)
+func NewWithAPIKey(ctx context.Context, serviceName string, telemetryURL string, telemetryAPIKey string, consoleLogger logger.Logger, opts ...Option) (context.Context, logger.Logger, func(), error) {
+	ctx2, olog, shutdownMetrics, err := new(ctx, telemetryURL, telemetryAPIKey, serviceName, opts...)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error creating otel: %w", err)
 	}

@@ -441,11 +441,20 @@ func TestPrefixLengthRangeCompatibility(t *testing.T) {
 
 func TestDeterministicRandomGeneration(t *testing.T) {
 	// Save original RNG and restore at end
+	rngMu.Lock()
 	originalRNG := rng
-	defer func() { rng = originalRNG }()
+	rngMu.Unlock()
+
+	defer func() {
+		rngMu.Lock()
+		rng = originalRNG
+		rngMu.Unlock()
+	}()
 
 	// Use a seeded RNG for deterministic results
+	rngMu.Lock()
 	rng = rand.New(rand.NewSource(42))
+	rngMu.Unlock()
 
 	// Generate subnets with deterministic seed
 	var firstRunSubnets []string
@@ -456,7 +465,9 @@ func TestDeterministicRandomGeneration(t *testing.T) {
 	}
 
 	// Reset to same seed
+	rngMu.Lock()
 	rng = rand.New(rand.NewSource(42))
+	rngMu.Unlock()
 
 	// Generate again - should get identical results
 	var secondRunSubnets []string

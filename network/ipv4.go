@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
 )
 
 // rng is the random number generator used for subnet selection.
 // Can be overridden in tests for deterministic behavior.
 var rng = rand.New(rand.NewSource(rand.Int63()))
+
+// rngMu protects concurrent access to rng
+var rngMu sync.Mutex
 
 var privateRanges = []struct {
 	network *net.IPNet
@@ -46,7 +50,9 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	maxSubnets := uint32(1) << subnetBits
 
 	// Generate random subnet index
+	rngMu.Lock()
 	subnetIndex := uint32(rng.Intn(int(maxSubnets)))
+	rngMu.Unlock()
 
 	// Convert parent IP to 32-bit big-endian integer
 	parentInt := uint32(parentIP[0])<<24 | uint32(parentIP[1])<<16 | uint32(parentIP[2])<<8 | uint32(parentIP[3])
@@ -78,9 +84,11 @@ func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen i
 	// Create a shuffled copy of private ranges for better distribution
 	ranges := make([]struct{ network *net.IPNet }, len(privateRanges))
 	copy(ranges, privateRanges)
+	rngMu.Lock()
 	rng.Shuffle(len(ranges), func(i, j int) {
 		ranges[i], ranges[j] = ranges[j], ranges[i]
 	})
+	rngMu.Unlock()
 
 	for _, rangeSpec := range ranges {
 		for range 1000 { // Try 1000 times to find non-overlapping subnet
@@ -94,10 +102,9 @@ func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen i
 					}
 				}
 				if !hasOverlap {
-					network := candidate.IP.To4()
 					ip := make(net.IP, 4)
-					copy(ip, network)
-					ip[3] = 0x1 // make the gateway the first ip and copy since we have a shared copy we need to change
+					copy(ip, candidate.IP.To4())
+					ip[3] = 0x1 // make the gateway the first ip
 					return candidate, &ip, nil
 				}
 			}

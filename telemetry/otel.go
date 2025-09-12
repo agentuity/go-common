@@ -102,12 +102,11 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	}
 
 	headers := make(map[string]string)
-	if authToken != "" {
-		headers["Authorization"] = "Bearer " + authToken
-	}
-
 	for k, v := range cfg.headers {
 		headers[k] = strings.Join(v, ",")
+	}
+	if authToken != "" {
+		headers["Authorization"] = "Bearer " + authToken
 	}
 
 	// Create HTTP client with custom dialer if provided

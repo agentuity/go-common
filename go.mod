@@ -1,6 +1,6 @@
 module github.com/agentuity/go-common
 
-go 1.25.0
+go 1.25.1
 
 require (
 	github.com/buger/goterm v1.0.4

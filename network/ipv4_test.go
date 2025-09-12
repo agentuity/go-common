@@ -2,6 +2,7 @@ package network
 
 import (
 	"fmt"
+	"math/rand"
 	"net"
 	"testing"
 
@@ -115,6 +116,533 @@ func TestGenerateNonOverlappingIPv4SubnetWithManyExisting(t *testing.T) {
 	for _, existing := range existingNetworks {
 		assert.False(t, overlaps(existing, subnet), "Generated subnet should not overlap with any existing networks")
 	}
+}
+
+func TestGenerate100NonOverlapping24Subnets(t *testing.T) {
+	var existingNetworks []*net.IPNet
+	generatedSubnets := make(map[string]*net.IPNet)
+
+	// Generate 100 /24 subnets - should be easy within private ranges
+	for i := 0; i < 100; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+		assert.NoError(t, err, "Failed to generate subnet %d", i+1)
+		assert.NotNil(t, subnet, "Subnet %d is nil", i+1)
+		assert.NotNil(t, gateway, "Gateway %d is nil", i+1)
+
+		// Ensure subnet is unique
+		subnetStr := subnet.String()
+		_, exists := generatedSubnets[subnetStr]
+		assert.False(t, exists, "Duplicate subnet generated: %s", subnetStr)
+		generatedSubnets[subnetStr] = subnet
+
+		// Verify no overlap with existing networks
+		for _, existing := range existingNetworks {
+			assert.False(t, overlaps(existing, subnet), "New subnet %s overlaps with existing %s", subnet.String(), existing.String())
+		}
+
+		// Add to existing networks for next iteration
+		existingNetworks = append(existingNetworks, subnet)
+	}
+
+	t.Logf("Successfully generated %d non-overlapping /24 subnets", len(generatedSubnets))
+}
+
+func TestGenerate500NonOverlapping24Subnets(t *testing.T) {
+	var existingNetworks []*net.IPNet
+	generatedSubnets := make(map[string]*net.IPNet)
+
+	// Generate 500 /24 subnets - still should be manageable
+	for i := 0; i < 500; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+		assert.NoError(t, err, "Failed to generate subnet %d", i+1)
+		assert.NotNil(t, subnet, "Subnet %d is nil", i+1)
+		assert.NotNil(t, gateway, "Gateway %d is nil", i+1)
+
+		// Ensure subnet is unique
+		subnetStr := subnet.String()
+		_, exists := generatedSubnets[subnetStr]
+		assert.False(t, exists, "Duplicate subnet generated: %s", subnetStr)
+		generatedSubnets[subnetStr] = subnet
+
+		// Add to existing networks for next iteration
+		existingNetworks = append(existingNetworks, subnet)
+
+		// Log progress every 100 subnets
+		if (i+1)%100 == 0 {
+			t.Logf("Generated %d subnets so far...", i+1)
+		}
+	}
+
+	t.Logf("Successfully generated %d non-overlapping /24 subnets", len(generatedSubnets))
+}
+
+func TestGenerate1000NonOverlapping24Subnets(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping long test in short mode")
+	}
+
+	var existingNetworks []*net.IPNet
+	generatedSubnets := make(map[string]*net.IPNet)
+
+	// Generate 1000 /24 subnets - this should expose any bugs in the algorithm
+	for i := 0; i < 1000; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+		assert.NoError(t, err, "Failed to generate subnet %d", i+1)
+		assert.NotNil(t, subnet, "Subnet %d is nil", i+1)
+		assert.NotNil(t, gateway, "Gateway %d is nil", i+1)
+
+		// Ensure subnet is unique
+		subnetStr := subnet.String()
+		_, exists := generatedSubnets[subnetStr]
+		assert.False(t, exists, "Duplicate subnet generated: %s", subnetStr)
+		generatedSubnets[subnetStr] = subnet
+
+		// Add to existing networks for next iteration
+		existingNetworks = append(existingNetworks, subnet)
+
+		// Log progress every 200 subnets
+		if (i+1)%200 == 0 {
+			t.Logf("Generated %d subnets so far...", i+1)
+		}
+	}
+
+	t.Logf("Successfully generated %d non-overlapping /24 subnets", len(generatedSubnets))
+}
+
+func TestSubnetGenerationDistribution(t *testing.T) {
+	// Test that subnets are generated across all private ranges
+	rangeCounts := map[string]int{
+		"192.168.0.0/16": 0,
+		"172.16.0.0/12":  0,
+		"10.0.0.0/8":     0,
+	}
+
+	// Generate 300 subnets to see distribution
+	for i := 0; i < 300; i++ {
+		subnet, _, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, 24)
+		assert.NoError(t, err)
+		assert.NotNil(t, subnet)
+
+		// Determine which private range this subnet falls into
+		for _, rng := range privateRanges {
+			if rng.network.Contains(subnet.IP) {
+				rangeCounts[rng.network.String()]++
+				break
+			}
+		}
+	}
+
+	t.Logf("Subnet distribution across private ranges:")
+	for rangeStr, count := range rangeCounts {
+		t.Logf("  %s: %d subnets", rangeStr, count)
+	}
+
+	// At least some subnets should be generated in each range
+	// (This might fail if there's a bug in range selection)
+	totalGenerated := rangeCounts["192.168.0.0/16"] + rangeCounts["172.16.0.0/12"] + rangeCounts["10.0.0.0/8"]
+	assert.Equal(t, 300, totalGenerated, "All generated subnets should be in private ranges")
+
+	// With randomization, we should have better distribution
+	// Each range should have at least some subnets (using lenient bounds to avoid CI flakes)
+	nonZeroRanges := 0
+	minCount := 300
+	maxCount := 0
+
+	for rangeStr, count := range rangeCounts {
+		if count > 0 {
+			nonZeroRanges++
+		}
+		if count < minCount {
+			minCount = count
+		}
+		if count > maxCount {
+			maxCount = count
+		}
+		// More lenient threshold to reduce flakiness
+		assert.Greater(t, count, 30, "Range %s should have a reasonable number of subnets with randomization", rangeStr)
+	}
+
+	// All ranges should be used with randomization
+	assert.Equal(t, 3, nonZeroRanges, "All 3 ranges should have some subnets with randomization")
+
+	// Distribution shouldn't be too skewed (max-min spread should be reasonable)
+	spread := maxCount - minCount
+	assert.Less(t, spread, 150, "Distribution spread (%d) should be reasonable, not too skewed", spread)
+
+	t.Logf("Distribution spread: min=%d, max=%d, spread=%d", minCount, maxCount, spread)
+}
+
+func TestRandomizedRangeSelection(t *testing.T) {
+	// Test multiple runs to verify range selection is randomized
+	rangeFirstSelected := map[string]int{
+		"192.168.0.0/16": 0,
+		"172.16.0.0/12":  0,
+		"10.0.0.0/8":     0,
+	}
+
+	// Run 30 tests and see which range gets the first subnet
+	for run := 0; run < 30; run++ {
+		subnet, _, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, 24)
+		assert.NoError(t, err)
+		assert.NotNil(t, subnet)
+
+		// Determine which range this first subnet came from
+		for _, rng := range privateRanges {
+			if rng.network.Contains(subnet.IP) {
+				rangeFirstSelected[rng.network.String()]++
+				break
+			}
+		}
+	}
+
+	t.Logf("First subnet selections across ranges:")
+	for rangeStr, count := range rangeFirstSelected {
+		t.Logf("  %s: %d times selected first", rangeStr, count)
+	}
+
+	// With randomization, each range should be selected first at least once in 30 runs
+	// (this has a very small chance of failing due to randomness, but very unlikely)
+	totalSelections := 0
+	for _, count := range rangeFirstSelected {
+		totalSelections += count
+	}
+	assert.Equal(t, 30, totalSelections, "Should have 30 total selections")
+
+	// Each range should be selected at least a few times (not zero)
+	nonZeroRanges := 0
+	for _, count := range rangeFirstSelected {
+		if count > 0 {
+			nonZeroRanges++
+		}
+	}
+	assert.GreaterOrEqual(t, nonZeroRanges, 2, "At least 2 ranges should be selected first across 30 runs")
+}
+
+func TestPrefixLengthValidation(t *testing.T) {
+	testCases := []struct {
+		prefixLen     int
+		shouldSucceed bool
+		description   string
+	}{
+		{8, false, "/8 should be rejected (impossible to generate)"},
+		{9, true, "/9 should be accepted (can fit in 10.0.0.0/8)"},
+		{12, true, "/12 should be accepted"},
+		{16, true, "/16 should be accepted"},
+		{24, true, "/24 should be accepted"},
+		{30, true, "/30 should be accepted"},
+		{31, false, "/31 should be rejected (too small)"},
+		{32, false, "/32 should be rejected (host address)"},
+		{7, false, "/7 should be rejected (too large)"},
+		{0, false, "/0 should be rejected"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			subnet, gateway, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, tc.prefixLen)
+
+			if tc.shouldSucceed {
+				assert.NoError(t, err, "Should succeed for prefix /%d", tc.prefixLen)
+				assert.NotNil(t, subnet, "Subnet should not be nil for prefix /%d", tc.prefixLen)
+				assert.NotNil(t, gateway, "Gateway should not be nil for prefix /%d", tc.prefixLen)
+
+				// Verify the generated subnet has the correct prefix length
+				ones, _ := subnet.Mask.Size()
+				assert.Equal(t, tc.prefixLen, ones, "Generated subnet should have prefix /%d", tc.prefixLen)
+			} else {
+				assert.Error(t, err, "Should fail for prefix /%d", tc.prefixLen)
+				assert.Nil(t, subnet, "Subnet should be nil for invalid prefix /%d", tc.prefixLen)
+				assert.Nil(t, gateway, "Gateway should be nil for invalid prefix /%d", tc.prefixLen)
+			}
+		})
+	}
+}
+
+func TestProductionValidationBoundaries(t *testing.T) {
+	// Test specifically the boundary cases for the 9-30 validation range
+	testCases := []struct {
+		prefixLen int
+		shouldErr bool
+		errMsg    string
+	}{
+		{8, true, "must be between 9 and 30"},  // Just below minimum
+		{9, false, ""},                         // Minimum allowed
+		{30, false, ""},                        // Maximum allowed
+		{31, true, "must be between 9 and 30"}, // Just above maximum
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("prefix_%d", tc.prefixLen), func(t *testing.T) {
+			_, _, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, tc.prefixLen)
+
+			if tc.shouldErr {
+				assert.Error(t, err, "Should reject prefix /%d", tc.prefixLen)
+				assert.Contains(t, err.Error(), tc.errMsg, "Error message should contain expected text")
+			} else {
+				assert.NoError(t, err, "Should accept prefix /%d", tc.prefixLen)
+			}
+		})
+	}
+}
+
+func TestPrefixLengthRangeCompatibility(t *testing.T) {
+	// Test that different prefix lengths work with their compatible ranges
+	testCases := []struct {
+		prefixLen      int
+		expectedRanges []string // Which ranges should be able to generate this prefix
+		description    string
+	}{
+		{9, []string{"10.0.0.0/8"}, "/9 can only fit in 10.0.0.0/8"},
+		{12, []string{"10.0.0.0/8"}, "/12 can only fit in 10.0.0.0/8"},
+		{13, []string{"10.0.0.0/8", "172.16.0.0/12"}, "/13 can fit in 10.0.0.0/8 and 172.16.0.0/12"},
+		{17, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, "/17 can fit in all ranges"},
+		{24, []string{"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}, "/24 can fit in all ranges"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.description, func(t *testing.T) {
+			// Generate several subnets to test range distribution
+			rangesSeen := make(map[string]bool)
+
+			for i := 0; i < 10; i++ {
+				subnet, gateway, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, tc.prefixLen)
+				assert.NoError(t, err, "Should generate /%d subnet", tc.prefixLen)
+				assert.NotNil(t, subnet)
+				assert.NotNil(t, gateway)
+
+				// Verify prefix length
+				ones, _ := subnet.Mask.Size()
+				assert.Equal(t, tc.prefixLen, ones)
+
+				// Track which range this subnet came from
+				for _, rng := range privateRanges {
+					if rng.network.Contains(subnet.IP) {
+						rangesSeen[rng.network.String()] = true
+						break
+					}
+				}
+			}
+
+			// Verify only expected ranges were used
+			for rangeStr := range rangesSeen {
+				found := false
+				for _, expectedRange := range tc.expectedRanges {
+					if rangeStr == expectedRange {
+						found = true
+						break
+					}
+				}
+				assert.True(t, found, "Subnet from unexpected range %s for prefix /%d", rangeStr, tc.prefixLen)
+			}
+
+			t.Logf("Prefix /%d used ranges: %d of %d expected", tc.prefixLen, len(rangesSeen), len(tc.expectedRanges))
+		})
+	}
+}
+
+func TestDeterministicRandomGeneration(t *testing.T) {
+	// Save original RNG and restore at end
+	rngMu.Lock()
+	originalRNG := rng
+	rngMu.Unlock()
+
+	defer func() {
+		rngMu.Lock()
+		rng = originalRNG
+		rngMu.Unlock()
+	}()
+
+	// Use a seeded RNG for deterministic results
+	rngMu.Lock()
+	rng = rand.New(rand.NewSource(42))
+	rngMu.Unlock()
+
+	// Generate subnets with deterministic seed
+	var firstRunSubnets []string
+	for i := 0; i < 10; i++ {
+		subnet, _, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, 24)
+		assert.NoError(t, err)
+		firstRunSubnets = append(firstRunSubnets, subnet.String())
+	}
+
+	// Reset to same seed
+	rngMu.Lock()
+	rng = rand.New(rand.NewSource(42))
+	rngMu.Unlock()
+
+	// Generate again - should get identical results
+	var secondRunSubnets []string
+	for i := 0; i < 10; i++ {
+		subnet, _, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, 24)
+		assert.NoError(t, err)
+		secondRunSubnets = append(secondRunSubnets, subnet.String())
+	}
+
+	// Results should be identical
+	assert.Equal(t, firstRunSubnets, secondRunSubnets, "Deterministic generation should produce identical results")
+
+	t.Logf("Deterministic subnets: %v", firstRunSubnets)
+}
+
+func TestPerformanceOptimization(t *testing.T) {
+	// Test that the direct IPNet construction works correctly
+	// by generating many subnets and checking they're all valid
+	for i := 0; i < 1000; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet([]*net.IPNet{}, 24)
+		assert.NoError(t, err, "Generation %d should succeed", i)
+		assert.NotNil(t, subnet, "Subnet %d should not be nil", i)
+		assert.NotNil(t, gateway, "Gateway %d should not be nil", i)
+
+		// Verify subnet structure is correct
+		ones, bits := subnet.Mask.Size()
+		assert.Equal(t, 24, ones, "Subnet %d should have /24 prefix", i)
+		assert.Equal(t, 32, bits, "Subnet %d should be IPv4", i)
+
+		// Verify IP is properly masked to subnet boundary
+		expectedIP := subnet.IP.Mask(subnet.Mask)
+		assert.True(t, subnet.IP.Equal(expectedIP), "Subnet %d IP should be properly masked", i)
+
+		// Verify gateway is first IP in subnet
+		subnetIP := subnet.IP.To4()
+		gatewayIP := (*gateway).To4()
+		assert.Equal(t, subnetIP[0], gatewayIP[0], "Gateway %d first octet should match subnet", i)
+		assert.Equal(t, subnetIP[1], gatewayIP[1], "Gateway %d second octet should match subnet", i)
+		assert.Equal(t, subnetIP[2], gatewayIP[2], "Gateway %d third octet should match subnet", i)
+		assert.Equal(t, byte(1), gatewayIP[3], "Gateway %d should be .1", i)
+	}
+
+	t.Logf("Successfully verified 1000 generated subnets have correct structure")
+}
+
+func TestSubnetGenerationWithMixed24Networks(t *testing.T) {
+	// Start with some existing /24 networks in different ranges
+	existingNetworks := []*net.IPNet{}
+
+	// Add some 192.168.x.0/24 networks
+	for i := 0; i < 10; i++ {
+		_, network, _ := net.ParseCIDR(fmt.Sprintf("192.168.%d.0/24", i))
+		existingNetworks = append(existingNetworks, network)
+	}
+
+	// Add some 172.16.x.0/24 networks
+	for i := 0; i < 10; i++ {
+		_, network, _ := net.ParseCIDR(fmt.Sprintf("172.16.%d.0/24", i))
+		existingNetworks = append(existingNetworks, network)
+	}
+
+	// Add some 10.x.0.0/24 networks
+	for i := 0; i < 10; i++ {
+		_, network, _ := net.ParseCIDR(fmt.Sprintf("10.%d.0.0/24", i))
+		existingNetworks = append(existingNetworks, network)
+	}
+
+	t.Logf("Starting with %d existing /24 networks", len(existingNetworks))
+
+	// Now generate 100 more non-overlapping subnets
+	generatedCount := 0
+	for i := 0; i < 100; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+		assert.NoError(t, err, "Failed to generate subnet %d with %d existing networks", i+1, len(existingNetworks))
+		assert.NotNil(t, subnet)
+		assert.NotNil(t, gateway)
+
+		// Verify no overlap
+		for _, existing := range existingNetworks {
+			assert.False(t, overlaps(existing, subnet), "Generated subnet %s overlaps with existing %s", subnet.String(), existing.String())
+		}
+
+		existingNetworks = append(existingNetworks, subnet)
+		generatedCount++
+	}
+
+	assert.Equal(t, 100, generatedCount, "Should have generated 100 additional subnets")
+	t.Logf("Successfully generated %d additional /24 subnets", generatedCount)
+}
+
+func TestSubnetCapacityCalculation(t *testing.T) {
+	// Test that we can generate many /24 subnets without exhausting capacity
+	testCases := []struct {
+		name             string
+		expectedCapacity int
+	}{
+		{"small_set", 100},
+		{"medium_set", 500},
+		{"large_set", 1000},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			var existingNetworks []*net.IPNet
+			generatedCount := 0
+
+			for i := 0; i < tc.expectedCapacity; i++ {
+				subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+				if err != nil {
+					t.Logf("Failed to generate subnet %d: %v", i+1, err)
+					break
+				}
+
+				assert.NotNil(t, subnet)
+				assert.NotNil(t, gateway)
+
+				// Verify subnet is in private ranges
+				isInPrivateRange := false
+				for _, rng := range privateRanges {
+					if rng.network.Contains(subnet.IP) {
+						isInPrivateRange = true
+						break
+					}
+				}
+				assert.True(t, isInPrivateRange, "Generated subnet %s should be in private ranges", subnet.String())
+
+				existingNetworks = append(existingNetworks, subnet)
+				generatedCount++
+			}
+
+			t.Logf("Generated %d/%d subnets", generatedCount, tc.expectedCapacity)
+			assert.Equal(t, tc.expectedCapacity, generatedCount, "Should generate expected number of subnets")
+		})
+	}
+}
+
+func TestExhaustSingleRange(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping exhaustive test in short mode")
+	}
+
+	// Fill up the 192.168.0.0/16 range completely (256 /24 subnets)
+	var existingNetworks []*net.IPNet
+
+	// Generate all 256 possible /24 subnets in 192.168.0.0/16
+	for i := 0; i < 256; i++ {
+		_, network, _ := net.ParseCIDR(fmt.Sprintf("192.168.%d.0/24", i))
+		existingNetworks = append(existingNetworks, network)
+	}
+
+	t.Logf("Filled 192.168.0.0/16 with %d subnets", len(existingNetworks))
+
+	// Pre-parse ranges once
+	_, range192, _ := net.ParseCIDR("192.168.0.0/16")
+	_, range172, _ := net.ParseCIDR("172.16.0.0/12")
+	_, range10, _ := net.ParseCIDR("10.0.0.0/8")
+
+	// Now generate more - should use other ranges
+	for i := 0; i < 100; i++ {
+		subnet, gateway, err := GenerateNonOverlappingIPv4Subnet(existingNetworks, 24)
+		assert.NoError(t, err, "Should be able to generate subnet %d after exhausting 192.168.0.0/16", i+1)
+		assert.NotNil(t, subnet)
+		assert.NotNil(t, gateway)
+
+		// Should not be in 192.168.0.0/16
+		assert.False(t, range192.Contains(subnet.IP), "Subnet %s should not be in exhausted 192.168.0.0/16 range", subnet.String())
+
+		// Should be in 172.16.0.0/12 or 10.0.0.0/8
+		inOtherRange := range172.Contains(subnet.IP) || range10.Contains(subnet.IP)
+		assert.True(t, inOtherRange, "Subnet %s should be in 172.16.0.0/12 or 10.0.0.0/8", subnet.String())
+
+		existingNetworks = append(existingNetworks, subnet)
+	}
+
+	t.Logf("Successfully generated 100 additional subnets after exhausting 192.168.0.0/16")
 }
 
 func TestOverlaps(t *testing.T) {

@@ -4,7 +4,15 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
 )
+
+// rng is the random number generator used for subnet selection.
+// Can be overridden in tests for deterministic behavior.
+var rng = rand.New(rand.NewSource(rand.Int63()))
+
+// rngMu protects concurrent access to rng
+var rngMu sync.Mutex
 
 var privateRanges = []struct {
 	network *net.IPNet
@@ -32,48 +40,59 @@ func generateRandomSubnet(parent *net.IPNet, prefixLen int) *net.IPNet {
 	parentIP := parent.IP.Mask(parent.Mask)
 	parentOnes, _ := parent.Mask.Size()
 
-	hostBits := 32 - prefixLen
-	if hostBits < 0 {
+	// Check if the requested prefix length is valid
+	if prefixLen <= parentOnes {
 		return nil
 	}
+
+	// Calculate how many subnets of the requested size can fit in the parent
+	subnetBits := prefixLen - parentOnes
+	maxSubnets := uint32(1) << subnetBits
+
+	// Generate random subnet index
+	rngMu.Lock()
+	subnetIndex := uint32(rng.Intn(int(maxSubnets)))
+	rngMu.Unlock()
 
 	// Convert parent IP to 32-bit big-endian integer
 	parentInt := uint32(parentIP[0])<<24 | uint32(parentIP[1])<<16 | uint32(parentIP[2])<<8 | uint32(parentIP[3])
 
-	// Mask to parent prefix to get the base network
-	parentMask := ^uint32(0) << (32 - parentOnes)
-	baseNetwork := parentInt & parentMask
+	// Calculate the size of each subnet in terms of IP addresses
+	subnetSize := uint32(1) << (32 - prefixLen)
 
-	// Generate random offset within the available host bits for the new prefix
-	maxOffset := uint32(1) << hostBits
-	offset := uint32(rand.Intn(int(maxOffset)))
+	// Calculate the starting IP of the chosen subnet
+	newIP := parentInt + (subnetIndex * subnetSize)
 
-	// Add offset to base network
-	newIP := baseNetwork + offset
-
-	// Convert back to 4 bytes
-	randBytes := []byte{
+	// Convert back to 4 bytes and build IPNet directly
+	ipBytes := net.IP{
 		byte(newIP >> 24),
 		byte(newIP >> 16),
 		byte(newIP >> 8),
 		byte(newIP),
 	}
-
-	newSubnet := fmt.Sprintf("%s/%d", net.IP(randBytes).String(), prefixLen)
-	_, result, _ := net.ParseCIDR(newSubnet)
-	return result
+	mask := net.CIDRMask(prefixLen, 32)
+	return &net.IPNet{IP: ipBytes.Mask(mask), Mask: mask}
 }
 
 // GenerateNonOverlappingIPv4Subnet generates a non-overlapping ipv4 subnet with the given prefix size within the given range.
 func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen int) (*net.IPNet, *net.IP, error) {
 	// Validate prefix length is within acceptable range
-	if prefixLen < 8 || prefixLen > 30 {
-		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 8 and 30", prefixLen)
+	if prefixLen < 9 || prefixLen > 30 {
+		return nil, nil, fmt.Errorf("invalid prefix length %d: must be between 9 and 30", prefixLen)
 	}
 
-	for _, rng := range privateRanges {
+	// Create a shuffled copy of private ranges for better distribution
+	ranges := make([]struct{ network *net.IPNet }, len(privateRanges))
+	copy(ranges, privateRanges)
+	rngMu.Lock()
+	rng.Shuffle(len(ranges), func(i, j int) {
+		ranges[i], ranges[j] = ranges[j], ranges[i]
+	})
+	rngMu.Unlock()
+
+	for _, rangeSpec := range ranges {
 		for range 1000 { // Try 1000 times to find non-overlapping subnet
-			candidate := generateRandomSubnet(rng.network, prefixLen)
+			candidate := generateRandomSubnet(rangeSpec.network, prefixLen)
 			if candidate != nil {
 				hasOverlap := false
 				for _, existing := range existingNetworks {
@@ -83,10 +102,9 @@ func GenerateNonOverlappingIPv4Subnet(existingNetworks []*net.IPNet, prefixLen i
 					}
 				}
 				if !hasOverlap {
-					network := candidate.IP.To4()
 					ip := make(net.IP, 4)
-					copy(ip, network)
-					ip[3] = 0x1 // make the gateway the first ip and copy since we have a shared copy we need to change
+					copy(ip, candidate.IP.To4())
+					ip[3] = 0x1 // make the gateway the first ip
 					return candidate, &ip, nil
 				}
 			}

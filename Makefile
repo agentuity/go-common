@@ -1,4 +1,4 @@
-.PHONY: all lint test vet tidy vuln fuzz gen
+.PHONY: all lint test vet tidy vuln fuzz gen bench
 
 all: test
 
@@ -22,6 +22,7 @@ test: tidy lint vet vuln
 	@echo "testing..."
 	@go test -v -count=1 -race ./...
 	@make fuzz
+	@make bench
 
 fuzz:
 	@echo "fuzzing..."
@@ -32,6 +33,10 @@ fuzz:
 	@go test -fuzz=FuzzStreamingPatterns ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzPartialCorruption ./crypto -fuzztime=3s
 	@go test -fuzz=FuzzDifferentKeyPairs ./crypto -fuzztime=3s
+
+bench:
+	@echo "benchmarking..."
+	@go test -bench=. ./...
 
 gen:
 	@echo "generating..."

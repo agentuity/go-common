@@ -66,11 +66,12 @@ func WithHeaders(headers http.Header) Option {
 
 func new(ctx context.Context, oltpServerURL string, authToken string, serviceName string, opts ...Option) (context.Context, logger.Logger, ShutdownFunc, error) {
 	// Apply options
-	cfg := &config{
-		timeout: time.Second * 10,
-	}
+	cfg := &config{}
 	for _, opt := range opts {
 		opt(cfg)
+	}
+	if cfg.timeout <= 0 {
+		cfg.timeout = 10 * time.Second
 	}
 	// parse oltpURL
 	oltpURL, err := url.Parse(oltpServerURL)
@@ -112,10 +113,13 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	// Create HTTP client with custom dialer if provided
 	var httpClient *http.Client
 	if cfg.dialer != nil {
-		transport := &http.Transport{
-			DialContext: cfg.dialer.DialContext,
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = cfg.dialer.DialContext
+		transport.ForceAttemptHTTP2 = true
+		httpClient = &http.Client{
+			Transport: transport,
+			Timeout:   cfg.timeout,
 		}
-		httpClient = &http.Client{Transport: transport}
 	}
 
 	// Setup log exporter

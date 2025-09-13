@@ -4,6 +4,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestStreamingSignatureWithProxyDirector(t *testing.T) {
@@ -42,13 +44,12 @@ func TestStreamingSignatureWithProxyDirector(t *testing.T) {
 		t.Fatal("Expected bodyHasher to be set in signature context")
 	}
 
-	// Verify signature headers are set
+	// Verify signature metadata headers are set
 	expectedHeaders := []string{
 		"X-Signature-Alg",
 		"X-Signature-KeyID",
 		"X-Signature-Timestamp",
 		"X-Signature-Nonce",
-		"Trailer",
 	}
 	for _, header := range expectedHeaders {
 		if req.Header.Get(header) == "" {
@@ -56,9 +57,9 @@ func TestStreamingSignatureWithProxyDirector(t *testing.T) {
 		}
 	}
 
-	// Verify trailer header is set correctly
-	if req.Header.Get("Trailer") != "Signature" {
-		t.Errorf("Expected Trailer header to be 'Signature', got '%s'", req.Header.Get("Trailer"))
+	// Verify req.Body is non-nil after wrapping
+	if req.Body == nil {
+		t.Error("Expected req.Body to be non-nil after preparation")
 	}
 
 	// Step 2: Simulate what happens during transport - read the body
@@ -315,4 +316,467 @@ func TestSignatureContextIntegrity(t *testing.T) {
 	}
 
 	t.Log("✓ Signature integrity test passed - tampered body correctly rejected")
+}
+
+func TestPrepareStreamingWithNilBody(t *testing.T) {
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+
+	// Create request with nil body (common for GET requests)
+	req, err := http.NewRequest("GET", "http://example.com/test", nil)
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	// Ensure body is nil
+	if req.Body != nil {
+		t.Fatal("Expected req.Body to be nil initially")
+	}
+
+	// This should not panic and should handle nil body gracefully
+	sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+	if err != nil {
+		t.Fatalf("Failed to prepare request with nil body: %v", err)
+	}
+
+	// After preparation, body should be non-nil
+	if req.Body == nil {
+		t.Fatal("Expected req.Body to be non-nil after preparation")
+	}
+
+	// Should be able to read from the body without panicking
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Failed to read body: %v", err)
+	}
+	req.Body.Close()
+
+	// Body should be empty for a nil original body
+	if len(body) != 0 {
+		t.Errorf("Expected empty body, got %d bytes", len(body))
+	}
+
+	// Should be able to complete signature
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Request:    req,
+	}
+
+	err = CompleteHTTPRequestSignature(privateKey, req, sigCtx, resp)
+	if err != nil {
+		t.Fatalf("Failed to complete signature with nil body: %v", err)
+	}
+
+	t.Log("✓ Nil body handling test passed - no panic, signature completed successfully")
+}
+
+func TestVerifyHTTPResponseSignatureWithBody(t *testing.T) {
+	// Generate test keys
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+	publicKey := &privateKey.PublicKey
+
+	testBody := "Test body for decoupled verification"
+
+	// Create request and prepare for streaming
+	req, err := http.NewRequest("POST", "http://example.com/test", strings.NewReader(testBody))
+	if err != nil {
+		t.Fatalf("Failed to create request: %v", err)
+	}
+
+	sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+	if err != nil {
+		t.Fatalf("Failed to prepare streaming: %v", err)
+	}
+
+	// Simulate streaming the body
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("Failed to read body: %v", err)
+	}
+	req.Body.Close()
+
+	// Create response and complete signature
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Request:    req,
+	}
+
+	err = CompleteHTTPRequestSignature(privateKey, req, sigCtx, resp)
+	if err != nil {
+		t.Fatalf("Failed to complete signature: %v", err)
+	}
+
+	// Parse timestamp from signature context for verification
+	timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.timestamp)
+	if err != nil {
+		t.Fatalf("Failed to parse timestamp: %v", err)
+	}
+
+	// Now verify using the decoupled function - this should work without SignatureContext
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		req,
+		resp,
+		strings.NewReader(string(body)), // Independent body reader for verifier
+		timestamp,
+		sigCtx.nonce,
+		nil, // no nonce check
+	)
+	if err != nil {
+		t.Fatalf("Failed to verify signature with decoupled function: %v", err)
+	}
+
+	// Test with wrong body should fail
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		req,
+		resp,
+		strings.NewReader("Wrong body content"),
+		timestamp,
+		sigCtx.nonce,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("Expected verification to fail with wrong body content")
+	}
+
+	// Test with wrong timestamp should fail
+	wrongTime := timestamp.Add(2 * time.Minute) // Outside acceptable skew
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		req,
+		resp,
+		strings.NewReader(string(body)),
+		wrongTime,
+		sigCtx.nonce,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("Expected verification to fail with wrong timestamp")
+	}
+
+	// Test with wrong nonce should fail
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		req,
+		resp,
+		strings.NewReader(string(body)),
+		timestamp,
+		"wrong-nonce",
+		nil,
+	)
+	if err == nil {
+		t.Fatal("Expected verification to fail with wrong nonce")
+	}
+
+	t.Log("✓ Decoupled signature verification test passed - verifier independent from signer context")
+}
+
+func TestStreamingSignatureEndToEnd(t *testing.T) {
+	// Generate test keys
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+	publicKey := &privateKey.PublicKey
+
+	testBody := "End-to-end test body for streaming signature validation"
+
+	// This will store the validation result from the backend
+	var backendValidationError error
+	var receivedTimestamp time.Time
+	var receivedNonce string
+
+	// Create backend server that validates signatures
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Read the request body
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			backendValidationError = fmt.Errorf("failed to read body: %w", err)
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+
+		// Extract signature metadata from headers
+		timestampStr := r.Header.Get("X-Signature-Timestamp")
+		nonce := r.Header.Get("X-Signature-Nonce")
+
+		if timestampStr == "" || nonce == "" {
+			backendValidationError = fmt.Errorf("missing signature metadata")
+			http.Error(w, "Missing signature metadata", http.StatusBadRequest)
+			return
+		}
+
+		// Parse timestamp
+		timestamp, err := time.Parse(time.RFC3339Nano, timestampStr)
+		if err != nil {
+			backendValidationError = fmt.Errorf("invalid timestamp: %w", err)
+			http.Error(w, "Invalid timestamp", http.StatusBadRequest)
+			return
+		}
+
+		// Store for verification after response
+		receivedTimestamp = timestamp
+		receivedNonce = nonce
+
+		t.Logf("Backend received body: %s", string(body))
+		t.Logf("Backend received timestamp: %s", timestampStr)
+		t.Logf("Backend received nonce: %s", nonce)
+
+		w.Header().Set("X-Body-Length", fmt.Sprintf("%d", len(body)))
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Backend processed successfully"))
+	}))
+	defer backend.Close()
+
+	backendURL, _ := url.Parse(backend.URL)
+	var sigCtx *SignatureContext
+	var capturedResp *http.Response
+
+	// Create proxy that adds streaming signatures
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			// Direct to backend
+			req.URL.Scheme = backendURL.Scheme
+			req.URL.Host = backendURL.Host
+
+			// Prepare for streaming signature
+			var err error
+			sigCtx, err = PrepareHTTPRequestForStreaming(privateKey, req)
+			if err != nil {
+				t.Errorf("Failed to prepare streaming signature: %v", err)
+				return
+			}
+
+			t.Logf("Proxy prepared signature with timestamp: %s, nonce: %s", sigCtx.timestamp, sigCtx.nonce)
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			// Complete the signature and capture response
+			capturedResp = resp
+			if sigCtx != nil {
+				err := CompleteHTTPRequestSignature(privateKey, resp.Request, sigCtx, resp)
+				if err != nil {
+					t.Logf("Error completing signature: %v", err)
+					return err
+				}
+				t.Logf("Proxy completed signature in trailer: %s", resp.Trailer.Get("Signature"))
+			}
+			return nil
+		},
+	}
+
+	// Create proxy server
+	proxyServer := httptest.NewServer(proxy)
+	defer proxyServer.Close()
+
+	// Make request through proxy
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", proxyServer.URL+"/test", strings.NewReader(testBody))
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Failed to make request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response to ensure trailers are populated
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+
+	t.Logf("Response status: %d", resp.StatusCode)
+	t.Logf("Response body: %s", string(responseBody))
+	t.Logf("Response trailers: %v", resp.Trailer)
+
+	// Check if backend validation had any errors
+	if backendValidationError != nil {
+		t.Fatalf("Backend validation failed: %v", backendValidationError)
+	}
+
+	// Verify response was successful
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200 OK, got %d", resp.StatusCode)
+	}
+
+	// Now validate the signature using our decoupled verification function
+	if capturedResp == nil || sigCtx == nil {
+		t.Fatal("Failed to capture response or signature context")
+	}
+
+	// Create a fresh request for verification (simulating what the backend would do)
+	verifyReq, _ := http.NewRequest("POST", "/test", nil)
+
+	// Copy signature headers from the original request that went through the proxy
+	originalReq := capturedResp.Request
+	verifyReq.Header.Set("X-Signature-Alg", originalReq.Header.Get("X-Signature-Alg"))
+	verifyReq.Header.Set("X-Signature-KeyID", originalReq.Header.Get("X-Signature-KeyID"))
+	verifyReq.Header.Set("X-Signature-Timestamp", originalReq.Header.Get("X-Signature-Timestamp"))
+	verifyReq.Header.Set("X-Signature-Nonce", originalReq.Header.Get("X-Signature-Nonce"))
+
+	t.Logf("Verification headers: Alg=%s, KeyID=%s, Timestamp=%s, Nonce=%s",
+		verifyReq.Header.Get("X-Signature-Alg"),
+		verifyReq.Header.Get("X-Signature-KeyID"),
+		verifyReq.Header.Get("X-Signature-Timestamp"),
+		verifyReq.Header.Get("X-Signature-Nonce"))
+
+	// Use the decoupled verification function
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		verifyReq,
+		capturedResp,
+		strings.NewReader(testBody), // Fresh body reader for verification
+		receivedTimestamp,
+		receivedNonce,
+		nil, // no nonce check function
+	)
+
+	if err != nil {
+		t.Fatalf("Signature verification failed: %v", err)
+	}
+
+	t.Log("✓ End-to-end streaming signature test passed - complete flow validated!")
+}
+
+func TestBackendSignatureValidation(t *testing.T) {
+	// Generate test keys
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+	publicKey := &privateKey.PublicKey
+
+	testBody := "Backend validation test body"
+	var validationSuccessful bool
+
+	// Create backend server that validates signatures itself
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Store original body for later signature verification
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "Failed to read body", http.StatusBadRequest)
+			return
+		}
+
+		// Extract signature metadata
+		timestampStr := r.Header.Get("X-Signature-Timestamp")
+		nonce := r.Header.Get("X-Signature-Nonce")
+
+		if timestampStr == "" || nonce == "" {
+			http.Error(w, "Missing signature metadata", http.StatusBadRequest)
+			return
+		}
+
+		_, err = time.Parse(time.RFC3339Nano, timestampStr)
+		if err != nil {
+			http.Error(w, "Invalid timestamp", http.StatusBadRequest)
+			return
+		}
+
+		t.Logf("Backend validating signature for body: %s", string(body))
+
+		// Send successful response first
+		w.Header().Set("X-Validation", "pending")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("Response sent, signature validation will happen via trailer"))
+
+		// Backend successfully processed the request
+		// Signature validation will be done after response completion
+		validationSuccessful = true
+	}))
+	defer backend.Close()
+
+	backendURL, _ := url.Parse(backend.URL)
+	var sigCtx *SignatureContext
+	var finalResp *http.Response
+
+	// Create signing proxy
+	proxy := &httputil.ReverseProxy{
+		Director: func(req *http.Request) {
+			req.URL.Scheme = backendURL.Scheme
+			req.URL.Host = backendURL.Host
+
+			var err error
+			sigCtx, err = PrepareHTTPRequestForStreaming(privateKey, req)
+			if err != nil {
+				t.Errorf("Failed to prepare streaming: %v", err)
+			}
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			finalResp = resp
+			if sigCtx != nil {
+				return CompleteHTTPRequestSignature(privateKey, resp.Request, sigCtx, resp)
+			}
+			return nil
+		},
+	}
+
+	proxyServer := httptest.NewServer(proxy)
+	defer proxyServer.Close()
+
+	// Make request
+	client := &http.Client{}
+	req, _ := http.NewRequest("POST", proxyServer.URL, strings.NewReader(testBody))
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("Failed to read response: %v", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("Expected 200, got %d", resp.StatusCode)
+	}
+
+	t.Logf("Response: %s", string(responseBody))
+
+	// Now simulate what the backend would do - validate the signature after response
+	if finalResp == nil || sigCtx == nil {
+		t.Fatal("Missing response or signature context")
+	}
+
+	// Parse the timestamp that was received by the backend
+	timestamp, _ := time.Parse(time.RFC3339Nano, sigCtx.timestamp)
+
+	// Create verification request as backend would see it
+	backendReq, _ := http.NewRequest("POST", "/", nil)
+	backendReq.Header.Set("X-Signature-Alg", finalResp.Request.Header.Get("X-Signature-Alg"))
+	backendReq.Header.Set("X-Signature-KeyID", finalResp.Request.Header.Get("X-Signature-KeyID"))
+	backendReq.Header.Set("X-Signature-Timestamp", finalResp.Request.Header.Get("X-Signature-Timestamp"))
+	backendReq.Header.Set("X-Signature-Nonce", finalResp.Request.Header.Get("X-Signature-Nonce"))
+
+	// Backend validates signature using the decoupled function
+	err = VerifyHTTPResponseSignatureWithBody(
+		publicKey,
+		backendReq,
+		finalResp,
+		strings.NewReader(testBody), // Backend's copy of the body
+		timestamp,
+		sigCtx.nonce,
+		nil,
+	)
+
+	if err != nil {
+		t.Fatalf("Backend signature validation failed: %v", err)
+	}
+
+	if !validationSuccessful {
+		t.Fatal("Backend processing was not successful")
+	}
+
+	t.Log("✓ Backend signature validation test passed - server-side validation working!")
 }

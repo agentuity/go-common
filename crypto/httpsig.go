@@ -125,19 +125,24 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 		return nil, fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
+	// Handle nil req.Body by treating it as http.NoBody
+	body := req.Body
+	if body == nil {
+		body = http.NoBody
+	}
+
 	// Wrap the request body with a hashing reader
 	bodyHasher := &bodyHashingReader{
-		rc: req.Body,
+		rc: body,
 		h:  sha256.New(),
 	}
 	req.Body = bodyHasher
 
-	// Set signature metadata headers (signature will be added later via trailer)
+	// Set signature metadata headers (signature will be added later via response trailer)
 	req.Header.Set("X-Signature-Alg", "ecdsa-sha256")
 	req.Header.Set("X-Signature-KeyID", keyID)
 	req.Header.Set("X-Signature-Timestamp", timestamp)
 	req.Header.Set("X-Signature-Nonce", nonce)
-	req.Header.Set("Trailer", "Signature")
 
 	return &SignatureContext{
 		bodyHasher: bodyHasher,
@@ -221,6 +226,38 @@ func VerifyHTTPResponseSignature(key *ecdsa.PublicKey, req *http.Request, resp *
 	return verifySignatureMetadata(req, ctx.timestamp, ctx.nonce, key, checkNonce)
 }
 
+// VerifyHTTPResponseSignatureWithBody verifies a signature from HTTP trailers without requiring SignatureContext.
+// This allows verification to be decoupled from signing by reading and hashing the body on the verifier side.
+func VerifyHTTPResponseSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, resp *http.Response, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
+	// Read and hash the body on the verifier side
+	bodyHash := sha256.New()
+	if _, err := io.Copy(bodyHash, bodyReader); err != nil {
+		return fmt.Errorf("failed to hash body: %w", err)
+	}
+
+	// Create signature hash using the computed body hash
+	timestampStr := timestamp.Format(time.RFC3339Nano)
+	hash := hashSignatureWithBodyHash(req, bodyHash.Sum(nil), timestampStr, nonce)
+
+	// Get signature from trailer
+	b64Sig := resp.Trailer.Get("Signature")
+	if b64Sig == "" {
+		return fmt.Errorf("missing signature in trailer")
+	}
+	sig, err := base64.StdEncoding.DecodeString(b64Sig)
+	if err != nil {
+		return err
+	}
+
+	// Verify signature
+	if !ecdsa.VerifyASN1(key, hash, sig) {
+		return fmt.Errorf("invalid signature")
+	}
+
+	// Verify metadata using the provided timestamp and nonce
+	return verifySignatureMetadataWithTime(req, timestamp, nonce, key, checkNonce)
+}
+
 // verifySignatureWithHash handles common verification logic when hash is already computed
 func verifySignatureWithHash(key *ecdsa.PublicKey, req *http.Request, hash []byte, checkNonce func(string) error) error {
 	timestamp := req.Header.Get("X-Signature-Timestamp")
@@ -274,6 +311,45 @@ func verifySignatureMetadata(req *http.Request, timestamp, nonce string, key *ec
 	}
 
 	if skew := time.Since(ts); skew < -time.Minute || skew > time.Minute {
+		return fmt.Errorf("timestamp outside acceptable skew")
+	}
+
+	if nonce == "" {
+		return fmt.Errorf("missing nonce")
+	}
+	if checkNonce == nil {
+		checkNonce = func(string) error { return nil }
+	}
+	if err := checkNonce(nonce); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// verifySignatureMetadataWithTime validates signature metadata using time.Time instead of string
+func verifySignatureMetadataWithTime(req *http.Request, timestamp time.Time, nonce string, key *ecdsa.PublicKey, checkNonce func(string) error) error {
+	// Validate algorithm
+	alg := req.Header.Get("X-Signature-Alg")
+	if alg != "ecdsa-sha256" {
+		return fmt.Errorf("unsupported signature algorithm: %q", alg)
+	}
+
+	// Validate key ID
+	kid := req.Header.Get("X-Signature-KeyID")
+	if kid == "" {
+		return fmt.Errorf("missing key id")
+	}
+
+	// Bind provided key to header to prevent mismatches
+	if expected, err := keyIDfromECDSAPublic(key); err != nil {
+		return err
+	} else if kid != expected {
+		return fmt.Errorf("key id mismatch")
+	}
+
+	// Enforce timestamp skew using the provided time.Time
+	if skew := time.Since(timestamp); skew < -time.Minute || skew > time.Minute {
 		return fmt.Errorf("timestamp outside acceptable skew")
 	}
 

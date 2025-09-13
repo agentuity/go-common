@@ -12,6 +12,7 @@ import (
 	"hash"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	gocstring "github.com/agentuity/go-common/string"
@@ -184,6 +185,20 @@ func CompleteHTTPRequestSignature(key *ecdsa.PrivateKey, req *http.Request, ctx 
 // CompleteHTTPRequestSignatureToWriter completes the signature and writes it directly to a ResponseWriter.
 // This is for use in HTTP handlers where you have access to the ResponseWriter.
 func CompleteHTTPRequestSignatureToWriter(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, w http.ResponseWriter) error {
+	if ctx == nil || ctx.bodyHasher == nil {
+		return fmt.Errorf("signature context not initialized")
+	}
+	// Defensive: ensure the handler predeclared the trailer before WriteHeader/Write.
+	var declared bool
+	for _, v := range w.Header().Values("Trailer") {
+		if strings.Contains(v, "Signature") {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return fmt.Errorf("Signature trailer not declared; call w.Header().Add(\"Trailer\", \"Signature\") before WriteHeader")
+	}
 	bodyHash := ctx.bodyHasher.Sum()
 
 	// Create signature using the streamed body hash

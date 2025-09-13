@@ -62,7 +62,7 @@ func hashSignature(req *http.Request, body []byte, timestamp string, nonce strin
 	h := sha256.New()
 
 	addHash := func(label string, item string) {
-		h.Write(fmt.Appendf([]byte{}, "%s: %s\n", label, item))
+		fmt.Fprintf(h, "%s: %s\n", label, item)
 	}
 	addHash("method", req.Method)
 	addHash("uri", req.URL.RequestURI())
@@ -155,6 +155,9 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 // This should be called after the body has been fully read (e.g., in an HTTP transport's response handler).
 // The signature is set as an HTTP trailer.
 func CompleteHTTPRequestSignature(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, resp *http.Response) error {
+	if ctx == nil || ctx.bodyHasher == nil {
+		return fmt.Errorf("signature context not initialized")
+	}
 	bodyHash := ctx.bodyHasher.Sum()
 
 	// Create signature using the streamed body hash
@@ -170,8 +173,29 @@ func CompleteHTTPRequestSignature(key *ecdsa.PrivateKey, req *http.Request, ctx 
 	}
 	resp.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
 
-	// Announce signature trailer in response headers
-	resp.Header.Add("Trailer", "Signature")
+	// Announce signature trailer in response headers (ensure set before body is written)
+	if resp.Header.Get("Trailer") == "" {
+		resp.Header.Add("Trailer", "Signature")
+	}
+
+	return nil
+}
+
+// CompleteHTTPRequestSignatureToWriter completes the signature and writes it directly to a ResponseWriter.
+// This is for use in HTTP handlers where you have access to the ResponseWriter.
+func CompleteHTTPRequestSignatureToWriter(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, w http.ResponseWriter) error {
+	bodyHash := ctx.bodyHasher.Sum()
+
+	// Create signature using the streamed body hash
+	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
+	sig, err := ecdsa.SignASN1(rand.Reader, key, hash)
+	if err != nil {
+		return err
+	}
+
+	// Set signature as trailer on the ResponseWriter
+	// This must be called after the response body is written but before the handler returns
+	w.Header().Set("Signature", base64.StdEncoding.EncodeToString(sig))
 
 	return nil
 }
@@ -181,7 +205,7 @@ func hashSignatureWithBodyHash(req *http.Request, bodyHash []byte, timestamp str
 	h := sha256.New()
 
 	addHash := func(label string, item string) {
-		h.Write(fmt.Appendf([]byte{}, "%s: %s\n", label, item))
+		fmt.Fprintf(h, "%s: %s\n", label, item)
 	}
 	addHash("method", req.Method)
 	addHash("uri", req.URL.RequestURI())
@@ -300,6 +324,16 @@ func verifySignatureMetadata(req *http.Request, timestamp, nonce string, key *ec
 		return fmt.Errorf("key id mismatch")
 	}
 
+	if nonce == "" {
+		return fmt.Errorf("missing nonce")
+	}
+	if checkNonce == nil {
+		checkNonce = func(string) error { return nil }
+	}
+	if err := checkNonce(nonce); err != nil {
+		return err
+	}
+
 	if timestamp == "" {
 		return fmt.Errorf("missing timestamp")
 	}
@@ -312,16 +346,6 @@ func verifySignatureMetadata(req *http.Request, timestamp, nonce string, key *ec
 
 	if skew := time.Since(ts); skew < -time.Minute || skew > time.Minute {
 		return fmt.Errorf("timestamp outside acceptable skew")
-	}
-
-	if nonce == "" {
-		return fmt.Errorf("missing nonce")
-	}
-	if checkNonce == nil {
-		checkNonce = func(string) error { return nil }
-	}
-	if err := checkNonce(nonce); err != nil {
-		return err
 	}
 
 	return nil

@@ -49,8 +49,8 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 			if req.Trailer == nil {
 				t.Fatal("Request trailer not initialized")
 			}
-			if req.TransferEncoding[0] != "chunked" {
-				t.Fatal("Transfer encoding not set to chunked")
+			if req.Header.Get("Trailer") != "Signature" {
+				t.Fatal("Trailer header should announce Signature")
 			}
 			if req.ContentLength != -1 {
 				t.Fatal("Content length should be -1")
@@ -77,7 +77,7 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 			t.Logf("Signature created: %s...", signature[:min(32, len(signature))])
 
 			// Verify signature using our verification function
-			timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.timestamp)
+			timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
 			if err != nil {
 				t.Fatalf("Failed to parse timestamp: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 				req,
 				strings.NewReader(tc.body),
 				timestamp,
-				sigCtx.nonce,
+				sigCtx.Nonce(),
 				nil,
 			)
 			if err != nil {
@@ -116,6 +116,7 @@ func TestTrailerBasedHTTPSignatureEndToEnd(t *testing.T) {
 		t.Logf("Server received request: %s %s", r.Method, r.URL.Path)
 		t.Logf("Transfer-Encoding: %v", r.TransferEncoding)
 		t.Logf("Content-Length: %d", r.ContentLength)
+		t.Logf("Trailer header announced: %v", r.Header.Get("Trailer"))
 		t.Logf("Initial Trailer: %v", r.Trailer)
 
 		// Read the body completely - this is required for trailers to be available
@@ -189,7 +190,7 @@ func TestTrailerBasedHTTPSignatureEndToEnd(t *testing.T) {
 
 	t.Logf("Client request prepared with trailers: %v", req.Trailer)
 
-	// Send request to server
+	// Send request to server - transport handles streaming and signature computation
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -61,14 +61,14 @@ func TestRequestTrailerSignature(t *testing.T) {
 	t.Logf("✓ Request trailer signature created: %s", signature[:32]+"...")
 
 	// Step 4: Server-side verification using decoupled function
-	timestamp, _ := time.Parse(time.RFC3339Nano, sigCtx.timestamp)
+	timestamp, _ := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
 
 	err = VerifyHTTPRequestSignatureWithBody(
 		publicKey,
 		req,
 		strings.NewReader(string(body)),
 		timestamp,
-		sigCtx.nonce,
+		sigCtx.Nonce(),
 		nil,
 	)
 	if err != nil {
@@ -82,7 +82,7 @@ func TestRequestTrailerSignature(t *testing.T) {
 		req,
 		strings.NewReader(string(body)),
 		timestamp,
-		sigCtx.nonce,
+		sigCtx.Nonce(),
 		nil,
 	)
 
@@ -96,7 +96,7 @@ func TestRequestTrailerSignature(t *testing.T) {
 		req,
 		strings.NewReader("Tampered body"),
 		timestamp,
-		sigCtx.nonce,
+		sigCtx.Nonce(),
 		nil,
 	)
 
@@ -205,26 +205,7 @@ func TestServerReceivesRequestTrailerSignature(t *testing.T) {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}
 
-	// Stream the body
-	_, err = io.ReadAll(req.Body)
-	if err != nil {
-		t.Fatalf("Failed to read body: %v", err)
-	}
-	req.Body.Close()
-
-	// Signature is automatically set when body is closed
-	// Verify signature is in request trailer (set automatically by Close())
-	signature := req.Trailer.Get("Signature")
-	if signature == "" {
-		t.Fatal("Expected signature in request trailer")
-	}
-
-	t.Logf("✓ Client created request trailer signature: %s", signature[:32]+"...")
-
-	// Reset body for sending to server
-	req.Body = io.NopCloser(strings.NewReader(testBody))
-
-	// Send request to server
+	// Send request to server - let the transport handle body streaming and signature computation
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -240,6 +221,13 @@ func TestServerReceivesRequestTrailerSignature(t *testing.T) {
 
 	t.Logf("Server response: %s", string(responseBody))
 	t.Logf("Response status: %d", resp.StatusCode)
+
+	// After transport completes, verify signature was set in trailer
+	signature := req.Trailer.Get("Signature")
+	if signature == "" {
+		t.Fatal("Expected signature in request trailer after transport completion")
+	}
+	t.Logf("✓ Client signature in trailer: %s", signature[:32]+"...")
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("Expected 200 OK, got %d", resp.StatusCode)

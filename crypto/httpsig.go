@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	gocstring "github.com/agentuity/go-common/string"
@@ -27,6 +28,56 @@ func (c customReaderFunc) Read(p []byte) (int, error) {
 type SignatureContext struct {
 	timestamp string
 	nonce     string
+}
+
+// Timestamp returns the timestamp used for signature generation
+func (ctx *SignatureContext) Timestamp() string {
+	return ctx.timestamp
+}
+
+// Nonce returns the nonce used for signature generation
+func (ctx *SignatureContext) Nonce() string {
+	return ctx.nonce
+}
+
+// StreamingSignatureReader wraps the request body and ensures signature is computed before request is sent
+type StreamingSignatureReader struct {
+	pr        *io.PipeReader
+	pw        *io.PipeWriter
+	wg        sync.WaitGroup
+	err       error
+	completed bool
+	mu        sync.Mutex
+}
+
+// Read implements io.Reader - allows streaming while signature computation happens in parallel
+func (s *StreamingSignatureReader) Read(p []byte) (int, error) {
+	n, err := s.pr.Read(p)
+
+	// If we reach EOF, ensure signature computation completed successfully
+	if err == io.EOF {
+		s.wg.Wait() // Wait for signature goroutine to complete
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.err != nil {
+			return n, fmt.Errorf("signature computation failed: %w", s.err)
+		}
+	}
+
+	return n, err
+}
+
+// Close implements io.Closer
+func (s *StreamingSignatureReader) Close() error {
+	s.wg.Wait() // Ensure goroutine completes
+	return s.pr.Close()
+}
+
+// Error returns any error that occurred during signature computation
+func (s *StreamingSignatureReader) Error() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // For public keys too:
@@ -113,39 +164,56 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 		origBody = http.NoBody
 	}
 
-	// Declare trailer key (empty placeholder value will be set later)
+	// Announce trailer via request headers and set placeholder
+	req.Header.Set("Trailer", "Signature")
 	req.Trailer = make(http.Header)
 	req.Trailer.Set("Signature", "")
 
-	// Force chunked transfer encoding and unset content length
-	req.TransferEncoding = []string{"chunked"}
+	// Enable chunked encoding for HTTP/1.1 (net/http will handle HTTP/2 appropriately)
 	req.ContentLength = -1
 	req.Header.Del("Content-Length") // Remove Content-Length header to avoid conflicts
 
-	// Create pipe for streaming body while computing signature
+	// Create streaming signature reader with proper synchronization
 	pr, pw := io.Pipe()
-	req.Body = pr
+	reader := &StreamingSignatureReader{
+		pr: pr,
+		pw: pw,
+	}
+
+	// Set up wait group to block request until signature is ready
+	reader.wg.Add(1)
+	req.Body = reader
 
 	// Start goroutine to read original body, hash it, and write to pipe
 	go func() {
-		defer func() {
-			pw.Close()
-			origBody.Close()
-		}()
+		defer reader.wg.Done() // Signal completion
+		defer pw.Close()
+		defer origBody.Close()
 
 		h := sha256.New()
 		tee := io.TeeReader(origBody, h)
+
+		// Copy body data to pipe while hashing
 		if _, err := io.Copy(pw, tee); err != nil {
-			return // Error will be handled by pipe reader
+			reader.mu.Lock()
+			reader.err = fmt.Errorf("failed to stream body: %w", err)
+			reader.mu.Unlock()
+			return
 		}
 
-		// Set trailer value after hash computed, before pipe close
+		// Set trailer value after hash computed
 		bodyHash := h.Sum(nil)
 		hash := hashSignatureWithBodyHash(req, bodyHash, timestamp, nonce)
 		sig, sigErr := ecdsa.SignASN1(rand.Reader, key, hash)
-		if sigErr == nil {
-			req.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
+		if sigErr != nil {
+			reader.mu.Lock()
+			reader.err = fmt.Errorf("failed to sign request: %w", sigErr)
+			reader.mu.Unlock()
+			return
 		}
+
+		// Successfully computed signature
+		req.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
 	}()
 
 	// Set signature metadata headers

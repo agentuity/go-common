@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
@@ -17,11 +18,52 @@ import (
 	gocstring "github.com/agentuity/go-common/string"
 )
 
-// customReaderFunc allows function to implement io.Reader interface
-type customReaderFunc func([]byte) (int, error)
+// bufferPool provides efficient buffer reuse for streaming operations
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		// Use a smaller buffer for more responsive cancellation
+		return make([]byte, 8*1024)
+	},
+}
 
-func (c customReaderFunc) Read(p []byte) (int, error) {
-	return c(p)
+// contextAwareCopy copies from src to dst while respecting context cancellation
+func contextAwareCopy(ctx context.Context, dst io.Writer, src io.Reader) error {
+	// Get buffer from pool for efficient memory reuse
+	buf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(buf)
+
+	for {
+		// Check context before each operation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Read with context checking
+		n, readErr := src.Read(buf)
+
+		// Check context again after read
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if n > 0 {
+			_, writeErr := dst.Write(buf[:n])
+			if writeErr != nil {
+				return writeErr
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil // Normal completion
+			}
+			return readErr
+		}
+	}
 }
 
 // SignatureContext holds the state needed for signature verification
@@ -193,12 +235,31 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 		h := sha256.New()
 		tee := io.TeeReader(origBody, h)
 
-		// Copy body data to pipe while hashing
-		if _, err := io.Copy(pw, tee); err != nil {
+		// Copy body data to pipe while hashing with context awareness
+		ctx := req.Context()
+		if err := contextAwareCopy(ctx, pw, tee); err != nil {
 			reader.mu.Lock()
-			reader.err = fmt.Errorf("failed to stream body: %w", err)
+			if ctx.Err() != nil {
+				// Context was canceled
+				reader.err = fmt.Errorf("request canceled: %w", ctx.Err())
+				pw.CloseWithError(ctx.Err()) // Signal cancellation to pipe reader
+			} else {
+				// Other error during streaming
+				reader.err = fmt.Errorf("failed to stream body: %w", err)
+			}
 			reader.mu.Unlock()
 			return
+		}
+
+		// Check context again before expensive signature computation
+		select {
+		case <-ctx.Done():
+			reader.mu.Lock()
+			reader.err = fmt.Errorf("request canceled during signature computation: %w", ctx.Err())
+			reader.mu.Unlock()
+			pw.CloseWithError(ctx.Err())
+			return
+		default:
 		}
 
 		// Set trailer value after hash computed
@@ -259,6 +320,14 @@ func VerifyHTTPRequestStreaming(key *ecdsa.PublicKey, req *http.Request, bodyRea
 // VerifyHTTPRequestSignatureWithBody verifies a streaming signature from request trailer without requiring SignatureContext.
 // This allows verification to be decoupled from signing by reading and hashing the body on the verifier side.
 func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
+	// Guard against misuse: cross-check provided metadata vs headers
+	if ht := req.Header.Get("X-Signature-Timestamp"); ht != "" && ht != timestamp.Format(time.RFC3339Nano) {
+		return fmt.Errorf("timestamp mismatch between header (%s) and parameter (%s)", ht, timestamp.Format(time.RFC3339Nano))
+	}
+	if hn := req.Header.Get("X-Signature-Nonce"); hn != "" && hn != nonce {
+		return fmt.Errorf("nonce mismatch between header (%s) and parameter (%s)", hn, nonce)
+	}
+
 	// Read and hash the body on the verifier side
 	bodyHash := sha256.New()
 	if _, err := io.Copy(bodyHash, bodyReader); err != nil {

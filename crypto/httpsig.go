@@ -2,50 +2,170 @@ package crypto
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
-	"strings"
+	"sync"
 	"time"
 
 	gocstring "github.com/agentuity/go-common/string"
 )
 
-// bodyHashingReader wraps an io.ReadCloser and computes SHA256 hash as data is read
-type bodyHashingReader struct {
-	rc io.ReadCloser
-	h  hash.Hash
+// Predefined errors for better error handling and testing
+var (
+	ErrSignatureComputationTimeout = errors.New("signature computation timeout")
+)
+
+// bufferPool provides efficient buffer reuse for streaming operations
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		// Use a smaller buffer for more responsive cancellation
+		return make([]byte, 8*1024)
+	},
 }
 
-func (b *bodyHashingReader) Read(p []byte) (int, error) {
-	n, err := b.rc.Read(p)
-	if n > 0 {
-		b.h.Write(p[:n])
+// contextAwareCopy copies from src to dst while respecting context cancellation
+func contextAwareCopy(ctx context.Context, dst io.Writer, src io.Reader) error {
+	// Get buffer from pool for efficient memory reuse
+	buf := bufferPool.Get().([]byte)
+	defer bufferPool.Put(buf)
+
+	for {
+		// Check context before each operation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		// Read with context checking
+		n, readErr := src.Read(buf)
+
+		// Check context again after read
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if n > 0 {
+			_, writeErr := dst.Write(buf[:n])
+			if writeErr != nil {
+				return writeErr
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				return nil // Normal completion
+			}
+			return readErr
+		}
 	}
+}
+
+// SignatureContext holds the state needed for signature verification
+type SignatureContext struct {
+	timestamp string
+	nonce     string
+}
+
+// Timestamp returns the timestamp used for signature generation
+func (ctx *SignatureContext) Timestamp() string {
+	return ctx.timestamp
+}
+
+// Nonce returns the nonce used for signature generation
+func (ctx *SignatureContext) Nonce() string {
+	return ctx.nonce
+}
+
+// StreamingSignatureReader wraps the request body and ensures signature is computed before request is sent
+type StreamingSignatureReader struct {
+	pr        *io.PipeReader
+	pw        *io.PipeWriter
+	wg        sync.WaitGroup
+	err       error
+	completed bool
+	mu        sync.Mutex
+	timeout   time.Duration // configurable timeout for testing
+}
+
+// Read implements io.Reader - allows streaming while signature computation happens in parallel
+func (s *StreamingSignatureReader) Read(p []byte) (int, error) {
+	n, err := s.pr.Read(p)
+
+	// If we reach EOF, ensure signature computation completed successfully
+	if err == io.EOF {
+		// Wait with timeout to prevent indefinite blocking
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+
+		timeout := s.timeout
+		if timeout == 0 {
+			timeout = 30 * time.Second // Default timeout
+		}
+
+		select {
+		case <-done:
+			// Signature computation completed
+		case <-time.After(timeout):
+			return n, fmt.Errorf("%w after %v", ErrSignatureComputationTimeout, timeout)
+		}
+
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.err != nil {
+			return n, fmt.Errorf("signature computation failed: %w", s.err)
+		}
+	}
+
 	return n, err
 }
 
-func (b *bodyHashingReader) Close() error {
-	return b.rc.Close()
+// Close implements io.Closer
+func (s *StreamingSignatureReader) Close() error {
+	// Close the reader first to unblock any goroutine blocked on pw.Write
+	closeErr := s.pr.Close()
+
+	// Wait with timeout for the goroutine to finish
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	timeout := s.timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second // Default timeout
+	}
+
+	select {
+	case <-done:
+		// Signature computation completed
+	case <-time.After(timeout):
+		return fmt.Errorf("%w in Close() after %v", ErrSignatureComputationTimeout, timeout)
+	}
+
+	return closeErr
 }
 
-// Sum returns the computed hash. Should only be called after reading is complete.
-func (b *bodyHashingReader) Sum() []byte {
-	return b.h.Sum(nil)
-}
-
-// SignatureContext holds the state needed to complete a signature after streaming
-type SignatureContext struct {
-	bodyHasher *bodyHashingReader
-	timestamp  string
-	nonce      string
+// Error returns any error that occurred during signature computation
+func (s *StreamingSignatureReader) Error() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
 }
 
 // For public keys too:
@@ -127,92 +247,93 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 	}
 
 	// Handle nil req.Body by treating it as http.NoBody
-	body := req.Body
-	if body == nil {
-		body = http.NoBody
+	origBody := req.Body
+	if origBody == nil {
+		origBody = http.NoBody
 	}
 
-	// Wrap the request body with a hashing reader
-	bodyHasher := &bodyHashingReader{
-		rc: body,
-		h:  sha256.New(),
-	}
-	req.Body = bodyHasher
+	// Announce trailer via request headers and set placeholder
+	req.Header.Set("Trailer", "Signature")
+	req.Trailer = make(http.Header)
+	req.Trailer.Set("Signature", "")
 
-	// Set signature metadata headers (signature will be added later via response trailer)
+	// Enable chunked encoding for HTTP/1.1 (net/http will handle HTTP/2 appropriately)
+	req.ContentLength = -1
+	req.Header.Del("Content-Length") // Remove Content-Length header to avoid conflicts
+
+	// Create streaming signature reader with proper synchronization
+	pr, pw := io.Pipe()
+	reader := &StreamingSignatureReader{
+		pr:      pr,
+		pw:      pw,
+		timeout: 30 * time.Second, // Default timeout
+	}
+
+	// Set up wait group to block request until signature is ready
+	reader.wg.Add(1)
+	req.Body = reader
+
+	// Start goroutine to read original body, hash it, and write to pipe
+	go func() {
+		defer reader.wg.Done() // Signal completion
+		defer pw.Close()
+		defer origBody.Close()
+
+		h := sha256.New()
+		tee := io.TeeReader(origBody, h)
+
+		// Copy body data to pipe while hashing with context awareness
+		ctx := req.Context()
+		if err := contextAwareCopy(ctx, pw, tee); err != nil {
+			reader.mu.Lock()
+			if ctx.Err() != nil {
+				// Context was canceled
+				reader.err = fmt.Errorf("request canceled: %w", ctx.Err())
+				pw.CloseWithError(ctx.Err()) // Signal cancellation to pipe reader
+			} else {
+				// Other error during streaming
+				reader.err = fmt.Errorf("failed to stream body: %w", err)
+			}
+			reader.mu.Unlock()
+			return
+		}
+
+		// Check context again before expensive signature computation
+		select {
+		case <-ctx.Done():
+			reader.mu.Lock()
+			reader.err = fmt.Errorf("request canceled during signature computation: %w", ctx.Err())
+			reader.mu.Unlock()
+			pw.CloseWithError(ctx.Err())
+			return
+		default:
+		}
+
+		// Set trailer value after hash computed
+		bodyHash := h.Sum(nil)
+		hash := hashSignatureWithBodyHash(req, bodyHash, timestamp, nonce)
+		sig, sigErr := ecdsa.SignASN1(rand.Reader, key, hash)
+		if sigErr != nil {
+			reader.mu.Lock()
+			reader.err = fmt.Errorf("failed to sign request: %w", sigErr)
+			reader.mu.Unlock()
+			return
+		}
+
+		// Successfully computed signature
+		req.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
+	}()
+
+	// Set signature metadata headers
 	req.Header.Set("X-Signature-Alg", "ecdsa-sha256")
 	req.Header.Set("X-Signature-KeyID", keyID)
 	req.Header.Set("X-Signature-Timestamp", timestamp)
 	req.Header.Set("X-Signature-Nonce", nonce)
 
 	return &SignatureContext{
-		bodyHasher: bodyHasher,
-		timestamp:  timestamp,
-		nonce:      nonce,
+		timestamp: timestamp,
+		nonce:     nonce,
 	}, nil
-}
-
-// CompleteHTTPRequestSignature completes the signature after the request body has been streamed.
-// This should be called after the body has been fully read (e.g., in an HTTP transport's response handler).
-// The signature is set as an HTTP trailer.
-func CompleteHTTPRequestSignature(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, resp *http.Response) error {
-	if ctx == nil || ctx.bodyHasher == nil {
-		return fmt.Errorf("signature context not initialized")
-	}
-	bodyHash := ctx.bodyHasher.Sum()
-
-	// Create signature using the streamed body hash
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hash)
-	if err != nil {
-		return err
-	}
-
-	// Add signature to response trailer
-	if resp.Trailer == nil {
-		resp.Trailer = make(http.Header)
-	}
-	resp.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
-
-	// Announce signature trailer in response headers (ensure set before body is written)
-	if resp.Header.Get("Trailer") == "" {
-		resp.Header.Add("Trailer", "Signature")
-	}
-
-	return nil
-}
-
-// CompleteHTTPRequestSignatureToWriter completes the signature and writes it directly to a ResponseWriter.
-// This is for use in HTTP handlers where you have access to the ResponseWriter.
-func CompleteHTTPRequestSignatureToWriter(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, w http.ResponseWriter) error {
-	if ctx == nil || ctx.bodyHasher == nil {
-		return fmt.Errorf("signature context not initialized")
-	}
-	// Defensive: ensure the handler predeclared the trailer before WriteHeader/Write.
-	var declared bool
-	for _, v := range w.Header().Values("Trailer") {
-		if strings.Contains(v, "Signature") {
-			declared = true
-			break
-		}
-	}
-	if !declared {
-		return fmt.Errorf("Signature trailer not declared; call w.Header().Add(\"Trailer\", \"Signature\") before WriteHeader")
-	}
-	bodyHash := ctx.bodyHasher.Sum()
-
-	// Create signature using the streamed body hash
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hash)
-	if err != nil {
-		return err
-	}
-
-	// Set signature as trailer on the ResponseWriter
-	// This must be called after the response body is written but before the handler returns
-	w.Header().Set("Signature", base64.StdEncoding.EncodeToString(sig))
-
-	return nil
 }
 
 // hashSignatureWithBodyHash creates signature hash when body hash is already computed
@@ -243,31 +364,17 @@ func VerifyHTTPRequestStreaming(key *ecdsa.PublicKey, req *http.Request, bodyRea
 	return verifySignatureWithHash(key, req, hash, checkNonce)
 }
 
-// VerifyHTTPResponseSignature verifies a signature that was sent via HTTP trailers (for streaming requests)
-func VerifyHTTPResponseSignature(key *ecdsa.PublicKey, req *http.Request, resp *http.Response, ctx *SignatureContext, checkNonce func(string) error) error {
-	bodyHash := ctx.bodyHasher.Sum()
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-
-	// Get signature from trailer
-	b64Sig := resp.Trailer.Get("Signature")
-	if b64Sig == "" {
-		return fmt.Errorf("missing signature in trailer")
-	}
-	sig, err := base64.StdEncoding.DecodeString(b64Sig)
-	if err != nil {
-		return err
-	}
-
-	if !ecdsa.VerifyASN1(key, hash, sig) {
-		return fmt.Errorf("invalid signature")
-	}
-
-	return verifySignatureMetadata(req, ctx.timestamp, ctx.nonce, key, checkNonce)
-}
-
-// VerifyHTTPResponseSignatureWithBody verifies a signature from HTTP trailers without requiring SignatureContext.
+// VerifyHTTPRequestSignatureWithBody verifies a streaming signature from request trailer without requiring SignatureContext.
 // This allows verification to be decoupled from signing by reading and hashing the body on the verifier side.
-func VerifyHTTPResponseSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, resp *http.Response, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
+func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
+	// Guard against misuse: cross-check provided metadata vs headers
+	if ht := req.Header.Get("X-Signature-Timestamp"); ht != "" && ht != timestamp.Format(time.RFC3339Nano) {
+		return fmt.Errorf("timestamp mismatch between header (%s) and parameter (%s)", ht, timestamp.Format(time.RFC3339Nano))
+	}
+	if hn := req.Header.Get("X-Signature-Nonce"); hn != "" && hn != nonce {
+		return fmt.Errorf("nonce mismatch between header (%s) and parameter (%s)", hn, nonce)
+	}
+
 	// Read and hash the body on the verifier side
 	bodyHash := sha256.New()
 	if _, err := io.Copy(bodyHash, bodyReader); err != nil {
@@ -278,10 +385,10 @@ func VerifyHTTPResponseSignatureWithBody(key *ecdsa.PublicKey, req *http.Request
 	timestampStr := timestamp.Format(time.RFC3339Nano)
 	hash := hashSignatureWithBodyHash(req, bodyHash.Sum(nil), timestampStr, nonce)
 
-	// Get signature from trailer
-	b64Sig := resp.Trailer.Get("Signature")
+	// Get signature from request trailer
+	b64Sig := req.Trailer.Get("Signature")
 	if b64Sig == "" {
-		return fmt.Errorf("missing signature in trailer")
+		return fmt.Errorf("missing signature in request trailer")
 	}
 	sig, err := base64.StdEncoding.DecodeString(b64Sig)
 	if err != nil {

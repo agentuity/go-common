@@ -121,7 +121,7 @@ func WaitForAnyKeyMessage(message string) {
 		go func() {
 			buf := make([]byte, 1)
 			os.Stdin.Read(buf)
-			fmt.Print(ansi.CursorBackward(1)) // remove the char from the screen output
+			fmt.Print("\b \b") // backspace and erase the echoed character
 			ch <- struct{}{}
 		}()
 		fmt.Print(Secondary(message))

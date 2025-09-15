@@ -9,43 +9,24 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"hash"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	gocstring "github.com/agentuity/go-common/string"
 )
 
-// bodyHashingReader wraps an io.ReadCloser and computes SHA256 hash as data is read
-type bodyHashingReader struct {
-	rc io.ReadCloser
-	h  hash.Hash
+// customReaderFunc allows function to implement io.Reader interface
+type customReaderFunc func([]byte) (int, error)
+
+func (c customReaderFunc) Read(p []byte) (int, error) {
+	return c(p)
 }
 
-func (b *bodyHashingReader) Read(p []byte) (int, error) {
-	n, err := b.rc.Read(p)
-	if n > 0 {
-		b.h.Write(p[:n])
-	}
-	return n, err
-}
-
-func (b *bodyHashingReader) Close() error {
-	return b.rc.Close()
-}
-
-// Sum returns the computed hash. Should only be called after reading is complete.
-func (b *bodyHashingReader) Sum() []byte {
-	return b.h.Sum(nil)
-}
-
-// SignatureContext holds the state needed to complete a signature after streaming
+// SignatureContext holds the state needed for signature verification
 type SignatureContext struct {
-	bodyHasher *bodyHashingReader
-	timestamp  string
-	nonce      string
+	timestamp string
+	nonce     string
 }
 
 // For public keys too:
@@ -127,92 +108,56 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 	}
 
 	// Handle nil req.Body by treating it as http.NoBody
-	body := req.Body
-	if body == nil {
-		body = http.NoBody
+	origBody := req.Body
+	if origBody == nil {
+		origBody = http.NoBody
 	}
 
-	// Wrap the request body with a hashing reader
-	bodyHasher := &bodyHashingReader{
-		rc: body,
-		h:  sha256.New(),
-	}
-	req.Body = bodyHasher
+	// Declare trailer key (empty placeholder value will be set later)
+	req.Trailer = make(http.Header)
+	req.Trailer.Set("Signature", "")
 
-	// Set signature metadata headers (signature will be added later via response trailer)
+	// Force chunked transfer encoding and unset content length
+	req.TransferEncoding = []string{"chunked"}
+	req.ContentLength = -1
+	req.Header.Del("Content-Length") // Remove Content-Length header to avoid conflicts
+
+	// Create pipe for streaming body while computing signature
+	pr, pw := io.Pipe()
+	req.Body = pr
+
+	// Start goroutine to read original body, hash it, and write to pipe
+	go func() {
+		defer func() {
+			pw.Close()
+			origBody.Close()
+		}()
+
+		h := sha256.New()
+		tee := io.TeeReader(origBody, h)
+		if _, err := io.Copy(pw, tee); err != nil {
+			return // Error will be handled by pipe reader
+		}
+
+		// Set trailer value after hash computed, before pipe close
+		bodyHash := h.Sum(nil)
+		hash := hashSignatureWithBodyHash(req, bodyHash, timestamp, nonce)
+		sig, sigErr := ecdsa.SignASN1(rand.Reader, key, hash)
+		if sigErr == nil {
+			req.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
+		}
+	}()
+
+	// Set signature metadata headers
 	req.Header.Set("X-Signature-Alg", "ecdsa-sha256")
 	req.Header.Set("X-Signature-KeyID", keyID)
 	req.Header.Set("X-Signature-Timestamp", timestamp)
 	req.Header.Set("X-Signature-Nonce", nonce)
 
 	return &SignatureContext{
-		bodyHasher: bodyHasher,
-		timestamp:  timestamp,
-		nonce:      nonce,
+		timestamp: timestamp,
+		nonce:     nonce,
 	}, nil
-}
-
-// CompleteHTTPRequestSignature completes the signature after the request body has been streamed.
-// This should be called after the body has been fully read (e.g., in an HTTP transport's response handler).
-// The signature is set as an HTTP trailer.
-func CompleteHTTPRequestSignature(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, resp *http.Response) error {
-	if ctx == nil || ctx.bodyHasher == nil {
-		return fmt.Errorf("signature context not initialized")
-	}
-	bodyHash := ctx.bodyHasher.Sum()
-
-	// Create signature using the streamed body hash
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hash)
-	if err != nil {
-		return err
-	}
-
-	// Add signature to response trailer
-	if resp.Trailer == nil {
-		resp.Trailer = make(http.Header)
-	}
-	resp.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
-
-	// Announce signature trailer in response headers (ensure set before body is written)
-	if resp.Header.Get("Trailer") == "" {
-		resp.Header.Add("Trailer", "Signature")
-	}
-
-	return nil
-}
-
-// CompleteHTTPRequestSignatureToWriter completes the signature and writes it directly to a ResponseWriter.
-// This is for use in HTTP handlers where you have access to the ResponseWriter.
-func CompleteHTTPRequestSignatureToWriter(key *ecdsa.PrivateKey, req *http.Request, ctx *SignatureContext, w http.ResponseWriter) error {
-	if ctx == nil || ctx.bodyHasher == nil {
-		return fmt.Errorf("signature context not initialized")
-	}
-	// Defensive: ensure the handler predeclared the trailer before WriteHeader/Write.
-	var declared bool
-	for _, v := range w.Header().Values("Trailer") {
-		if strings.Contains(v, "Signature") {
-			declared = true
-			break
-		}
-	}
-	if !declared {
-		return fmt.Errorf("Signature trailer not declared; call w.Header().Add(\"Trailer\", \"Signature\") before WriteHeader")
-	}
-	bodyHash := ctx.bodyHasher.Sum()
-
-	// Create signature using the streamed body hash
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, hash)
-	if err != nil {
-		return err
-	}
-
-	// Set signature as trailer on the ResponseWriter
-	// This must be called after the response body is written but before the handler returns
-	w.Header().Set("Signature", base64.StdEncoding.EncodeToString(sig))
-
-	return nil
 }
 
 // hashSignatureWithBodyHash creates signature hash when body hash is already computed
@@ -243,31 +188,9 @@ func VerifyHTTPRequestStreaming(key *ecdsa.PublicKey, req *http.Request, bodyRea
 	return verifySignatureWithHash(key, req, hash, checkNonce)
 }
 
-// VerifyHTTPResponseSignature verifies a signature that was sent via HTTP trailers (for streaming requests)
-func VerifyHTTPResponseSignature(key *ecdsa.PublicKey, req *http.Request, resp *http.Response, ctx *SignatureContext, checkNonce func(string) error) error {
-	bodyHash := ctx.bodyHasher.Sum()
-	hash := hashSignatureWithBodyHash(req, bodyHash, ctx.timestamp, ctx.nonce)
-
-	// Get signature from trailer
-	b64Sig := resp.Trailer.Get("Signature")
-	if b64Sig == "" {
-		return fmt.Errorf("missing signature in trailer")
-	}
-	sig, err := base64.StdEncoding.DecodeString(b64Sig)
-	if err != nil {
-		return err
-	}
-
-	if !ecdsa.VerifyASN1(key, hash, sig) {
-		return fmt.Errorf("invalid signature")
-	}
-
-	return verifySignatureMetadata(req, ctx.timestamp, ctx.nonce, key, checkNonce)
-}
-
-// VerifyHTTPResponseSignatureWithBody verifies a signature from HTTP trailers without requiring SignatureContext.
+// VerifyHTTPRequestSignatureWithBody verifies a streaming signature from request trailer without requiring SignatureContext.
 // This allows verification to be decoupled from signing by reading and hashing the body on the verifier side.
-func VerifyHTTPResponseSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, resp *http.Response, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
+func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
 	// Read and hash the body on the verifier side
 	bodyHash := sha256.New()
 	if _, err := io.Copy(bodyHash, bodyReader); err != nil {
@@ -278,10 +201,10 @@ func VerifyHTTPResponseSignatureWithBody(key *ecdsa.PublicKey, req *http.Request
 	timestampStr := timestamp.Format(time.RFC3339Nano)
 	hash := hashSignatureWithBodyHash(req, bodyHash.Sum(nil), timestampStr, nonce)
 
-	// Get signature from trailer
-	b64Sig := resp.Trailer.Get("Signature")
+	// Get signature from request trailer
+	b64Sig := req.Trailer.Get("Signature")
 	if b64Sig == "" {
-		return fmt.Errorf("missing signature in trailer")
+		return fmt.Errorf("missing signature in request trailer")
 	}
 	sig, err := base64.StdEncoding.DecodeString(b64Sig)
 	if err != nil {

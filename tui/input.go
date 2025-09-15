@@ -11,7 +11,6 @@ import (
 
 	"github.com/agentuity/go-common/logger"
 	"github.com/charmbracelet/huh"
-	"github.com/charmbracelet/x/ansi"
 	"golang.org/x/term"
 )
 

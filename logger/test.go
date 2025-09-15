@@ -3,6 +3,7 @@ package logger
 import (
 	"context"
 	"os"
+	"sync"
 )
 
 type TestLogEntry struct {
@@ -15,6 +16,7 @@ type TestLogger struct {
 	metadata map[string]interface{}
 	Logs     []TestLogEntry
 	child    Logger
+	mu       sync.Mutex
 }
 
 var _ Logger = (*TestLogger)(nil)
@@ -33,6 +35,8 @@ func (c *TestLogger) WithPrefix(prefix string) Logger {
 }
 
 func (c *TestLogger) With(metadata map[string]interface{}) Logger {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	kv := metadata
 	if c.metadata != nil {
 		kv = make(map[string]interface{})
@@ -51,11 +55,15 @@ func (c *TestLogger) With(metadata map[string]interface{}) Logger {
 }
 
 func (c *TestLogger) Log(level string, msg string, args ...interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	c.Logs = append(c.Logs, TestLogEntry{level, msg, args})
 }
 
 func (c *TestLogger) Trace(msg string, args ...interface{}) {
 	c.Log("TRACE", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Trace(msg, args...)
 	}
@@ -63,6 +71,8 @@ func (c *TestLogger) Trace(msg string, args ...interface{}) {
 
 func (c *TestLogger) Debug(msg string, args ...interface{}) {
 	c.Log("DEBUG", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Debug(msg, args...)
 	}
@@ -70,6 +80,8 @@ func (c *TestLogger) Debug(msg string, args ...interface{}) {
 
 func (c *TestLogger) Info(msg string, args ...interface{}) {
 	c.Log("INFO", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Info(msg, args...)
 	}
@@ -77,6 +89,8 @@ func (c *TestLogger) Info(msg string, args ...interface{}) {
 
 func (c *TestLogger) Warn(msg string, args ...interface{}) {
 	c.Log("WARNING", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Warn(msg, args...)
 	}
@@ -84,6 +98,8 @@ func (c *TestLogger) Warn(msg string, args ...interface{}) {
 
 func (c *TestLogger) Error(msg string, args ...interface{}) {
 	c.Log("ERROR", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Error(msg, args...)
 	}
@@ -91,6 +107,8 @@ func (c *TestLogger) Error(msg string, args ...interface{}) {
 
 func (c *TestLogger) Fatal(msg string, args ...interface{}) {
 	c.Log("FATAL", msg, args...)
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	if c.child != nil {
 		c.child.Fatal(msg, args...)
 	}
@@ -98,7 +116,7 @@ func (c *TestLogger) Fatal(msg string, args ...interface{}) {
 }
 
 func (c *TestLogger) Stack(next Logger) Logger {
-	return &TestLogger{c.metadata, c.Logs, next}
+	return &TestLogger{c.metadata, c.Logs, next, sync.Mutex{}}
 }
 
 // NewTestLogger returns a new Logger instance useful for testing

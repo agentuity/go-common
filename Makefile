@@ -36,7 +36,7 @@ fuzz:
 
 bench:
 	@echo "benchmarking..."
-	@go test -bench=. -benchmem -v ./...
+	@go test -run=^$ -bench=. -benchmem -v ./...
 
 gen:
 	@echo "generating..."

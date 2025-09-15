@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,11 @@ import (
 	"time"
 
 	gocstring "github.com/agentuity/go-common/string"
+)
+
+// Predefined errors for better error handling and testing
+var (
+	ErrSignatureComputationTimeout = errors.New("signature computation timeout")
 )
 
 // bufferPool provides efficient buffer reuse for streaming operations
@@ -90,6 +96,7 @@ type StreamingSignatureReader struct {
 	err       error
 	completed bool
 	mu        sync.Mutex
+	timeout   time.Duration // configurable timeout for testing
 }
 
 // Read implements io.Reader - allows streaming while signature computation happens in parallel
@@ -98,7 +105,25 @@ func (s *StreamingSignatureReader) Read(p []byte) (int, error) {
 
 	// If we reach EOF, ensure signature computation completed successfully
 	if err == io.EOF {
-		s.wg.Wait() // Wait for signature goroutine to complete
+		// Wait with timeout to prevent indefinite blocking
+		done := make(chan struct{})
+		go func() {
+			s.wg.Wait()
+			close(done)
+		}()
+
+		timeout := s.timeout
+		if timeout == 0 {
+			timeout = 30 * time.Second // Default timeout
+		}
+
+		select {
+		case <-done:
+			// Signature computation completed
+		case <-time.After(timeout):
+			return n, fmt.Errorf("%w after %v", ErrSignatureComputationTimeout, timeout)
+		}
+
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if s.err != nil {
@@ -111,8 +136,29 @@ func (s *StreamingSignatureReader) Read(p []byte) (int, error) {
 
 // Close implements io.Closer
 func (s *StreamingSignatureReader) Close() error {
-	s.wg.Wait() // Ensure goroutine completes
-	return s.pr.Close()
+	// Close the reader first to unblock any goroutine blocked on pw.Write
+	closeErr := s.pr.Close()
+
+	// Wait with timeout for the goroutine to finish
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	timeout := s.timeout
+	if timeout == 0 {
+		timeout = 30 * time.Second // Default timeout
+	}
+
+	select {
+	case <-done:
+		// Signature computation completed
+	case <-time.After(timeout):
+		return fmt.Errorf("%w in Close() after %v", ErrSignatureComputationTimeout, timeout)
+	}
+
+	return closeErr
 }
 
 // Error returns any error that occurred during signature computation
@@ -218,8 +264,9 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 	// Create streaming signature reader with proper synchronization
 	pr, pw := io.Pipe()
 	reader := &StreamingSignatureReader{
-		pr: pr,
-		pw: pw,
+		pr:      pr,
+		pw:      pw,
+		timeout: 30 * time.Second, // Default timeout
 	}
 
 	// Set up wait group to block request until signature is ready

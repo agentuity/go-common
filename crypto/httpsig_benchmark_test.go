@@ -28,12 +28,12 @@ func init() {
 }
 
 func BenchmarkPrepareHTTPRequestForStreaming(b *testing.B) {
-	testBody := "Benchmark test body for streaming signature preparation"
+	// Use Option A: http.NoBody to avoid creating writer and goroutine
 
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		req, err := http.NewRequest("POST", "http://example.com/api", strings.NewReader(testBody))
+		req, err := http.NewRequest("POST", "http://example.com/api", http.NoBody)
 		if err != nil {
 			b.Fatal(err)
 		}

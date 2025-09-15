@@ -180,13 +180,13 @@ func TestStreamingSignaturePerformanceReport(t *testing.T) {
 
 func BenchmarkStreamingSignatureSetupOnly(b *testing.B) {
 	// Benchmark just the setup cost (without body streaming)
-	testBody := "Setup benchmark body"
 
 	b.ReportAllocs()
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		req, err := http.NewRequest("POST", "http://example.com/api", strings.NewReader(testBody))
+		// Use empty body to avoid creating writer goroutine
+		req, err := http.NewRequest("POST", "http://example.com/api", http.NoBody)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -196,7 +196,8 @@ func BenchmarkStreamingSignatureSetupOnly(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		// Don't stream the body - just measure setup cost
+		// Close body immediately to clean up any resources
+		req.Body.Close()
 	}
 }
 

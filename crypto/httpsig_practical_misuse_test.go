@@ -27,7 +27,7 @@ func TestPracticalMisuseScenario(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+	err = PrepareHTTPRequestForStreaming(privateKey, req)
 	if err != nil {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}
@@ -46,15 +46,12 @@ func TestPracticalMisuseScenario(t *testing.T) {
 	}
 
 	// Get the correct values from headers and context
-	headerTimestamp := req.Header.Get("X-Signature-Timestamp")
-	headerNonce := req.Header.Get("X-Signature-Nonce")
-	contextTimestamp, _ := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
-	contextNonce := sigCtx.Nonce()
+	headerTimestamp := req.Header.Get(HeaderSignatureTimestamp)
+	contextNonce := req.Header.Get(HeaderSignatureNonce)
+	contextTimestamp, _ := time.Parse(time.RFC3339Nano, headerTimestamp)
 
 	t.Logf("Header timestamp: %s", headerTimestamp)
-	t.Logf("Header nonce: %s", headerNonce)
-	t.Logf("Context timestamp: %s", sigCtx.Timestamp())
-	t.Logf("Context nonce: %s", contextNonce)
+	t.Logf("Header nonce: %s", contextNonce)
 
 	// Test common programming mistakes
 
@@ -120,18 +117,10 @@ func TestPracticalMisuseScenario(t *testing.T) {
 	})
 
 	t.Run("Correct usage with values parsed from headers", func(t *testing.T) {
-		// Correct: parsing values directly from headers
-		parsedTimestamp, err := time.Parse(time.RFC3339Nano, headerTimestamp)
-		if err != nil {
-			t.Fatalf("Failed to parse header timestamp: %v", err)
-		}
-
-		err = VerifyHTTPRequestSignatureWithBody(
+		err = VerifyHTTPRequestStreaming(
 			publicKey,
 			req,
 			strings.NewReader(string(body)),
-			parsedTimestamp,
-			headerNonce,
 			nil,
 		)
 

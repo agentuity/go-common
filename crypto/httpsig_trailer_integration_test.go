@@ -40,7 +40,7 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 			}
 
 			// Prepare for streaming
-			sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+			err = PrepareHTTPRequestForStreaming(privateKey, req)
 			if err != nil {
 				t.Fatalf("Failed to prepare streaming: %v", err)
 			}
@@ -77,7 +77,7 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 			t.Logf("Signature created: %s...", signature[:min(32, len(signature))])
 
 			// Verify signature using our verification function
-			timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
+			timestamp, err := time.Parse(time.RFC3339Nano, req.Header.Get(HeaderSignatureTimestamp))
 			if err != nil {
 				t.Fatalf("Failed to parse timestamp: %v", err)
 			}
@@ -87,7 +87,7 @@ func TestPrepareHTTPRequestForStreamingIntegration(t *testing.T) {
 				req,
 				strings.NewReader(tc.body),
 				timestamp,
-				sigCtx.Nonce(),
+				req.Header.Get(HeaderSignatureNonce),
 				nil,
 			)
 			if err != nil {
@@ -183,7 +183,7 @@ func TestTrailerBasedHTTPSignatureEndToEnd(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+	err = PrepareHTTPRequestForStreaming(privateKey, req)
 	if err != nil {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}

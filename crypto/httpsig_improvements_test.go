@@ -27,7 +27,7 @@ func TestStreamingSignatureImprovements(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+		err = PrepareHTTPRequestForStreaming(privateKey, req)
 		if err != nil {
 			t.Fatalf("Failed to prepare streaming: %v", err)
 		}
@@ -66,7 +66,7 @@ func TestStreamingSignatureImprovements(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+		err = PrepareHTTPRequestForStreaming(privateKey, req)
 		if err != nil {
 			t.Fatalf("Failed to prepare streaming: %v", err)
 		}
@@ -112,7 +112,7 @@ func TestStreamingSignatureImprovements(t *testing.T) {
 			t.Fatalf("Failed to create request: %v", err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+		err = PrepareHTTPRequestForStreaming(privateKey, req)
 		if err != nil {
 			t.Fatalf("Failed to prepare streaming: %v", err)
 		}

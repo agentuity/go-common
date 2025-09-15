@@ -58,7 +58,7 @@ func TestStreamingSignatureContextCancellation(t *testing.T) {
 			}
 			req = req.WithContext(ctx)
 
-			_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+			err = PrepareHTTPRequestForStreaming(privateKey, req)
 			if err != nil {
 				t.Fatalf("Failed to prepare streaming: %v", err)
 			}
@@ -153,7 +153,7 @@ func TestStreamingSignatureGoroutineLeakPrevention(t *testing.T) {
 		}
 		req = req.WithContext(ctx)
 
-		_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+		err = PrepareHTTPRequestForStreaming(privateKey, req)
 		if err != nil {
 			t.Fatalf("Failed to prepare streaming: %v", err)
 		}

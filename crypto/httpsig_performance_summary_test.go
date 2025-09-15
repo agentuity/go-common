@@ -49,7 +49,7 @@ func BenchmarkStreamingSignaturePerformanceSummary(b *testing.B) {
 				}
 
 				// Prepare streaming signature
-				sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+				err = PrepareHTTPRequestForStreaming(privateKey, req)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -62,12 +62,12 @@ func BenchmarkStreamingSignaturePerformanceSummary(b *testing.B) {
 				req.Body.Close()
 
 				// Verify signature was created
-				if req.Trailer.Get("Signature") == "" {
+				if req.Trailer.Get(HeaderSignature) == "" {
 					b.Fatal("No signature created")
 				}
 
 				// Verify signature
-				timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
+				timestamp, err := time.Parse(time.RFC3339Nano, req.Header.Get(HeaderSignatureTimestamp))
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -77,7 +77,7 @@ func BenchmarkStreamingSignaturePerformanceSummary(b *testing.B) {
 					req,
 					strings.NewReader(string(body)),
 					timestamp,
-					sigCtx.Nonce(),
+					req.Header.Get(HeaderSignatureNonce),
 					nil,
 				)
 				if err != nil {
@@ -125,7 +125,7 @@ func TestStreamingSignaturePerformanceReport(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+			err = PrepareHTTPRequestForStreaming(privateKey, req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -136,18 +136,10 @@ func TestStreamingSignaturePerformanceReport(t *testing.T) {
 			}
 			req.Body.Close()
 
-			// Verify signature
-			timestamp, err := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			err = VerifyHTTPRequestSignatureWithBody(
+			err = VerifyHTTPRequestStreaming(
 				publicKey,
 				req,
 				strings.NewReader(string(body)),
-				timestamp,
-				sigCtx.Nonce(),
 				nil,
 			)
 			if err != nil {
@@ -191,7 +183,7 @@ func BenchmarkStreamingSignatureSetupOnly(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -213,7 +205,7 @@ func BenchmarkStreamingSignatureBodyStreamingOnly(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}

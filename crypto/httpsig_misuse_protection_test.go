@@ -27,7 +27,7 @@ func TestVerifyHTTPRequestSignatureWithBodyMisuseProtection(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+	err = PrepareHTTPRequestForStreaming(privateKey, req)
 	if err != nil {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}
@@ -45,12 +45,14 @@ func TestVerifyHTTPRequestSignatureWithBodyMisuseProtection(t *testing.T) {
 		t.Fatal("Expected signature in trailer")
 	}
 
+	ts := req.Header.Get(HeaderSignatureTimestamp)
+
 	// Get the correct timestamp and nonce from context
-	correctTimestamp, err := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
+	correctTimestamp, err := time.Parse(time.RFC3339Nano, ts)
 	if err != nil {
 		t.Fatalf("Failed to parse timestamp: %v", err)
 	}
-	correctNonce := sigCtx.Nonce()
+	correctNonce := req.Header.Get(HeaderSignatureNonce)
 
 	testCases := []struct {
 		name          string

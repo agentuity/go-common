@@ -150,7 +150,6 @@ func WaitForAnyKeyMessage(message string) {
 	go func() {
 		buf := make([]byte, 1)
 		os.Stdin.Read(buf)
-		fmt.Print(ansi.CursorBackward(1)) // remove the char from the screen output
 		ch <- struct{}{}
 	}()
 
@@ -191,7 +190,6 @@ func AskForConfirm(message string, defaultValue byte) byte {
 	go func() {
 		buf := make([]byte, 1)
 		os.Stdin.Read(buf)
-		fmt.Print(ansi.CursorBackward(1)) // remove the char from the screen output
 		ch <- buf[0]
 	}()
 	fmt.Print(message)

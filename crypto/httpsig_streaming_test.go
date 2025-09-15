@@ -29,7 +29,7 @@ func TestRequestTrailerSignature(t *testing.T) {
 		t.Fatalf("Failed to create request: %v", err)
 	}
 
-	sigCtx, err := PrepareHTTPRequestForStreaming(privateKey, req)
+	err = PrepareHTTPRequestForStreaming(privateKey, req)
 	if err != nil {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}
@@ -61,42 +61,27 @@ func TestRequestTrailerSignature(t *testing.T) {
 	t.Logf("✓ Request trailer signature created: %s", signature[:32]+"...")
 
 	// Step 4: Server-side verification using decoupled function
-	timestamp, _ := time.Parse(time.RFC3339Nano, sigCtx.Timestamp())
+	timestamp, _ := time.Parse(time.RFC3339Nano, req.Header.Get(HeaderSignatureTimestamp))
 
 	err = VerifyHTTPRequestSignatureWithBody(
 		publicKey,
 		req,
 		strings.NewReader(string(body)),
 		timestamp,
-		sigCtx.Nonce(),
+		req.Header.Get(HeaderSignatureNonce),
 		nil,
 	)
 	if err != nil {
 		t.Fatalf("Failed to verify request signature: %v", err)
 	}
 
-	// Step 5: Test decoupled verification (server doesn't have sigCtx)
-
-	err = VerifyHTTPRequestSignatureWithBody(
-		publicKey,
-		req,
-		strings.NewReader(string(body)),
-		timestamp,
-		sigCtx.Nonce(),
-		nil,
-	)
-
-	if err != nil {
-		t.Fatalf("Failed to verify with decoupled function: %v", err)
-	}
-
-	// Step 6: Test tampering detection
+	// Step 5: Test tampering detection
 	err = VerifyHTTPRequestSignatureWithBody(
 		publicKey,
 		req,
 		strings.NewReader("Tampered body"),
 		timestamp,
-		sigCtx.Nonce(),
+		req.Header.Get(HeaderSignatureNonce),
 		nil,
 	)
 
@@ -200,7 +185,7 @@ func TestServerReceivesRequestTrailerSignature(t *testing.T) {
 	}
 
 	// Prepare for streaming signature
-	_, err = PrepareHTTPRequestForStreaming(privateKey, req)
+	err = PrepareHTTPRequestForStreaming(privateKey, req)
 	if err != nil {
 		t.Fatalf("Failed to prepare streaming: %v", err)
 	}

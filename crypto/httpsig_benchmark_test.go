@@ -38,7 +38,7 @@ func BenchmarkPrepareHTTPRequestForStreaming(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -56,7 +56,7 @@ func BenchmarkStreamingSignatureSmallBody(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func BenchmarkStreamingSignatureMediumBody(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -108,7 +108,7 @@ func BenchmarkStreamingSignatureLargeBody(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func BenchmarkStreamingSignatureVsNonStreaming(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+			err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -174,7 +174,7 @@ func BenchmarkStreamingSignatureVerification(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	sigCtx, err := PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+	err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -194,12 +194,10 @@ func BenchmarkStreamingSignatureVerification(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		err := VerifyHTTPRequestSignatureWithBody(
+		err := VerifyHTTPRequestStreaming(
 			benchmarkPublicKey,
 			req,
 			strings.NewReader(string(body)),
-			mustParseTime(sigCtx.Timestamp()),
-			sigCtx.Nonce(),
 			nil,
 		)
 		if err != nil {
@@ -218,7 +216,7 @@ func BenchmarkConcurrentStreamingSignatures(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+			err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -257,7 +255,7 @@ func BenchmarkStreamingSignatureDifferentSizes(b *testing.B) {
 					b.Fatal(err)
 				}
 
-				_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+				err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 				if err != nil {
 					b.Fatal(err)
 				}
@@ -285,7 +283,7 @@ func BenchmarkBufferPoolUsage(b *testing.B) {
 				b.Fatal(err)
 			}
 
-			_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+			err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -312,7 +310,7 @@ func BenchmarkEndToEndStreamingSignature(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		sigCtx, err := PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -325,12 +323,10 @@ func BenchmarkEndToEndStreamingSignature(b *testing.B) {
 		req.Body.Close()
 
 		// Verify
-		err = VerifyHTTPRequestSignatureWithBody(
+		err = VerifyHTTPRequestStreaming(
 			benchmarkPublicKey,
 			req,
 			strings.NewReader(string(body)),
-			mustParseTime(sigCtx.Timestamp()),
-			sigCtx.Nonce(),
 			nil,
 		)
 		if err != nil {
@@ -352,7 +348,7 @@ func BenchmarkStreamingSignatureMemoryProfile(b *testing.B) {
 			b.Fatal(err)
 		}
 
-		_, err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
+		err = PrepareHTTPRequestForStreaming(benchmarkPrivateKey, req)
 		if err != nil {
 			b.Fatal(err)
 		}

@@ -19,6 +19,16 @@ import (
 	gocstring "github.com/agentuity/go-common/string"
 )
 
+const (
+	HeaderSignature           = "Signature"
+	HeaderSignatureAlg        = "X-Signature-Alg"
+	HeaderSignatureKeyID      = "X-Signature-KeyID"
+	HeaderSignatureTimestamp  = "X-Signature-Timestamp"
+	HeaderSignatureNonce      = "X-Signature-Nonce"
+	SignatureAlgorithmECDSA   = "ecdsa-sha256"
+	SignatureECDSAKeyIDPrefix = "k1-ecdsa-"
+)
+
 // Predefined errors for better error handling and testing
 var (
 	ErrSignatureComputationTimeout = errors.New("signature computation timeout")
@@ -70,22 +80,6 @@ func contextAwareCopy(ctx context.Context, dst io.Writer, src io.Reader) error {
 			return readErr
 		}
 	}
-}
-
-// SignatureContext holds the state needed for signature verification
-type SignatureContext struct {
-	timestamp string
-	nonce     string
-}
-
-// Timestamp returns the timestamp used for signature generation
-func (ctx *SignatureContext) Timestamp() string {
-	return ctx.timestamp
-}
-
-// Nonce returns the nonce used for signature generation
-func (ctx *SignatureContext) Nonce() string {
-	return ctx.nonce
 }
 
 // StreamingSignatureReader wraps the request body and ensures signature is computed before request is sent
@@ -176,7 +170,7 @@ func keyIDfromECDSAPublic(pub *ecdsa.PublicKey) (string, error) {
 	}
 	sum := sha256.Sum256(spki)
 	id := sum[:16] // 128-bit truncated ID (first 16 bytes)
-	return "k1-ecdsa-" + hex.EncodeToString(id), nil
+	return SignatureECDSAKeyIDPrefix + hex.EncodeToString(id), nil
 }
 
 func hashSignature(req *http.Request, body []byte, timestamp string, nonce string) []byte {
@@ -207,6 +201,7 @@ func hashSignatureStreaming(req *http.Request, bodyReader io.Reader, timestamp s
 	return hashSignatureWithBodyHash(req, bodyHash.Sum(nil), timestamp, nonce), nil
 }
 
+// SignHTTPRequest signs an HTTP request with the given private key and body and sets the signature headers in the request.
 func SignHTTPRequest(key *ecdsa.PrivateKey, req *http.Request, body []byte) error {
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	nonce, err := gocstring.GenerateRandomString(16)
@@ -224,26 +219,25 @@ func SignHTTPRequest(key *ecdsa.PrivateKey, req *http.Request, body []byte) erro
 		return err
 	}
 
-	req.Header.Set("Signature", base64.StdEncoding.EncodeToString(sig))
-	req.Header.Set("X-Signature-Alg", "ecdsa-sha256")
-	req.Header.Set("X-Signature-KeyID", keyID)
-	req.Header.Set("X-Signature-Timestamp", timestamp)
-	req.Header.Set("X-Signature-Nonce", nonce)
+	req.Header.Set(HeaderSignature, base64.StdEncoding.EncodeToString(sig))
+	req.Header.Set(HeaderSignatureAlg, SignatureAlgorithmECDSA)
+	req.Header.Set(HeaderSignatureKeyID, keyID)
+	req.Header.Set(HeaderSignatureTimestamp, timestamp)
+	req.Header.Set(HeaderSignatureNonce, nonce)
 	return nil
 }
 
 // PrepareHTTPRequestForStreaming sets up a request for streaming signature.
-// Returns a SignatureContext that should be used to complete the signature after the body is streamed.
-func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*SignatureContext, error) {
+func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) error {
 	keyID, err := keyIDfromECDSAPublic(&key.PublicKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
 	nonce, err := gocstring.GenerateRandomString(16)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate nonce: %w", err)
+		return fmt.Errorf("failed to generate nonce: %w", err)
 	}
 
 	// Handle nil req.Body by treating it as http.NoBody
@@ -253,9 +247,9 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 	}
 
 	// Announce trailer via request headers and set placeholder
-	req.Header.Set("Trailer", "Signature")
+	req.Header.Set("Trailer", HeaderSignature)
 	req.Trailer = make(http.Header)
-	req.Trailer.Set("Signature", "")
+	req.Trailer.Set(HeaderSignature, "")
 
 	// Enable chunked encoding for HTTP/1.1 (net/http will handle HTTP/2 appropriately)
 	req.ContentLength = -1
@@ -321,19 +315,16 @@ func PrepareHTTPRequestForStreaming(key *ecdsa.PrivateKey, req *http.Request) (*
 		}
 
 		// Successfully computed signature
-		req.Trailer.Set("Signature", base64.StdEncoding.EncodeToString(sig))
+		req.Trailer.Set(HeaderSignature, base64.StdEncoding.EncodeToString(sig))
 	}()
 
 	// Set signature metadata headers
-	req.Header.Set("X-Signature-Alg", "ecdsa-sha256")
-	req.Header.Set("X-Signature-KeyID", keyID)
-	req.Header.Set("X-Signature-Timestamp", timestamp)
-	req.Header.Set("X-Signature-Nonce", nonce)
+	req.Header.Set(HeaderSignatureAlg, SignatureAlgorithmECDSA)
+	req.Header.Set(HeaderSignatureKeyID, keyID)
+	req.Header.Set(HeaderSignatureTimestamp, timestamp)
+	req.Header.Set(HeaderSignatureNonce, nonce)
 
-	return &SignatureContext{
-		timestamp: timestamp,
-		nonce:     nonce,
-	}, nil
+	return nil
 }
 
 // hashSignatureWithBodyHash creates signature hash when body hash is already computed
@@ -352,26 +343,34 @@ func hashSignatureWithBodyHash(req *http.Request, bodyHash []byte, timestamp str
 	return h.Sum(nil)
 }
 
+// VerifyHTTPRequest verifies a request and body against the provided HTTP signature headers to ensure that the request is valid and the body matches the signature.
 func VerifyHTTPRequest(key *ecdsa.PublicKey, req *http.Request, body []byte, checkNonce func(string) error) error {
 	return VerifyHTTPRequestStreaming(key, req, bytes.NewReader(body), checkNonce)
 }
 
+// VerifyHTTPRequestStreaming verifies a request and body against the provided HTTP signature headers to ensure that the request is valid and the body matches the signature.
 func VerifyHTTPRequestStreaming(key *ecdsa.PublicKey, req *http.Request, bodyReader io.Reader, checkNonce func(string) error) error {
-	hash, err := hashSignatureStreaming(req, bodyReader, req.Header.Get("X-Signature-Timestamp"), req.Header.Get("X-Signature-Nonce"))
+	hash, err := hashSignatureStreaming(req, bodyReader, req.Header.Get(HeaderSignatureTimestamp), req.Header.Get(HeaderSignatureNonce))
 	if err != nil {
 		return err
 	}
-	return verifySignatureWithHash(key, req, hash, checkNonce)
+	signature := req.Trailer.Get(HeaderSignature)
+	if signature == "" {
+		signature = req.Header.Get(HeaderSignature)
+		if signature == "" {
+			return fmt.Errorf("missing header or trailer: %s", HeaderSignature)
+		}
+	}
+	return verifySignatureWithHash(key, req, hash, checkNonce, signature)
 }
 
-// VerifyHTTPRequestSignatureWithBody verifies a streaming signature from request trailer without requiring SignatureContext.
-// This allows verification to be decoupled from signing by reading and hashing the body on the verifier side.
+// VerifyHTTPRequestSignatureWithBody verifies a request and body against the provided HTTP signature headers to ensure that the request is valid and the body matches the signature.
 func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request, bodyReader io.Reader, timestamp time.Time, nonce string, checkNonce func(string) error) error {
 	// Guard against misuse: cross-check provided metadata vs headers
-	if ht := req.Header.Get("X-Signature-Timestamp"); ht != "" && ht != timestamp.Format(time.RFC3339Nano) {
+	if ht := req.Header.Get(HeaderSignatureTimestamp); ht != "" && ht != timestamp.Format(time.RFC3339Nano) {
 		return fmt.Errorf("timestamp mismatch between header (%s) and parameter (%s)", ht, timestamp.Format(time.RFC3339Nano))
 	}
-	if hn := req.Header.Get("X-Signature-Nonce"); hn != "" && hn != nonce {
+	if hn := req.Header.Get(HeaderSignatureNonce); hn != "" && hn != nonce {
 		return fmt.Errorf("nonce mismatch between header (%s) and parameter (%s)", hn, nonce)
 	}
 
@@ -386,9 +385,9 @@ func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request,
 	hash := hashSignatureWithBodyHash(req, bodyHash.Sum(nil), timestampStr, nonce)
 
 	// Get signature from request trailer
-	b64Sig := req.Trailer.Get("Signature")
+	b64Sig := req.Trailer.Get(HeaderSignature)
 	if b64Sig == "" {
-		return fmt.Errorf("missing signature in request trailer")
+		return fmt.Errorf("missing %s in request trailer", HeaderSignature)
 	}
 	sig, err := base64.StdEncoding.DecodeString(b64Sig)
 	if err != nil {
@@ -405,15 +404,11 @@ func VerifyHTTPRequestSignatureWithBody(key *ecdsa.PublicKey, req *http.Request,
 }
 
 // verifySignatureWithHash handles common verification logic when hash is already computed
-func verifySignatureWithHash(key *ecdsa.PublicKey, req *http.Request, hash []byte, checkNonce func(string) error) error {
-	timestamp := req.Header.Get("X-Signature-Timestamp")
-	nonce := req.Header.Get("X-Signature-Nonce")
+func verifySignatureWithHash(key *ecdsa.PublicKey, req *http.Request, hash []byte, checkNonce func(string) error, signature string) error {
+	timestamp := req.Header.Get(HeaderSignatureTimestamp)
+	nonce := req.Header.Get(HeaderSignatureNonce)
 
-	b64Sig := req.Header.Get("Signature")
-	if b64Sig == "" {
-		return fmt.Errorf("missing signature")
-	}
-	sig, err := base64.StdEncoding.DecodeString(b64Sig)
+	sig, err := base64.StdEncoding.DecodeString(signature)
 	if err != nil {
 		return err
 	}
@@ -428,15 +423,15 @@ func verifySignatureWithHash(key *ecdsa.PublicKey, req *http.Request, hash []byt
 // verifySignatureMetadata validates signature metadata (algorithm, key ID, timestamp, nonce)
 func verifySignatureMetadata(req *http.Request, timestamp, nonce string, key *ecdsa.PublicKey, checkNonce func(string) error) error {
 	// Validate algorithm
-	alg := req.Header.Get("X-Signature-Alg")
-	if alg != "ecdsa-sha256" {
+	alg := req.Header.Get(HeaderSignatureAlg)
+	if alg != SignatureAlgorithmECDSA {
 		return fmt.Errorf("unsupported signature algorithm: %q", alg)
 	}
 
 	// Validate key ID
-	kid := req.Header.Get("X-Signature-KeyID")
+	kid := req.Header.Get(HeaderSignatureKeyID)
 	if kid == "" {
-		return fmt.Errorf("missing key id")
+		return fmt.Errorf("missing %s", HeaderSignatureKeyID)
 	}
 
 	// Bind provided key to header to prevent mismatches
@@ -476,13 +471,13 @@ func verifySignatureMetadata(req *http.Request, timestamp, nonce string, key *ec
 // verifySignatureMetadataWithTime validates signature metadata using time.Time instead of string
 func verifySignatureMetadataWithTime(req *http.Request, timestamp time.Time, nonce string, key *ecdsa.PublicKey, checkNonce func(string) error) error {
 	// Validate algorithm
-	alg := req.Header.Get("X-Signature-Alg")
-	if alg != "ecdsa-sha256" {
+	alg := req.Header.Get(HeaderSignatureAlg)
+	if alg != SignatureAlgorithmECDSA {
 		return fmt.Errorf("unsupported signature algorithm: %q", alg)
 	}
 
 	// Validate key ID
-	kid := req.Header.Get("X-Signature-KeyID")
+	kid := req.Header.Get(HeaderSignatureKeyID)
 	if kid == "" {
 		return fmt.Errorf("missing key id")
 	}

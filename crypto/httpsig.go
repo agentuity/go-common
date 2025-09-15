@@ -120,7 +120,10 @@ func (s *synchronousSigningReader) Read(p []byte) (n int, err error) {
 	if err == io.EOF {
 		s.mu.Lock()
 		if !s.signed {
-			s.setSignature()
+			if err := s.setSignature(); err != nil {
+				s.mu.Unlock()
+				return 0, err
+			}
 			s.signed = true
 		}
 		s.mu.Unlock()
@@ -133,7 +136,10 @@ func (s *synchronousSigningReader) Close() error {
 	// Ensure signature is set even if EOF wasn't reached normally
 	s.mu.Lock()
 	if !s.signed {
-		s.setSignature()
+		if err := s.setSignature(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
 		s.signed = true
 	}
 	s.mu.Unlock()
@@ -144,18 +150,17 @@ func (s *synchronousSigningReader) Close() error {
 	return nil
 }
 
-func (s *synchronousSigningReader) setSignature() {
+func (s *synchronousSigningReader) setSignature() error {
 	bodyHash := s.hasher.Sum(nil)
 	hash := hashSignatureWithBodyHash(s.req, bodyHash, s.timestamp, s.nonce)
 	sig, err := ecdsa.SignASN1(rand.Reader, s.key, hash)
 	if err != nil {
-		// In case of error, we can't modify the trailer after the transport has started
-		// This is a design limitation that existing tests seem to handle gracefully
-		return
+		return err
 	}
 
 	// Set the signature in the trailer
 	s.req.Trailer.Set(HeaderSignature, base64.StdEncoding.EncodeToString(sig))
+	return nil
 }
 
 // PrepareHTTPRequestForStreaming sets up a request for streaming signature.

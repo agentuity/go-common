@@ -74,7 +74,7 @@ func (sm *ServerMetrics) UpdateGRPCMetrics(grpcMetrics *GRPCConnectionMetrics) {
 }
 
 // UpdatePerformanceMetrics updates performance metrics from the collector
-func (sm *ServerMetrics) UpdatePerformanceMetrics(perfMetrics *PerformanceMetrics) {
+func (sm *ServerMetrics) UpdatePerformanceMetrics(perfMetrics *pb.PerformanceMetrics) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.pb.Performance = perfMetrics

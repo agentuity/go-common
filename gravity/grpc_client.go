@@ -104,8 +104,7 @@ type GRPCGravityServer struct {
 	retryConfig     RetryConfig
 	circuitBreakers []*CircuitBreaker // One per connection
 
-	// Performance monitoring
-	metricsCollector *MetricsCollector
+	// Performance monitoring - optional
 	serverMetrics    *ServerMetrics
 
 	// Connection management
@@ -401,15 +400,12 @@ func (g *GRPCGravityServer) Start() error {
 	}
 	g.logger.Info("Tunnel streams established successfully")
 
-	g.logger.Info("Initializing metrics collector...")
-	// Initialize metrics collector after connections and circuit breakers are ready
-	g.metricsCollector = NewMetricsCollector(g.streamManager, g.circuitBreakers)
-	g.metricsCollector.Start(5 * time.Second) // Collect metrics every 5 seconds
-
+	// Metrics collector is now hadron-specific and handled externally
+	
 	// Set up Docker stats collection if provider supports it
 	// All providers should have these methods based on the Provider interface
 	g.logger.Info("Configuring Docker stats collection for provider")
-	g.provider.SetMetricsCollector(g.metricsCollector)
+	// Note: SetMetricsCollector will be called externally by hadron
 
 	// Re-acquire mutex for final state updates
 	g.mu.Lock()
@@ -608,30 +604,14 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 
-	// Record control message transmission
-	if g.metricsCollector != nil {
-		g.metricsCollector.RecordControlMessage()
+	// Metrics recording is now hadron-specific
 
-		// Estimate compression stats for control messages (gRPC compresses these)
-		// Typical control messages compress ~70% with gzip
-		msgSize := int64(len(msg.String()))     // Approximate message size
-		estimatedCompressed := msgSize * 3 / 10 // Assume 70% compression
-		g.metricsCollector.AddCompressionStats(msgSize, estimatedCompressed, 1*time.Millisecond)
-	}
-
-	start := time.Now()
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
 		g.logger.Debug("Actually sending connect message on primary control stream")
 		return stream.Send(msg)
 	})
 
-	// Record latency
-	if g.metricsCollector != nil {
-		g.metricsCollector.AddControlLatency(time.Since(start))
-		if err != nil {
-			g.metricsCollector.RecordError()
-		}
-	}
+	// Metrics recording is now hadron-specific
 
 	if err != nil {
 		return fmt.Errorf("failed to send connect message: %w", err)
@@ -818,14 +798,7 @@ func (g *GRPCGravityServer) handleConnectResponse(msgID string, connectionID str
 		return
 	}
 
-	// Start HTTP API server after successful gRPC connection
-	g.logger.Debug("Starting HTTP API server...")
-	if err := g.StartHTTPAPIServer(); err != nil {
-		g.logger.Error("Failed to start HTTP API server: %v", err)
-		// Continue anyway - HTTP server is optional
-	} else {
-		g.logger.Debug("HTTP API server started successfully")
-	}
+	// HTTP API server is now hadron-specific and started externally
 
 	g.logger.Info("Connected successfully to Gravity with connection ID: %s (total: %d)", connectionID, numConnIDs)
 
@@ -1187,9 +1160,6 @@ func (g *GRPCGravityServer) Stop() error {
 	g.cancel()
 
 	// Stop metrics collection
-	if g.metricsCollector != nil {
-		g.metricsCollector.Stop()
-	}
 
 	// Stop HTTP API server
 	if g.httpServer != nil {
@@ -1363,10 +1333,6 @@ func (g *GRPCGravityServer) GetServerMetrics(reset bool) *pb.ServerMetrics {
 	g.serverMetrics.UpdateSystemMetrics()
 
 	// Update performance metrics from collector
-	if g.metricsCollector != nil {
-		perfMetrics := g.metricsCollector.GetMetrics()
-		g.serverMetrics.UpdatePerformanceMetrics(perfMetrics)
-	}
 
 	// Update gRPC-specific metrics
 	grpcMetrics := g.getGRPCMetrics()
@@ -1739,7 +1705,6 @@ func (g *GRPCGravityServer) WritePacket(payload []byte) error {
 		StreamId: stream.streamID,
 	}
 
-	start := time.Now()
 	err := stream.stream.Send(tunnelPacket)
 	if err != nil {
 		if errors.Is(err, io.EOF) {
@@ -1753,13 +1718,7 @@ func (g *GRPCGravityServer) WritePacket(payload []byte) error {
 		}
 	}
 
-	// Update metrics
-	if g.metricsCollector != nil {
-		g.metricsCollector.AddPacketLatency(time.Since(start))
-		if err != nil {
-			g.metricsCollector.RecordError()
-		}
-	}
+	// Metrics recording removed
 
 	return err
 }
@@ -1882,19 +1841,12 @@ func (g *GRPCGravityServer) sendTunnelPacket(data []byte) error {
 	circuitBreaker := g.circuitBreakers[connectionIndex]
 
 	// Record packet transmission attempt
-	if g.metricsCollector != nil {
-		g.metricsCollector.RecordPacket(int64(len(data)))
-	}
 
-	start := time.Now()
 	err = RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
 		return streamInfo.stream.Send(packet)
 	})
 
 	// Record latency
-	if g.metricsCollector != nil {
-		g.metricsCollector.AddPacketLatency(time.Since(start))
-	}
 
 	if err != nil {
 		// Mark stream as unhealthy on error
@@ -1907,9 +1859,6 @@ func (g *GRPCGravityServer) sendTunnelPacket(data []byte) error {
 		g.streamManager.metricsMu.Unlock()
 
 		// Record error
-		if g.metricsCollector != nil {
-			g.metricsCollector.RecordError()
-		}
 		return fmt.Errorf("failed to send packet after retries: %w", err)
 	}
 
@@ -2201,11 +2150,11 @@ func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.Hos
 	// Get CPU count
 	cpuCount := runtime.NumCPU()
 
-	// Get actual memory info using system calls
-	memoryBytes := getSystemMemory()
+	// Get actual memory info using system calls - now handled by hadron
+	memoryBytes := uint64(0)
 
-	// Get disk info for current working directory
-	diskBytes := getDiskSpace(workingDir)
+	// Get disk info for current working directory - now handled by hadron
+	diskBytes := uint64(0)
 
 	return &pb.HostInfo{
 		Started:     uint64(time.Now().UnixMilli()),

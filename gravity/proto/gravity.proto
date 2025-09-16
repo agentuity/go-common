@@ -97,14 +97,21 @@ message TunnelPacket {
   string stream_id = 2; // Logical stream identifier for multiplexing
 }
 
+// ClientCapabilities defines what capabilities a client supports
+message ClientCapabilities {
+  bool provision_deployments = 1;   // Can handle provision deployment requests
+  bool unprovision_deployments = 2; // Can handle unprovision deployment requests
+}
+
 // Connect request from client to Gravity
 message ConnectRequest {
   int32 protocol_version = 1; // Protocol version number for compatibility
   string client_version = 2;  // Version string of the client (e.g., SHA, semver)
   string client_name = 3;     // Name of the client application (e.g., "hadron")
+  ClientCapabilities capabilities = 4; // Client capabilities for this connection
   repeated ExistingDeployment deployments =
-      4;                  // List of existing deployments to restore
-  HostInfo host_info = 5; // Information about the host system
+      5;                  // List of existing deployments to restore
+  HostInfo host_info = 6; // Information about the host system
 }
 
 // Connect response from Gravity to Hadron

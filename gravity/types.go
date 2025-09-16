@@ -7,6 +7,7 @@ import (
 	"github.com/agentuity/go-common/logger"
 	"github.com/agentuity/go-common/gravity/network"
 	"github.com/agentuity/go-common/gravity/provider"
+	pb "github.com/agentuity/go-common/gravity/proto"
 )
 
 // Buffer pool constants
@@ -37,6 +38,7 @@ type GravityConfig struct {
 	Secret          string
 	ClientVersion   string
 	ClientName      string
+	Capabilities    *pb.ClientCapabilities
 	PingInterval    time.Duration
 	ReportInterval  time.Duration
 	WorkingDir      string

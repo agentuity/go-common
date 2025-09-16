@@ -89,6 +89,7 @@ type GRPCGravityServer struct {
 	ip6Address    string
 	clientVersion string
 	clientName    string
+	capabilities  *pb.ClientCapabilities
 	hostInfo      *pb.HostInfo
 	workingDir    string
 
@@ -251,6 +252,7 @@ func New(config GravityConfig) (*GRPCGravityServer, error) {
 		ip6Address:             config.IP6Address,
 		clientVersion:          config.ClientVersion,
 		clientName:             config.ClientName,
+		capabilities:           config.Capabilities,
 		tunInterface:           config.TunInterface,
 		hostInfo:               hostInfo,
 		poolConfig:             poolConfig,
@@ -586,6 +588,7 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 		ProtocolVersion: protocolVersion,
 		ClientVersion:   g.clientVersion,
 		ClientName:      g.clientName,
+		Capabilities:    g.capabilities,
 		Deployments:     existingDeployments,
 		HostInfo:        g.hostInfo,
 	}
@@ -601,8 +604,9 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 
 	// Send connect message on FIRST control stream only to establish client identity
 	g.logger.Info("Sending connect message on primary control stream")
-	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s",
-		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion)
+	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v]",
+		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion,
+		connectReq.Capabilities.GetProvisionDeployments(), connectReq.Capabilities.GetUnprovisionDeployments())
 
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]

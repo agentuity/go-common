@@ -19,7 +19,7 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	GravityControl_ProvisionMachine_FullMethodName      = "/gravity.GravityControl/ProvisionMachine"
+	GravityControl_Provision_FullMethodName             = "/gravity.GravityControl/Provision"
 	GravityControl_GetDeploymentMetadata_FullMethodName = "/gravity.GravityControl/GetDeploymentMetadata"
 )
 
@@ -29,9 +29,8 @@ const (
 //
 // GravityControl service handles machine provisioning and metadata
 type GravityControlClient interface {
-	// provision a new machine is called on startup of a new machine from a public
-	// image to get the certificates and configuration
-	ProvisionMachine(ctx context.Context, in *ProvisionMachineRequest, opts ...grpc.CallOption) (*ProvisionMachineResponse, error)
+	// provision is called on startup to get certificates and configuration
+	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error)
 }
@@ -44,10 +43,10 @@ func NewGravityControlClient(cc grpc.ClientConnInterface) GravityControlClient {
 	return &gravityControlClient{cc}
 }
 
-func (c *gravityControlClient) ProvisionMachine(ctx context.Context, in *ProvisionMachineRequest, opts ...grpc.CallOption) (*ProvisionMachineResponse, error) {
+func (c *gravityControlClient) Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProvisionMachineResponse)
-	err := c.cc.Invoke(ctx, GravityControl_ProvisionMachine_FullMethodName, in, out, cOpts...)
+	out := new(ProvisionResponse)
+	err := c.cc.Invoke(ctx, GravityControl_Provision_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -70,9 +69,8 @@ func (c *gravityControlClient) GetDeploymentMetadata(ctx context.Context, in *De
 //
 // GravityControl service handles machine provisioning and metadata
 type GravityControlServer interface {
-	// provision a new machine is called on startup of a new machine from a public
-	// image to get the certificates and configuration
-	ProvisionMachine(context.Context, *ProvisionMachineRequest) (*ProvisionMachineResponse, error)
+	// provision is called on startup to get certificates and configuration
+	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error)
 	mustEmbedUnimplementedGravityControlServer()
@@ -85,8 +83,8 @@ type GravityControlServer interface {
 // pointer dereference when methods are called.
 type UnimplementedGravityControlServer struct{}
 
-func (UnimplementedGravityControlServer) ProvisionMachine(context.Context, *ProvisionMachineRequest) (*ProvisionMachineResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ProvisionMachine not implemented")
+func (UnimplementedGravityControlServer) Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Provision not implemented")
 }
 func (UnimplementedGravityControlServer) GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeploymentMetadata not implemented")
@@ -112,20 +110,20 @@ func RegisterGravityControlServer(s grpc.ServiceRegistrar, srv GravityControlSer
 	s.RegisterService(&GravityControl_ServiceDesc, srv)
 }
 
-func _GravityControl_ProvisionMachine_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProvisionMachineRequest)
+func _GravityControl_Provision_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ProvisionRequest)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(GravityControlServer).ProvisionMachine(ctx, in)
+		return srv.(GravityControlServer).Provision(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: GravityControl_ProvisionMachine_FullMethodName,
+		FullMethod: GravityControl_Provision_FullMethodName,
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GravityControlServer).ProvisionMachine(ctx, req.(*ProvisionMachineRequest))
+		return srv.(GravityControlServer).Provision(ctx, req.(*ProvisionRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -156,8 +154,8 @@ var GravityControl_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*GravityControlServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "ProvisionMachine",
-			Handler:    _GravityControl_ProvisionMachine_Handler,
+			MethodName: "Provision",
+			Handler:    _GravityControl_Provision_Handler,
 		},
 		{
 			MethodName: "GetDeploymentMetadata",

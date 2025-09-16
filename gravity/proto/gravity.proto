@@ -8,10 +8,9 @@ import "google/protobuf/timestamp.proto";
 
 // GravityControl service handles machine provisioning and metadata
 service GravityControl {
-  // provision a new machine is called on startup of a new machine from a public
-  // image to get the certificates and configuration
-  rpc ProvisionMachine(ProvisionMachineRequest)
-      returns (ProvisionMachineResponse);
+  // provision is called on startup to get certificates and configuration
+  rpc Provision(ProvisionRequest)
+      returns (ProvisionResponse);
   // get deployment metadata for provisioning
   rpc GetDeploymentMetadata(DeploymentMetadataRequest)
       returns (DeploymentMetadataResponse);
@@ -27,7 +26,7 @@ service GravityTunnel {
   rpc StreamPackets(stream TunnelPacket) returns (stream TunnelPacket);
 }
 
-message ProvisionMachineRequest {
+message ProvisionRequest {
   string region = 1;            // the region for the machine
   string availability_zone = 2; // the availability zone for the machine
   string provider = 3;          // the provider for the machine
@@ -40,7 +39,7 @@ message ProvisionMachineRequest {
   bool ephemeral = 9;           // if the machine is ephemeral
 }
 
-message ProvisionMachineResponse {
+message ProvisionResponse {
   bytes ca_certificate =
       1; // the CA certificate to trust for self-signed server certificates
   bytes certificate = 2; // the cert to use for the server

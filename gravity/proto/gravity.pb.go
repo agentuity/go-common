@@ -22,7 +22,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-type ProvisionMachineRequest struct {
+type ProvisionRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Region           string                 `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`                                             // the region for the machine
 	AvailabilityZone string                 `protobuf:"bytes,2,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the machine
@@ -38,20 +38,20 @@ type ProvisionMachineRequest struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ProvisionMachineRequest) Reset() {
-	*x = ProvisionMachineRequest{}
+func (x *ProvisionRequest) Reset() {
+	*x = ProvisionRequest{}
 	mi := &file_gravity_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ProvisionMachineRequest) String() string {
+func (x *ProvisionRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ProvisionMachineRequest) ProtoMessage() {}
+func (*ProvisionRequest) ProtoMessage() {}
 
-func (x *ProvisionMachineRequest) ProtoReflect() protoreflect.Message {
+func (x *ProvisionRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_gravity_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -63,75 +63,75 @@ func (x *ProvisionMachineRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ProvisionMachineRequest.ProtoReflect.Descriptor instead.
-func (*ProvisionMachineRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use ProvisionRequest.ProtoReflect.Descriptor instead.
+func (*ProvisionRequest) Descriptor() ([]byte, []int) {
 	return file_gravity_proto_rawDescGZIP(), []int{0}
 }
 
-func (x *ProvisionMachineRequest) GetRegion() string {
+func (x *ProvisionRequest) GetRegion() string {
 	if x != nil {
 		return x.Region
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetAvailabilityZone() string {
+func (x *ProvisionRequest) GetAvailabilityZone() string {
 	if x != nil {
 		return x.AvailabilityZone
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetProvider() string {
+func (x *ProvisionRequest) GetProvider() string {
 	if x != nil {
 		return x.Provider
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetInstanceId() string {
+func (x *ProvisionRequest) GetInstanceId() string {
 	if x != nil {
 		return x.InstanceId
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetPrivateIpv4() string {
+func (x *ProvisionRequest) GetPrivateIpv4() string {
 	if x != nil {
 		return x.PrivateIpv4
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetPublicKey() string {
+func (x *ProvisionRequest) GetPublicKey() string {
 	if x != nil {
 		return x.PublicKey
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetHostname() string {
+func (x *ProvisionRequest) GetHostname() string {
 	if x != nil {
 		return x.Hostname
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetErrorMessage() string {
+func (x *ProvisionRequest) GetErrorMessage() string {
 	if x != nil {
 		return x.ErrorMessage
 	}
 	return ""
 }
 
-func (x *ProvisionMachineRequest) GetEphemeral() bool {
+func (x *ProvisionRequest) GetEphemeral() bool {
 	if x != nil {
 		return x.Ephemeral
 	}
 	return false
 }
 
-type ProvisionMachineResponse struct {
+type ProvisionResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	CaCertificate        []byte                 `protobuf:"bytes,1,opt,name=ca_certificate,json=caCertificate,proto3" json:"ca_certificate,omitempty"`                        // the CA certificate to trust for self-signed server certificates
 	Certificate          []byte                 `protobuf:"bytes,2,opt,name=certificate,proto3" json:"certificate,omitempty"`                                                 // the cert to use for the server
@@ -145,20 +145,20 @@ type ProvisionMachineResponse struct {
 	sizeCache            protoimpl.SizeCache
 }
 
-func (x *ProvisionMachineResponse) Reset() {
-	*x = ProvisionMachineResponse{}
+func (x *ProvisionResponse) Reset() {
+	*x = ProvisionResponse{}
 	mi := &file_gravity_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ProvisionMachineResponse) String() string {
+func (x *ProvisionResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ProvisionMachineResponse) ProtoMessage() {}
+func (*ProvisionResponse) ProtoMessage() {}
 
-func (x *ProvisionMachineResponse) ProtoReflect() protoreflect.Message {
+func (x *ProvisionResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_gravity_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -170,61 +170,61 @@ func (x *ProvisionMachineResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ProvisionMachineResponse.ProtoReflect.Descriptor instead.
-func (*ProvisionMachineResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use ProvisionResponse.ProtoReflect.Descriptor instead.
+func (*ProvisionResponse) Descriptor() ([]byte, []int) {
 	return file_gravity_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *ProvisionMachineResponse) GetCaCertificate() []byte {
+func (x *ProvisionResponse) GetCaCertificate() []byte {
 	if x != nil {
 		return x.CaCertificate
 	}
 	return nil
 }
 
-func (x *ProvisionMachineResponse) GetCertificate() []byte {
+func (x *ProvisionResponse) GetCertificate() []byte {
 	if x != nil {
 		return x.Certificate
 	}
 	return nil
 }
 
-func (x *ProvisionMachineResponse) GetPrivateKey() []byte {
+func (x *ProvisionResponse) GetPrivateKey() []byte {
 	if x != nil {
 		return x.PrivateKey
 	}
 	return nil
 }
 
-func (x *ProvisionMachineResponse) GetExpires() *timestamppb.Timestamp {
+func (x *ProvisionResponse) GetExpires() *timestamppb.Timestamp {
 	if x != nil {
 		return x.Expires
 	}
 	return nil
 }
 
-func (x *ProvisionMachineResponse) GetMachineToken() string {
+func (x *ProvisionResponse) GetMachineToken() string {
 	if x != nil {
 		return x.MachineToken
 	}
 	return ""
 }
 
-func (x *ProvisionMachineResponse) GetOrgId() string {
+func (x *ProvisionResponse) GetOrgId() string {
 	if x != nil {
 		return x.OrgId
 	}
 	return ""
 }
 
-func (x *ProvisionMachineResponse) GetClusterId() string {
+func (x *ProvisionResponse) GetClusterId() string {
 	if x != nil {
 		return x.ClusterId
 	}
 	return ""
 }
 
-func (x *ProvisionMachineResponse) GetDeploymentPrivateKey() []byte {
+func (x *ProvisionResponse) GetDeploymentPrivateKey() []byte {
 	if x != nil {
 		return x.DeploymentPrivateKey
 	}
@@ -3932,8 +3932,8 @@ var File_gravity_proto protoreflect.FileDescriptor
 
 const file_gravity_proto_rawDesc = "" +
 	"\n" +
-	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\"\xbc\x02\n" +
-	"\x17ProvisionMachineRequest\x12\x16\n" +
+	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x02\n" +
+	"\x10ProvisionRequest\x12\x16\n" +
 	"\x06region\x18\x01 \x01(\tR\x06region\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x1a\n" +
 	"\bprovider\x18\x03 \x01(\tR\bprovider\x12\x1f\n" +
@@ -3944,8 +3944,8 @@ const file_gravity_proto_rawDesc = "" +
 	"public_key\x18\x06 \x01(\tR\tpublicKey\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12#\n" +
 	"\rerror_message\x18\b \x01(\tR\ferrorMessage\x12\x1c\n" +
-	"\tephemeral\x18\t \x01(\bR\tephemeral\"\xcb\x02\n" +
-	"\x18ProvisionMachineResponse\x12%\n" +
+	"\tephemeral\x18\t \x01(\bR\tephemeral\"\xc4\x02\n" +
+	"\x11ProvisionResponse\x12%\n" +
 	"\x0eca_certificate\x18\x01 \x01(\fR\rcaCertificate\x12 \n" +
 	"\vcertificate\x18\x02 \x01(\fR\vcertificate\x12\x1f\n" +
 	"\vprivate_key\x18\x03 \x01(\fR\n" +
@@ -4278,9 +4278,9 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"otlp_token\x18\x05 \x01(\tR\totlpToken\x12\x1d\n" +
 	"\n" +
-	"auth_token\x18\x06 \x01(\tR\tauthToken2\xcb\x01\n" +
-	"\x0eGravityControl\x12W\n" +
-	"\x10ProvisionMachine\x12 .gravity.ProvisionMachineRequest\x1a!.gravity.ProvisionMachineResponse\x12`\n" +
+	"auth_token\x18\x06 \x01(\tR\tauthToken2\xb6\x01\n" +
+	"\x0eGravityControl\x12B\n" +
+	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse2\x9b\x01\n" +
 	"\rGravityTunnel\x12G\n" +
 	"\x0fEstablishTunnel\x12\x17.gravity.ControlMessage\x1a\x17.gravity.ControlMessage(\x010\x01\x12A\n" +
@@ -4300,8 +4300,8 @@ func file_gravity_proto_rawDescGZIP() []byte {
 
 var file_gravity_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_gravity_proto_goTypes = []any{
-	(*ProvisionMachineRequest)(nil),     // 0: gravity.ProvisionMachineRequest
-	(*ProvisionMachineResponse)(nil),    // 1: gravity.ProvisionMachineResponse
+	(*ProvisionRequest)(nil),            // 0: gravity.ProvisionRequest
+	(*ProvisionResponse)(nil),           // 1: gravity.ProvisionResponse
 	(*ControlMessage)(nil),              // 2: gravity.ControlMessage
 	(*TunnelPacket)(nil),                // 3: gravity.TunnelPacket
 	(*ClientCapabilities)(nil),          // 4: gravity.ClientCapabilities
@@ -4346,7 +4346,7 @@ var file_gravity_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
 }
 var file_gravity_proto_depIdxs = []int32{
-	43, // 0: gravity.ProvisionMachineResponse.expires:type_name -> google.protobuf.Timestamp
+	43, // 0: gravity.ProvisionResponse.expires:type_name -> google.protobuf.Timestamp
 	5,  // 1: gravity.ControlMessage.connect:type_name -> gravity.ConnectRequest
 	6,  // 2: gravity.ControlMessage.connect_response:type_name -> gravity.ConnectResponse
 	13, // 3: gravity.ControlMessage.close:type_name -> gravity.CloseRequest
@@ -4388,11 +4388,11 @@ var file_gravity_proto_depIdxs = []int32{
 	25, // 39: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
 	24, // 40: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
 	37, // 41: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
-	0,  // 42: gravity.GravityControl.ProvisionMachine:input_type -> gravity.ProvisionMachineRequest
+	0,  // 42: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
 	39, // 43: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
 	2,  // 44: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
 	3,  // 45: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
-	1,  // 46: gravity.GravityControl.ProvisionMachine:output_type -> gravity.ProvisionMachineResponse
+	1,  // 46: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
 	40, // 47: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
 	2,  // 48: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
 	3,  // 49: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket

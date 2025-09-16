@@ -2247,9 +2247,9 @@ func (g *GRPCGravityServer) returnBuffer(pooledBuf *PooledBuffer) {
 	}
 }
 
-// ProvisionMachine calls the ProvisionMachine gRPC method with TLS verification disabled
+// ProvisionMachine calls the Provision gRPC method with TLS verification disabled
 // This is a standalone method for initial machine provisioning
-func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider, privateIP, token, publicKey, hostname, errorMessage string, ephemeral bool) (*pb.ProvisionMachineResponse, error) {
+func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider, privateIP, token, publicKey, hostname, errorMessage string, ephemeral bool) (*pb.ProvisionResponse, error) {
 	// Parse gRPC URL
 	serverName, err := extractHostnameFromGravityURL(gravityURL)
 	if err != nil {
@@ -2281,7 +2281,7 @@ func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider
 	client := pb.NewGravityControlClient(conn)
 
 	// Create provision request
-	req := &pb.ProvisionMachineRequest{
+	req := &pb.ProvisionRequest{
 		InstanceId:       instanceID,
 		Region:           region,
 		AvailabilityZone: availabilityZone,
@@ -2293,7 +2293,7 @@ func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider
 		Ephemeral:        ephemeral,
 	}
 
-	// Call ProvisionMachine with a timeout and JWT token
+	// Call Provision with a timeout and JWT token
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -2303,9 +2303,9 @@ func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 
-	response, err := client.ProvisionMachine(ctx, req)
+	response, err := client.Provision(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("ProvisionMachine call failed: %w", err)
+		return nil, fmt.Errorf("Provision call failed: %w", err)
 	}
 
 	return response, nil

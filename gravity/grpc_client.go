@@ -47,8 +47,7 @@ func init() {
 // Error variables for consistency with old implementation
 var ErrConnectionClosed = errors.New("gravity connection closed")
 
-// Constants for activity flushing
-const activityFlushInterval = 2 * time.Second
+
 
 // ConnectionPoolConfig holds configuration for gRPC connection pool optimization
 type ConnectionPoolConfig struct {
@@ -139,9 +138,7 @@ type GRPCGravityServer struct {
 	pendingRouteDeployment   map[string]chan *pb.RouteDeploymentResponse
 	pendingRouteDeploymentMu sync.RWMutex
 
-	// Activity tracking
-	activities []*pb.HTTPEvent
-	activityMu sync.RWMutex
+
 
 	// Packet channels for TUN device multiplexing
 	inboundPackets  chan *PooledBuffer
@@ -424,7 +421,7 @@ func (g *GRPCGravityServer) Start() error {
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()
 	go g.handleTextMessages()
-	go g.handleActivityReporting()
+
 	go g.monitorConnectionHealth()
 	go g.handlePingHeartbeat()
 	go g.handleReportDelivery()
@@ -722,8 +719,6 @@ func (g *GRPCGravityServer) processControlMessage(msg *pb.ControlMessage) {
 	case *pb.ControlMessage_Unprovision:
 		g.handleUnprovisionRequest(msg.Id, m.Unprovision)
 	case *pb.ControlMessage_Report:
-		// this is a server method
-	case *pb.ControlMessage_Activity:
 		// this is a server method
 	case *pb.ControlMessage_Ping:
 		g.handlePingRequest(msg.Id, m.Ping)
@@ -1617,14 +1612,7 @@ func (sm *StreamManager) selectOptimalTunnelStream() *StreamInfo {
 
 // Provider.Server interface implementations
 
-// Activity adds an HTTP event to the activity buffer for batch reporting
-func (g *GRPCGravityServer) Activity(event *pb.HTTPEvent) {
-	g.activityMu.Lock()
-	g.activities = append(g.activities, event)
-	g.activityMu.Unlock()
 
-	// Note: Batched sending is handled by the activity flushing goroutine
-}
 
 // Unprovision sends an unprovision request to the gravity server
 func (g *GRPCGravityServer) Unprovision(deploymentID string) error {
@@ -1730,48 +1718,7 @@ func (g *GRPCGravityServer) WritePacket(payload []byte) error {
 	return err
 }
 
-// handleActivityReporting periodically flushes activity events to the gravity server
-func (g *GRPCGravityServer) handleActivityReporting() {
-	ticker := time.NewTicker(activityFlushInterval)
-	defer ticker.Stop()
 
-	for {
-		select {
-		case <-g.ctx.Done():
-			return
-		case <-ticker.C:
-			g.activityMu.Lock()
-			if len(g.activities) == 0 {
-				g.activityMu.Unlock()
-				continue
-			}
-
-			// Copy activities and reset buffer
-			activities := make([]*pb.HTTPEvent, len(g.activities))
-			copy(activities, g.activities)
-			g.activities = g.activities[:0] // Reset slice but keep capacity
-			g.activityMu.Unlock()
-
-			// Send protobuf events directly (no conversion needed)
-			activityReq := &pb.ActivityRequest{
-				Events: activities, // Already a protobuf HTTPEvent
-			}
-
-			controlMsg := &pb.ControlMessage{
-				Id: generateMessageID(),
-				MessageType: &pb.ControlMessage_Activity{
-					Activity: activityReq,
-				},
-			}
-
-			if err := g.sendControlMessageAsync(controlMsg); err != nil {
-				g.logger.Error("Failed to send activity report: %v", err)
-			}
-
-			g.logger.Debug("Reported %d activities to gravity", len(activities))
-		}
-	}
-}
 
 // Background packet handlers
 

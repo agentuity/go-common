@@ -76,7 +76,6 @@ message ControlMessage {
     PingRequest ping = 30;
     PongResponse pong = 31;
     ReportRequest report = 32;
-    ActivityRequest activity = 33;
 
     // Session control (40-49)
     PauseRequest pause = 40;
@@ -149,10 +148,7 @@ message ReportRequest {
       1; // Comprehensive server metrics and performance data
 }
 
-// Activity request for HTTP event tracking
-message ActivityRequest {
-  repeated HTTPEvent events = 1; // Batch of HTTP request/response event details
-}
+
 
 // Ping request for health checking
 message PingRequest { google.protobuf.Timestamp timestamp = 1; }
@@ -258,22 +254,7 @@ message HostMapping {
   string ip_address = 2; // IP address to map the hostname to
 }
 
-message HTTPEvent {
-  string method = 1;        // HTTP method (GET, POST, etc.)
-  string path = 2;          // Request path
-  int32 status = 3;         // HTTP status code
-  int64 started = 4;        // Request start time (epoch milliseconds)
-  int64 duration = 5;       // Request duration in milliseconds
-  string deployment_id = 6; // ID of the deployment handling the request
-  string session_id = 7;    // Session ID for this request
-  string agent_id = 8;      // Agent identifier
-  string machine_id = 9;    // Machine identifier
-  string project_id = 10;   // Project identifier
-  string org_id = 11;       // Organization identifier
-  int64 cpu_units = 12;     // CPU units consumed
-  int64 memory_units = 13;  // Memory units consumed
-  int64 disk_units = 14;    // Disk units consumed
-}
+
 
 
 

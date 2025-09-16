@@ -32,8 +32,7 @@ type Server interface {
 	Pause(reason string) error
 	// Resume is called to tell the server to resume sending provisioned events
 	Resume(reason string) error
-	// Activity is called to report activity to the server (now uses protobuf type)
-	Activity(event *pb.HTTPEvent)
+
 	// Write a packet to the gravity server
 	WritePacket(payload []byte) error
 }

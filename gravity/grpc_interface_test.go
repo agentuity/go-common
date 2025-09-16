@@ -14,44 +14,7 @@ func TestGRPCGravityServerImplementsProviderServer(t *testing.T) {
 	var _ provider.Server = (*GRPCGravityServer)(nil)
 }
 
-// TestActivityMethod tests the Activity method functionality
-func TestActivityMethod(t *testing.T) {
-	// Create a minimal GRPCGravityServer for testing
-	server := &GRPCGravityServer{
-		activities: make([]*pb.HTTPEvent, 0),
-	}
 
-	// Test activity using protobuf type
-	event := &pb.HTTPEvent{
-		Method:       "GET",
-		Path:         "/test",
-		Status:       200,
-		Started:      time.Now().UnixMilli(),
-		Duration:     100,
-		DeploymentId: "test-deployment",
-		SessionId:    "test-session",
-		AgentId:      "test-agent",
-	}
-
-	// Call Activity method
-	server.Activity(event)
-
-	// Verify activity was stored
-	server.activityMu.Lock()
-	defer server.activityMu.Unlock()
-
-	if len(server.activities) != 1 {
-		t.Errorf("Expected 1 activity, got %d", len(server.activities))
-	}
-
-	if server.activities[0].Method != "GET" {
-		t.Errorf("Expected method GET, got %s", server.activities[0].Method)
-	}
-
-	if server.activities[0].Path != "/test" {
-		t.Errorf("Expected path /test, got %s", server.activities[0].Path)
-	}
-}
 
 // TestWritePacketMethod tests the WritePacket method with no connection
 func TestWritePacketMethodWithoutConnection(t *testing.T) {

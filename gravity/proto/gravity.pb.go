@@ -613,13 +613,14 @@ func (x *TunnelPacket) GetStreamId() string {
 	return ""
 }
 
-// Connect request from Hadron to Gravity
+// Connect request from client to Gravity
 type ConnectRequest struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	ProtocolVersion int32                  `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"` // Protocol version number for compatibility
-	HadronVersion   string                 `protobuf:"bytes,2,opt,name=hadron_version,json=hadronVersion,proto3" json:"hadron_version,omitempty"`        // Version string of Hadron client
-	Deployments     []*ExistingDeployment  `protobuf:"bytes,3,rep,name=deployments,proto3" json:"deployments,omitempty"`                                 // List of existing deployments to restore
-	HostInfo        *HostInfo              `protobuf:"bytes,4,opt,name=host_info,json=hostInfo,proto3" json:"host_info,omitempty"`                       // Information about the host system
+	ClientVersion   string                 `protobuf:"bytes,2,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`        // Version string of the client (e.g., SHA, semver)
+	ClientName      string                 `protobuf:"bytes,3,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`                 // Name of the client application (e.g., "hadron")
+	Deployments     []*ExistingDeployment  `protobuf:"bytes,4,rep,name=deployments,proto3" json:"deployments,omitempty"`                                 // List of existing deployments to restore
+	HostInfo        *HostInfo              `protobuf:"bytes,5,opt,name=host_info,json=hostInfo,proto3" json:"host_info,omitempty"`                       // Information about the host system
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -661,9 +662,16 @@ func (x *ConnectRequest) GetProtocolVersion() int32 {
 	return 0
 }
 
-func (x *ConnectRequest) GetHadronVersion() string {
+func (x *ConnectRequest) GetClientVersion() string {
 	if x != nil {
-		return x.HadronVersion
+		return x.ClientVersion
+	}
+	return ""
+}
+
+func (x *ConnectRequest) GetClientName() string {
+	if x != nil {
+		return x.ClientName
 	}
 	return ""
 }
@@ -4375,12 +4383,14 @@ const file_gravity_proto_rawDesc = "" +
 	"\fmessage_type\"?\n" +
 	"\fTunnelPacket\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
-	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\xd1\x01\n" +
+	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\xf2\x01\n" +
 	"\x0eConnectRequest\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12%\n" +
-	"\x0ehadron_version\x18\x02 \x01(\tR\rhadronVersion\x12=\n" +
-	"\vdeployments\x18\x03 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
-	"\thost_info\x18\x04 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\"\xec\x01\n" +
+	"\x0eclient_version\x18\x02 \x01(\tR\rclientVersion\x12\x1f\n" +
+	"\vclient_name\x18\x03 \x01(\tR\n" +
+	"clientName\x12=\n" +
+	"\vdeployments\x18\x04 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
+	"\thost_info\x18\x05 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\"\xec\x01\n" +
 	"\x0fConnectResponse\x12\x19\n" +
 	"\botlp_url\x18\x01 \x01(\tR\aotlpUrl\x12\x17\n" +
 	"\aapi_url\x18\x03 \x01(\tR\x06apiUrl\x12 \n" +

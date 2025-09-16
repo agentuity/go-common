@@ -97,13 +97,14 @@ message TunnelPacket {
   string stream_id = 2; // Logical stream identifier for multiplexing
 }
 
-// Connect request from Hadron to Gravity
+// Connect request from client to Gravity
 message ConnectRequest {
   int32 protocol_version = 1; // Protocol version number for compatibility
-  string hadron_version = 2;  // Version string of Hadron client
+  string client_version = 2;  // Version string of the client (e.g., SHA, semver)
+  string client_name = 3;     // Name of the client application (e.g., "hadron")
   repeated ExistingDeployment deployments =
-      3;                  // List of existing deployments to restore
-  HostInfo host_info = 4; // Information about the host system
+      4;                  // List of existing deployments to restore
+  HostInfo host_info = 5; // Information about the host system
 }
 
 // Connect response from Gravity to Hadron

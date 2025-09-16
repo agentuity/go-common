@@ -87,7 +87,8 @@ type GRPCGravityServer struct {
 	secret        string
 	ip4Address    string
 	ip6Address    string
-	hadronVersion string
+	clientVersion string
+	clientName    string
 	hostInfo      *pb.HostInfo
 	workingDir    string
 
@@ -248,7 +249,8 @@ func New(config GravityConfig) (*GRPCGravityServer, error) {
 		secret:                 config.Secret,
 		ip4Address:             config.IP4Address,
 		ip6Address:             config.IP6Address,
-		hadronVersion:          config.HadronVersion,
+		clientVersion:          config.ClientVersion,
+		clientName:             config.ClientName,
 		tunInterface:           config.TunInterface,
 		hostInfo:               hostInfo,
 		poolConfig:             poolConfig,
@@ -582,7 +584,8 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 	// Create connect request
 	connectReq := &pb.ConnectRequest{
 		ProtocolVersion: protocolVersion,
-		HadronVersion:   g.hadronVersion,
+		ClientVersion:   g.clientVersion,
+		ClientName:      g.clientName,
 		Deployments:     existingDeployments,
 		HostInfo:        g.hostInfo,
 	}
@@ -598,8 +601,8 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 
 	// Send connect message on FIRST control stream only to establish client identity
 	g.logger.Info("Sending connect message on primary control stream")
-	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, HadronVersion=%s",
-		msg.Id, connectReq.ProtocolVersion, connectReq.HadronVersion)
+	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s",
+		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion)
 
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]

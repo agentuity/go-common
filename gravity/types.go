@@ -35,7 +35,8 @@ type GravityConfig struct {
 	InstanceID      string
 	AuthToken       string
 	Secret          string
-	HadronVersion   string
+	ClientVersion   string
+	ClientName      string
 	PingInterval    time.Duration
 	ReportInterval  time.Duration
 	WorkingDir      string

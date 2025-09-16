@@ -108,10 +108,10 @@ message ConnectRequest {
   int32 protocol_version = 1; // Protocol version number for compatibility
   string client_version = 2;  // Version string of the client (e.g., SHA, semver)
   string client_name = 3;     // Name of the client application (e.g., "hadron")
-  ClientCapabilities capabilities = 4; // Client capabilities for this connection
   repeated ExistingDeployment deployments =
-      5;                  // List of existing deployments to restore
-  HostInfo host_info = 6; // Information about the host system
+      4;                  // List of existing deployments to restore
+  HostInfo host_info = 5; // Information about the host system
+  ClientCapabilities capabilities = 6; // Client capabilities for this connection
 }
 
 // Connect response from Gravity to Hadron

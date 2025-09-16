@@ -672,9 +672,9 @@ type ConnectRequest struct {
 	ProtocolVersion int32                  `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"` // Protocol version number for compatibility
 	ClientVersion   string                 `protobuf:"bytes,2,opt,name=client_version,json=clientVersion,proto3" json:"client_version,omitempty"`        // Version string of the client (e.g., SHA, semver)
 	ClientName      string                 `protobuf:"bytes,3,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`                 // Name of the client application (e.g., "hadron")
-	Capabilities    *ClientCapabilities    `protobuf:"bytes,4,opt,name=capabilities,proto3" json:"capabilities,omitempty"`                               // Client capabilities for this connection
-	Deployments     []*ExistingDeployment  `protobuf:"bytes,5,rep,name=deployments,proto3" json:"deployments,omitempty"`                                 // List of existing deployments to restore
-	HostInfo        *HostInfo              `protobuf:"bytes,6,opt,name=host_info,json=hostInfo,proto3" json:"host_info,omitempty"`                       // Information about the host system
+	Deployments     []*ExistingDeployment  `protobuf:"bytes,4,rep,name=deployments,proto3" json:"deployments,omitempty"`                                 // List of existing deployments to restore
+	HostInfo        *HostInfo              `protobuf:"bytes,5,opt,name=host_info,json=hostInfo,proto3" json:"host_info,omitempty"`                       // Information about the host system
+	Capabilities    *ClientCapabilities    `protobuf:"bytes,6,opt,name=capabilities,proto3" json:"capabilities,omitempty"`                               // Client capabilities for this connection
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -730,13 +730,6 @@ func (x *ConnectRequest) GetClientName() string {
 	return ""
 }
 
-func (x *ConnectRequest) GetCapabilities() *ClientCapabilities {
-	if x != nil {
-		return x.Capabilities
-	}
-	return nil
-}
-
 func (x *ConnectRequest) GetDeployments() []*ExistingDeployment {
 	if x != nil {
 		return x.Deployments
@@ -747,6 +740,13 @@ func (x *ConnectRequest) GetDeployments() []*ExistingDeployment {
 func (x *ConnectRequest) GetHostInfo() *HostInfo {
 	if x != nil {
 		return x.HostInfo
+	}
+	return nil
+}
+
+func (x *ConnectRequest) GetCapabilities() *ClientCapabilities {
+	if x != nil {
+		return x.Capabilities
 	}
 	return nil
 }
@@ -4452,10 +4452,10 @@ const file_gravity_proto_rawDesc = "" +
 	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12%\n" +
 	"\x0eclient_version\x18\x02 \x01(\tR\rclientVersion\x12\x1f\n" +
 	"\vclient_name\x18\x03 \x01(\tR\n" +
-	"clientName\x12?\n" +
-	"\fcapabilities\x18\x04 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\x12=\n" +
-	"\vdeployments\x18\x05 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
-	"\thost_info\x18\x06 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\"\xec\x01\n" +
+	"clientName\x12=\n" +
+	"\vdeployments\x18\x04 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
+	"\thost_info\x18\x05 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\x12?\n" +
+	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xec\x01\n" +
 	"\x0fConnectResponse\x12\x19\n" +
 	"\botlp_url\x18\x01 \x01(\tR\aotlpUrl\x12\x17\n" +
 	"\aapi_url\x18\x03 \x01(\tR\x06apiUrl\x12 \n" +
@@ -4875,9 +4875,9 @@ var file_gravity_proto_depIdxs = []int32{
 	20, // 14: gravity.ControlMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
 	17, // 15: gravity.ControlMessage.response:type_name -> gravity.ProtocolResponse
 	18, // 16: gravity.ControlMessage.event:type_name -> gravity.ProtocolEvent
-	4,  // 17: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
-	22, // 18: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
-	21, // 19: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
+	22, // 17: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
+	21, // 18: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
+	4,  // 19: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
 	30, // 20: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
 	33, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
 	31, // 22: gravity.ActivityRequest.events:type_name -> gravity.HTTPEvent

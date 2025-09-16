@@ -249,12 +249,7 @@ message CodeMetadata {
   repeated string secrets = 2; // Secret names required by the code
 }
 
-message Resource {
-  string id = 1;                         // Unique resource identifier
-  string status = 2;                     // Current status of the resource
-  string ipv6_address = 3;               // Assigned IPv6 address
-  google.protobuf.Timestamp created = 4; // When the resource was created
-}
+
 
 message HostMapping {
   string hostname = 1;   // Hostname to map

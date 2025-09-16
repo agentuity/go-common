@@ -20,7 +20,6 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	GravityControl_ProvisionMachine_FullMethodName      = "/gravity.GravityControl/ProvisionMachine"
-	GravityControl_EstablishTunnel_FullMethodName       = "/gravity.GravityControl/EstablishTunnel"
 	GravityControl_GetDeploymentMetadata_FullMethodName = "/gravity.GravityControl/GetDeploymentMetadata"
 )
 
@@ -28,14 +27,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GravityControl service handles bidirectional streaming for control messages
+// GravityControl service handles machine provisioning and metadata
 type GravityControlClient interface {
 	// provision a new machine is called on startup of a new machine from a public
 	// image to get the certificates and configuration
 	ProvisionMachine(ctx context.Context, in *ProvisionMachineRequest, opts ...grpc.CallOption) (*ProvisionMachineResponse, error)
-	// establish a tunnel for the machine to send and receive control messages
-	// after it has been provisioned
-	EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error)
 }
@@ -58,19 +54,6 @@ func (c *gravityControlClient) ProvisionMachine(ctx context.Context, in *Provisi
 	return out, nil
 }
 
-func (c *gravityControlClient) EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &GravityControl_ServiceDesc.Streams[0], GravityControl_EstablishTunnel_FullMethodName, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	x := &grpc.GenericClientStream[ControlMessage, ControlMessage]{ClientStream: stream}
-	return x, nil
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type GravityControl_EstablishTunnelClient = grpc.BidiStreamingClient[ControlMessage, ControlMessage]
-
 func (c *gravityControlClient) GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeploymentMetadataResponse)
@@ -85,14 +68,11 @@ func (c *gravityControlClient) GetDeploymentMetadata(ctx context.Context, in *De
 // All implementations must embed UnimplementedGravityControlServer
 // for forward compatibility.
 //
-// GravityControl service handles bidirectional streaming for control messages
+// GravityControl service handles machine provisioning and metadata
 type GravityControlServer interface {
 	// provision a new machine is called on startup of a new machine from a public
 	// image to get the certificates and configuration
 	ProvisionMachine(context.Context, *ProvisionMachineRequest) (*ProvisionMachineResponse, error)
-	// establish a tunnel for the machine to send and receive control messages
-	// after it has been provisioned
-	EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error)
 	mustEmbedUnimplementedGravityControlServer()
@@ -107,9 +87,6 @@ type UnimplementedGravityControlServer struct{}
 
 func (UnimplementedGravityControlServer) ProvisionMachine(context.Context, *ProvisionMachineRequest) (*ProvisionMachineResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ProvisionMachine not implemented")
-}
-func (UnimplementedGravityControlServer) EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error {
-	return status.Errorf(codes.Unimplemented, "method EstablishTunnel not implemented")
 }
 func (UnimplementedGravityControlServer) GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeploymentMetadata not implemented")
@@ -153,13 +130,6 @@ func _GravityControl_ProvisionMachine_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GravityControl_EstablishTunnel_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(GravityControlServer).EstablishTunnel(&grpc.GenericServerStream[ControlMessage, ControlMessage]{ServerStream: stream})
-}
-
-// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type GravityControl_EstablishTunnelServer = grpc.BidiStreamingServer[ControlMessage, ControlMessage]
-
 func _GravityControl_GetDeploymentMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeploymentMetadataRequest)
 	if err := dec(in); err != nil {
@@ -194,28 +164,25 @@ var GravityControl_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _GravityControl_GetDeploymentMetadata_Handler,
 		},
 	},
-	Streams: []grpc.StreamDesc{
-		{
-			StreamName:    "EstablishTunnel",
-			Handler:       _GravityControl_EstablishTunnel_Handler,
-			ServerStreams: true,
-			ClientStreams: true,
-		},
-	},
+	Streams:  []grpc.StreamDesc{},
 	Metadata: "gravity.proto",
 }
 
 const (
-	GravityTunnel_StreamPackets_FullMethodName = "/gravity.GravityTunnel/StreamPackets"
+	GravityTunnel_EstablishTunnel_FullMethodName = "/gravity.GravityTunnel/EstablishTunnel"
+	GravityTunnel_StreamPackets_FullMethodName   = "/gravity.GravityTunnel/StreamPackets"
 )
 
 // GravityTunnelClient is the client API for GravityTunnel service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GravityTunnel service handles bidirectional streaming for packet data with
-// multiplexing
+// GravityTunnel service handles bidirectional streaming for packet data and control messages
 type GravityTunnelClient interface {
+	// establish a tunnel for the machine to send and receive control messages
+	// after it has been provisioned
+	EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error)
+	// stream packet data with multiplexing
 	StreamPackets(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelPacket, TunnelPacket], error)
 }
 
@@ -227,9 +194,22 @@ func NewGravityTunnelClient(cc grpc.ClientConnInterface) GravityTunnelClient {
 	return &gravityTunnelClient{cc}
 }
 
+func (c *gravityTunnelClient) EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GravityTunnel_ServiceDesc.Streams[0], GravityTunnel_EstablishTunnel_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ControlMessage, ControlMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GravityTunnel_EstablishTunnelClient = grpc.BidiStreamingClient[ControlMessage, ControlMessage]
+
 func (c *gravityTunnelClient) StreamPackets(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelPacket, TunnelPacket], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &GravityTunnel_ServiceDesc.Streams[0], GravityTunnel_StreamPackets_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &GravityTunnel_ServiceDesc.Streams[1], GravityTunnel_StreamPackets_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -244,9 +224,12 @@ type GravityTunnel_StreamPacketsClient = grpc.BidiStreamingClient[TunnelPacket, 
 // All implementations must embed UnimplementedGravityTunnelServer
 // for forward compatibility.
 //
-// GravityTunnel service handles bidirectional streaming for packet data with
-// multiplexing
+// GravityTunnel service handles bidirectional streaming for packet data and control messages
 type GravityTunnelServer interface {
+	// establish a tunnel for the machine to send and receive control messages
+	// after it has been provisioned
+	EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error
+	// stream packet data with multiplexing
 	StreamPackets(grpc.BidiStreamingServer[TunnelPacket, TunnelPacket]) error
 	mustEmbedUnimplementedGravityTunnelServer()
 }
@@ -258,6 +241,9 @@ type GravityTunnelServer interface {
 // pointer dereference when methods are called.
 type UnimplementedGravityTunnelServer struct{}
 
+func (UnimplementedGravityTunnelServer) EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error {
+	return status.Errorf(codes.Unimplemented, "method EstablishTunnel not implemented")
+}
 func (UnimplementedGravityTunnelServer) StreamPackets(grpc.BidiStreamingServer[TunnelPacket, TunnelPacket]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamPackets not implemented")
 }
@@ -282,6 +268,13 @@ func RegisterGravityTunnelServer(s grpc.ServiceRegistrar, srv GravityTunnelServe
 	s.RegisterService(&GravityTunnel_ServiceDesc, srv)
 }
 
+func _GravityTunnel_EstablishTunnel_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(GravityTunnelServer).EstablishTunnel(&grpc.GenericServerStream[ControlMessage, ControlMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GravityTunnel_EstablishTunnelServer = grpc.BidiStreamingServer[ControlMessage, ControlMessage]
+
 func _GravityTunnel_StreamPackets_Handler(srv interface{}, stream grpc.ServerStream) error {
 	return srv.(GravityTunnelServer).StreamPackets(&grpc.GenericServerStream[TunnelPacket, TunnelPacket]{ServerStream: stream})
 }
@@ -297,6 +290,12 @@ var GravityTunnel_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*GravityTunnelServer)(nil),
 	Methods:     []grpc.MethodDesc{},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "EstablishTunnel",
+			Handler:       _GravityTunnel_EstablishTunnel_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "StreamPackets",
 			Handler:       _GravityTunnel_StreamPackets_Handler,

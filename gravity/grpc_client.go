@@ -181,8 +181,8 @@ type StreamInfo struct {
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
 type StreamManager struct {
-	// Control streams (one per connection)
-	controlStreams []pb.GravityControl_EstablishTunnelClient
+	// Control streams (one per connection) - now using tunnel service
+	controlStreams []pb.GravityTunnel_EstablishTunnelClient
 	controlMu      sync.RWMutex
 
 	// Enhanced tunnel stream management
@@ -433,11 +433,11 @@ func (g *GRPCGravityServer) Start() error {
 // establishControlStreams creates control streams for each connection
 func (g *GRPCGravityServer) establishControlStreams() error {
 	g.logger.Info("Creating control streams for %d connections", len(g.connections))
-	g.streamManager.controlStreams = make([]pb.GravityControl_EstablishTunnelClient, len(g.connections))
+	g.streamManager.controlStreams = make([]pb.GravityTunnel_EstablishTunnelClient, len(g.connections))
 	g.streamManager.contexts = make([]context.Context, len(g.connections))
 	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
 
-	for i, client := range g.controlClients {
+	for i, client := range g.tunnelClients {
 		g.logger.Debug("Establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx
@@ -621,7 +621,7 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 }
 
 // handleControlStream processes messages from a control stream
-func (g *GRPCGravityServer) handleControlStream(streamIndex int, stream pb.GravityControl_EstablishTunnelClient) {
+func (g *GRPCGravityServer) handleControlStream(streamIndex int, stream pb.GravityTunnel_EstablishTunnelClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("Control stream %d panic: %v", streamIndex, r)

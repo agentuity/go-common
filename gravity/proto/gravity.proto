@@ -6,23 +6,23 @@ option go_package = "github.com/agentuity/go-common/gravity/proto";
 
 import "google/protobuf/timestamp.proto";
 
-// GravityControl service handles bidirectional streaming for control messages
+// GravityControl service handles machine provisioning and metadata
 service GravityControl {
   // provision a new machine is called on startup of a new machine from a public
   // image to get the certificates and configuration
   rpc ProvisionMachine(ProvisionMachineRequest)
       returns (ProvisionMachineResponse);
-  // establish a tunnel for the machine to send and receive control messages
-  // after it has been provisioned
-  rpc EstablishTunnel(stream ControlMessage) returns (stream ControlMessage);
   // get deployment metadata for provisioning
   rpc GetDeploymentMetadata(DeploymentMetadataRequest)
       returns (DeploymentMetadataResponse);
 }
 
-// GravityTunnel service handles bidirectional streaming for packet data with
-// multiplexing
+// GravityTunnel service handles bidirectional streaming for packet data and control messages
 service GravityTunnel {
+  // establish a tunnel for the machine to send and receive control messages
+  // after it has been provisioned
+  rpc EstablishTunnel(stream ControlMessage) returns (stream ControlMessage);
+  // stream packet data with multiplexing
   rpc StreamPackets(stream TunnelPacket) returns (stream TunnelPacket);
 }
 

@@ -4709,12 +4709,12 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"otlp_token\x18\x05 \x01(\tR\totlpToken\x12\x1d\n" +
 	"\n" +
-	"auth_token\x18\x06 \x01(\tR\tauthToken2\x94\x02\n" +
+	"auth_token\x18\x06 \x01(\tR\tauthToken2\xcb\x01\n" +
 	"\x0eGravityControl\x12W\n" +
-	"\x10ProvisionMachine\x12 .gravity.ProvisionMachineRequest\x1a!.gravity.ProvisionMachineResponse\x12G\n" +
-	"\x0fEstablishTunnel\x12\x17.gravity.ControlMessage\x1a\x17.gravity.ControlMessage(\x010\x01\x12`\n" +
-	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse2R\n" +
-	"\rGravityTunnel\x12A\n" +
+	"\x10ProvisionMachine\x12 .gravity.ProvisionMachineRequest\x1a!.gravity.ProvisionMachineResponse\x12`\n" +
+	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse2\x9b\x01\n" +
+	"\rGravityTunnel\x12G\n" +
+	"\x0fEstablishTunnel\x12\x17.gravity.ControlMessage\x1a\x17.gravity.ControlMessage(\x010\x01\x12A\n" +
 	"\rStreamPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket(\x010\x01B.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
 
 var (
@@ -4829,12 +4829,12 @@ var file_gravity_proto_depIdxs = []int32{
 	26, // 44: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
 	42, // 45: gravity.PerformanceMetrics.DockerStatsEntry.value:type_name -> gravity.DockerContainerStats
 	0,  // 46: gravity.GravityControl.ProvisionMachine:input_type -> gravity.ProvisionMachineRequest
-	2,  // 47: gravity.GravityControl.EstablishTunnel:input_type -> gravity.ControlMessage
-	44, // 48: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	44, // 47: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	2,  // 48: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
 	3,  // 49: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
 	1,  // 50: gravity.GravityControl.ProvisionMachine:output_type -> gravity.ProvisionMachineResponse
-	2,  // 51: gravity.GravityControl.EstablishTunnel:output_type -> gravity.ControlMessage
-	45, // 52: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	45, // 51: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	2,  // 52: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
 	3,  // 53: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
 	50, // [50:54] is the sub-list for method output_type
 	46, // [46:50] is the sub-list for method input_type

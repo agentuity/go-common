@@ -2381,8 +2381,8 @@ type PerformanceMetrics struct {
 	// Metadata and timing (91-100)
 	LastUpdated          int64 `protobuf:"varint,91,opt,name=last_updated,json=lastUpdated,proto3" json:"last_updated,omitempty"`                              // epoch milliseconds
 	CollectionIntervalNs int64 `protobuf:"varint,92,opt,name=collection_interval_ns,json=collectionIntervalNs,proto3" json:"collection_interval_ns,omitempty"` // nanoseconds
-	// Container metrics (101-110)
-	DockerStats   map[string]*DockerContainerStats `protobuf:"bytes,101,rep,name=docker_stats,json=dockerStats,proto3" json:"docker_stats,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Runtime metrics (101-110)
+	RuntimeStats  map[string]*ProjectRuntimeStats `protobuf:"bytes,101,rep,name=runtime_stats,json=runtimeStats,proto3" json:"runtime_stats,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2683,9 +2683,9 @@ func (x *PerformanceMetrics) GetCollectionIntervalNs() int64 {
 	return 0
 }
 
-func (x *PerformanceMetrics) GetDockerStats() map[string]*DockerContainerStats {
+func (x *PerformanceMetrics) GetRuntimeStats() map[string]*ProjectRuntimeStats {
 	if x != nil {
-		return x.DockerStats
+		return x.RuntimeStats
 	}
 	return nil
 }
@@ -3331,15 +3331,15 @@ func (x *HealthSample) GetHealthScore() float64 {
 	return 0
 }
 
-// DockerContainerStats contains real-time Docker container statistics
-type DockerContainerStats struct {
+// ProjectRuntimeStats contains real-time project runtime statistics
+type ProjectRuntimeStats struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Container identity (1-10)
-	ContainerId   string `protobuf:"bytes,1,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	ContainerName string `protobuf:"bytes,2,opt,name=container_name,json=containerName,proto3" json:"container_name,omitempty"`
-	Image         string `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
-	DeploymentId  string `protobuf:"bytes,4,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	// Container state (11-20)
+	// Runtime identity (1-10)
+	RuntimeId    string `protobuf:"bytes,1,opt,name=runtime_id,json=runtimeId,proto3" json:"runtime_id,omitempty"`
+	RuntimeName  string `protobuf:"bytes,2,opt,name=runtime_name,json=runtimeName,proto3" json:"runtime_name,omitempty"`
+	Image        string `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	DeploymentId string `protobuf:"bytes,4,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
+	// Runtime state (11-20)
 	Status       string `protobuf:"bytes,11,opt,name=status,proto3" json:"status,omitempty"`
 	Paused       bool   `protobuf:"varint,12,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedTime   int64  `protobuf:"varint,13,opt,name=paused_time,json=pausedTime,proto3" json:"paused_time,omitempty"`    // epoch milliseconds, 0 if not paused
@@ -3393,20 +3393,20 @@ type DockerContainerStats struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *DockerContainerStats) Reset() {
-	*x = DockerContainerStats{}
+func (x *ProjectRuntimeStats) Reset() {
+	*x = ProjectRuntimeStats{}
 	mi := &file_gravity_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *DockerContainerStats) String() string {
+func (x *ProjectRuntimeStats) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*DockerContainerStats) ProtoMessage() {}
+func (*ProjectRuntimeStats) ProtoMessage() {}
 
-func (x *DockerContainerStats) ProtoReflect() protoreflect.Message {
+func (x *ProjectRuntimeStats) ProtoReflect() protoreflect.Message {
 	mi := &file_gravity_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3418,320 +3418,320 @@ func (x *DockerContainerStats) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use DockerContainerStats.ProtoReflect.Descriptor instead.
-func (*DockerContainerStats) Descriptor() ([]byte, []int) {
+// Deprecated: Use ProjectRuntimeStats.ProtoReflect.Descriptor instead.
+func (*ProjectRuntimeStats) Descriptor() ([]byte, []int) {
 	return file_gravity_proto_rawDescGZIP(), []int{37}
 }
 
-func (x *DockerContainerStats) GetContainerId() string {
+func (x *ProjectRuntimeStats) GetRuntimeId() string {
 	if x != nil {
-		return x.ContainerId
+		return x.RuntimeId
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetContainerName() string {
+func (x *ProjectRuntimeStats) GetRuntimeName() string {
 	if x != nil {
-		return x.ContainerName
+		return x.RuntimeName
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetImage() string {
+func (x *ProjectRuntimeStats) GetImage() string {
 	if x != nil {
 		return x.Image
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetDeploymentId() string {
+func (x *ProjectRuntimeStats) GetDeploymentId() string {
 	if x != nil {
 		return x.DeploymentId
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetStatus() string {
+func (x *ProjectRuntimeStats) GetStatus() string {
 	if x != nil {
 		return x.Status
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetPaused() bool {
+func (x *ProjectRuntimeStats) GetPaused() bool {
 	if x != nil {
 		return x.Paused
 	}
 	return false
 }
 
-func (x *DockerContainerStats) GetPausedTime() int64 {
+func (x *ProjectRuntimeStats) GetPausedTime() int64 {
 	if x != nil {
 		return x.PausedTime
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetStartedTime() int64 {
+func (x *ProjectRuntimeStats) GetStartedTime() int64 {
 	if x != nil {
 		return x.StartedTime
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetRestartCount() int64 {
+func (x *ProjectRuntimeStats) GetRestartCount() int64 {
 	if x != nil {
 		return x.RestartCount
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuUsagePercent() float64 {
+func (x *ProjectRuntimeStats) GetCpuUsagePercent() float64 {
 	if x != nil {
 		return x.CpuUsagePercent
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuUsageTotalNs() uint64 {
+func (x *ProjectRuntimeStats) GetCpuUsageTotalNs() uint64 {
 	if x != nil {
 		return x.CpuUsageTotalNs
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuUsageKernelNs() uint64 {
+func (x *ProjectRuntimeStats) GetCpuUsageKernelNs() uint64 {
 	if x != nil {
 		return x.CpuUsageKernelNs
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuUsageUserNs() uint64 {
+func (x *ProjectRuntimeStats) GetCpuUsageUserNs() uint64 {
 	if x != nil {
 		return x.CpuUsageUserNs
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuThrottledPeriods() uint64 {
+func (x *ProjectRuntimeStats) GetCpuThrottledPeriods() uint64 {
 	if x != nil {
 		return x.CpuThrottledPeriods
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuThrottledTimeNs() uint64 {
+func (x *ProjectRuntimeStats) GetCpuThrottledTimeNs() uint64 {
 	if x != nil {
 		return x.CpuThrottledTimeNs
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetCpuLimit() float64 {
+func (x *ProjectRuntimeStats) GetCpuLimit() float64 {
 	if x != nil {
 		return x.CpuLimit
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryUsageBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemoryUsageBytes() uint64 {
 	if x != nil {
 		return x.MemoryUsageBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryLimitBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemoryLimitBytes() uint64 {
 	if x != nil {
 		return x.MemoryLimitBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryUsagePercent() float64 {
+func (x *ProjectRuntimeStats) GetMemoryUsagePercent() float64 {
 	if x != nil {
 		return x.MemoryUsagePercent
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryMaxUsageBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemoryMaxUsageBytes() uint64 {
 	if x != nil {
 		return x.MemoryMaxUsageBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryCacheBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemoryCacheBytes() uint64 {
 	if x != nil {
 		return x.MemoryCacheBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemoryRssBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemoryRssBytes() uint64 {
 	if x != nil {
 		return x.MemoryRssBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemorySwapBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemorySwapBytes() uint64 {
 	if x != nil {
 		return x.MemorySwapBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetMemorySwapLimitBytes() uint64 {
+func (x *ProjectRuntimeStats) GetMemorySwapLimitBytes() uint64 {
 	if x != nil {
 		return x.MemorySwapLimitBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetOomKills() uint64 {
+func (x *ProjectRuntimeStats) GetOomKills() uint64 {
 	if x != nil {
 		return x.OomKills
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkRxBytes() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkRxBytes() uint64 {
 	if x != nil {
 		return x.NetworkRxBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkTxBytes() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkTxBytes() uint64 {
 	if x != nil {
 		return x.NetworkTxBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkRxPackets() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkRxPackets() uint64 {
 	if x != nil {
 		return x.NetworkRxPackets
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkTxPackets() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkTxPackets() uint64 {
 	if x != nil {
 		return x.NetworkTxPackets
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkRxErrors() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkRxErrors() uint64 {
 	if x != nil {
 		return x.NetworkRxErrors
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkTxErrors() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkTxErrors() uint64 {
 	if x != nil {
 		return x.NetworkTxErrors
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkRxDropped() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkRxDropped() uint64 {
 	if x != nil {
 		return x.NetworkRxDropped
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetNetworkTxDropped() uint64 {
+func (x *ProjectRuntimeStats) GetNetworkTxDropped() uint64 {
 	if x != nil {
 		return x.NetworkTxDropped
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetBlockIoReadBytes() uint64 {
+func (x *ProjectRuntimeStats) GetBlockIoReadBytes() uint64 {
 	if x != nil {
 		return x.BlockIoReadBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetBlockIoWriteBytes() uint64 {
+func (x *ProjectRuntimeStats) GetBlockIoWriteBytes() uint64 {
 	if x != nil {
 		return x.BlockIoWriteBytes
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetBlockIoReadOps() uint64 {
+func (x *ProjectRuntimeStats) GetBlockIoReadOps() uint64 {
 	if x != nil {
 		return x.BlockIoReadOps
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetBlockIoWriteOps() uint64 {
+func (x *ProjectRuntimeStats) GetBlockIoWriteOps() uint64 {
 	if x != nil {
 		return x.BlockIoWriteOps
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetPidsCurrent() uint64 {
+func (x *ProjectRuntimeStats) GetPidsCurrent() uint64 {
 	if x != nil {
 		return x.PidsCurrent
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetPidsLimit() uint64 {
+func (x *ProjectRuntimeStats) GetPidsLimit() uint64 {
 	if x != nil {
 		return x.PidsLimit
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetIpv4Address() string {
+func (x *ProjectRuntimeStats) GetIpv4Address() string {
 	if x != nil {
 		return x.Ipv4Address
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetIpv6Address() string {
+func (x *ProjectRuntimeStats) GetIpv6Address() string {
 	if x != nil {
 		return x.Ipv6Address
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetHostname() string {
+func (x *ProjectRuntimeStats) GetHostname() string {
 	if x != nil {
 		return x.Hostname
 	}
 	return ""
 }
 
-func (x *DockerContainerStats) GetInflightRequests() int64 {
+func (x *ProjectRuntimeStats) GetInflightRequests() int64 {
 	if x != nil {
 		return x.InflightRequests
 	}
 	return 0
 }
 
-func (x *DockerContainerStats) GetHealthy() bool {
+func (x *ProjectRuntimeStats) GetHealthy() bool {
 	if x != nil {
 		return x.Healthy
 	}
 	return false
 }
 
-func (x *DockerContainerStats) GetLastUpdated() int64 {
+func (x *ProjectRuntimeStats) GetLastUpdated() int64 {
 	if x != nil {
 		return x.LastUpdated
 	}
@@ -4111,7 +4111,7 @@ const file_gravity_proto_rawDesc = "" +
 	"tlsVersion\x12*\n" +
 	"\x11last_health_check\x18\x1f \x01(\x03R\x0flastHealthCheck\x127\n" +
 	"\x18health_check_interval_ns\x18  \x01(\x03R\x15healthCheckIntervalNs\x12+\n" +
-	"\x11unhealthy_streams\x18! \x03(\tR\x10unhealthyStreams\"\x85\x0f\n" +
+	"\x11unhealthy_streams\x18! \x03(\tR\x10unhealthyStreams\"\x88\x0f\n" +
 	"\x12PerformanceMetrics\x121\n" +
 	"\x15avg_packet_latency_ns\x18\x01 \x01(\x03R\x12avgPacketLatencyNs\x121\n" +
 	"\x15p95_packet_latency_ns\x18\x02 \x01(\x03R\x12p95PacketLatencyNs\x121\n" +
@@ -4152,11 +4152,11 @@ const file_gravity_proto_rawDesc = "" +
 	"\x10buffer_pool_hits\x18S \x01(\x03R\x0ebufferPoolHits\x12,\n" +
 	"\x12buffer_pool_misses\x18T \x01(\x03R\x10bufferPoolMisses\x12!\n" +
 	"\flast_updated\x18[ \x01(\x03R\vlastUpdated\x124\n" +
-	"\x16collection_interval_ns\x18\\ \x01(\x03R\x14collectionIntervalNs\x12O\n" +
-	"\fdocker_stats\x18e \x03(\v2,.gravity.PerformanceMetrics.DockerStatsEntryR\vdockerStats\x1a]\n" +
-	"\x10DockerStatsEntry\x12\x10\n" +
-	"\x03key\x18\x01 \x01(\tR\x03key\x123\n" +
-	"\x05value\x18\x02 \x01(\v2\x1d.gravity.DockerContainerStatsR\x05value:\x028\x01\"\xcc\x05\n" +
+	"\x16collection_interval_ns\x18\\ \x01(\x03R\x14collectionIntervalNs\x12R\n" +
+	"\rruntime_stats\x18e \x03(\v2-.gravity.PerformanceMetrics.RuntimeStatsEntryR\fruntimeStats\x1a]\n" +
+	"\x11RuntimeStatsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x122\n" +
+	"\x05value\x18\x02 \x01(\v2\x1c.gravity.ProjectRuntimeStatsR\x05value:\x028\x01\"\xcc\x05\n" +
 	"\x11MessageStatistics\x12!\n" +
 	"\fpackets_sent\x18\x01 \x01(\x03R\vpacketsSent\x12)\n" +
 	"\x10packets_received\x18\x02 \x01(\x03R\x0fpacketsReceived\x12'\n" +
@@ -4213,10 +4213,11 @@ const file_gravity_proto_rawDesc = "" +
 	"\x0fhealthy_streams\x18\x02 \x01(\x05R\x0ehealthyStreams\x12#\n" +
 	"\rtotal_streams\x18\x03 \x01(\x05R\ftotalStreams\x12-\n" +
 	"\x12active_connections\x18\x04 \x01(\x05R\x11activeConnections\x12!\n" +
-	"\fhealth_score\x18\x05 \x01(\x01R\vhealthScore\"\xb0\x0e\n" +
-	"\x14DockerContainerStats\x12!\n" +
-	"\fcontainer_id\x18\x01 \x01(\tR\vcontainerId\x12%\n" +
-	"\x0econtainer_name\x18\x02 \x01(\tR\rcontainerName\x12\x14\n" +
+	"\fhealth_score\x18\x05 \x01(\x01R\vhealthScore\"\xa7\x0e\n" +
+	"\x13ProjectRuntimeStats\x12\x1d\n" +
+	"\n" +
+	"runtime_id\x18\x01 \x01(\tR\truntimeId\x12!\n" +
+	"\fruntime_name\x18\x02 \x01(\tR\vruntimeName\x12\x14\n" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x12#\n" +
 	"\rdeployment_id\x18\x04 \x01(\tR\fdeploymentId\x12\x16\n" +
 	"\x06status\x18\v \x01(\tR\x06status\x12\x16\n" +
@@ -4336,11 +4337,11 @@ var file_gravity_proto_goTypes = []any{
 	(*LatencySample)(nil),               // 34: gravity.LatencySample
 	(*ErrorRateSample)(nil),             // 35: gravity.ErrorRateSample
 	(*HealthSample)(nil),                // 36: gravity.HealthSample
-	(*DockerContainerStats)(nil),        // 37: gravity.DockerContainerStats
+	(*ProjectRuntimeStats)(nil),         // 37: gravity.ProjectRuntimeStats
 	(*ConfigItem)(nil),                  // 38: gravity.ConfigItem
 	(*DeploymentMetadataRequest)(nil),   // 39: gravity.DeploymentMetadataRequest
 	(*DeploymentMetadataResponse)(nil),  // 40: gravity.DeploymentMetadataResponse
-	nil,                                 // 41: gravity.PerformanceMetrics.DockerStatsEntry
+	nil,                                 // 41: gravity.PerformanceMetrics.RuntimeStatsEntry
 	nil,                                 // 42: gravity.MessageStatistics.MessagesByTypeEntry
 	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
 }
@@ -4378,7 +4379,7 @@ var file_gravity_proto_depIdxs = []int32{
 	30, // 30: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
 	31, // 31: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
 	32, // 32: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
-	41, // 33: gravity.PerformanceMetrics.docker_stats:type_name -> gravity.PerformanceMetrics.DockerStatsEntry
+	41, // 33: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
 	42, // 34: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
 	33, // 35: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
 	34, // 36: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
@@ -4386,7 +4387,7 @@ var file_gravity_proto_depIdxs = []int32{
 	36, // 38: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
 	25, // 39: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
 	24, // 40: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	37, // 41: gravity.PerformanceMetrics.DockerStatsEntry.value:type_name -> gravity.DockerContainerStats
+	37, // 41: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
 	0,  // 42: gravity.GravityControl.ProvisionMachine:input_type -> gravity.ProvisionMachineRequest
 	39, // 43: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
 	2,  // 44: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage

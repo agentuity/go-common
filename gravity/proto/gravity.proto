@@ -148,8 +148,6 @@ message ReportRequest {
       1; // Comprehensive server metrics and performance data
 }
 
-
-
 // Ping request for health checking
 message PingRequest { google.protobuf.Timestamp timestamp = 1; }
 
@@ -253,10 +251,6 @@ message HostMapping {
   string hostname = 1;   // Hostname to map
   string ip_address = 2; // IP address to map the hostname to
 }
-
-
-
-
 
 // Enhanced ServerMetrics with comprehensive performance and health data
 message ServerMetrics {
@@ -369,8 +363,8 @@ message PerformanceMetrics {
   int64 last_updated = 91;           // epoch milliseconds
   int64 collection_interval_ns = 92; // nanoseconds
 
-  // Container metrics (101-110)
-  map<string, DockerContainerStats> docker_stats = 101;
+  // Runtime metrics (101-110)
+  map<string, ProjectRuntimeStats> runtime_stats = 101;
 }
 
 // MessageStatistics contains detailed message flow statistics
@@ -472,15 +466,15 @@ message HealthSample {
   double health_score = 5; // percentage
 }
 
-// DockerContainerStats contains real-time Docker container statistics
-message DockerContainerStats {
-  // Container identity (1-10)
-  string container_id = 1;
-  string container_name = 2;
+// ProjectRuntimeStats contains real-time project runtime statistics
+message ProjectRuntimeStats {
+  // Runtime identity (1-10)
+  string runtime_id = 1;
+  string runtime_name = 2;
   string image = 3;
   string deployment_id = 4;
 
-  // Container state (11-20)
+  // Runtime state (11-20)
   string status = 11;
   bool paused = 12;
   int64 paused_time = 13;  // epoch milliseconds, 0 if not paused

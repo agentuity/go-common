@@ -228,17 +228,7 @@ message DeploymentSpec {
   bool skip_private_key = 8; // Skip the private key for the deployment
 }
 
-message PortMapping {
-  int32 container_port = 1; // Port number inside the container
-  int32 host_port = 2;      // Port number on the host (0 for auto-assign)
-  string protocol = 3;      // Protocol: TCP or UDP
-}
 
-message VolumeMount {
-  string host_path = 1;      // Path on the host filesystem
-  string container_path = 2; // Path inside the container
-  bool read_only = 3;        // Whether the mount is read-only
-}
 
 message ResourceRequirements {
   int64 memory_limit = 1;   // Maximum memory in bytes
@@ -263,8 +253,7 @@ message Resource {
   string id = 1;                         // Unique resource identifier
   string status = 2;                     // Current status of the resource
   string ipv6_address = 3;               // Assigned IPv6 address
-  repeated PortMapping ports = 4;        // Actual port mappings assigned
-  google.protobuf.Timestamp created = 5; // When the resource was created
+  google.protobuf.Timestamp created = 4; // When the resource was created
 }
 
 message HostMapping {

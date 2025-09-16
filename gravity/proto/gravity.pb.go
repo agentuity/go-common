@@ -1821,126 +1821,6 @@ func (x *DeploymentSpec) GetSkipPrivateKey() bool {
 	return false
 }
 
-type PortMapping struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ContainerPort int32                  `protobuf:"varint,1,opt,name=container_port,json=containerPort,proto3" json:"container_port,omitempty"` // Port number inside the container
-	HostPort      int32                  `protobuf:"varint,2,opt,name=host_port,json=hostPort,proto3" json:"host_port,omitempty"`                // Port number on the host (0 for auto-assign)
-	Protocol      string                 `protobuf:"bytes,3,opt,name=protocol,proto3" json:"protocol,omitempty"`                                 // Protocol: TCP or UDP
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *PortMapping) Reset() {
-	*x = PortMapping{}
-	mi := &file_gravity_proto_msgTypes[24]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *PortMapping) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*PortMapping) ProtoMessage() {}
-
-func (x *PortMapping) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[24]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use PortMapping.ProtoReflect.Descriptor instead.
-func (*PortMapping) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{24}
-}
-
-func (x *PortMapping) GetContainerPort() int32 {
-	if x != nil {
-		return x.ContainerPort
-	}
-	return 0
-}
-
-func (x *PortMapping) GetHostPort() int32 {
-	if x != nil {
-		return x.HostPort
-	}
-	return 0
-}
-
-func (x *PortMapping) GetProtocol() string {
-	if x != nil {
-		return x.Protocol
-	}
-	return ""
-}
-
-type VolumeMount struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	HostPath      string                 `protobuf:"bytes,1,opt,name=host_path,json=hostPath,proto3" json:"host_path,omitempty"`                // Path on the host filesystem
-	ContainerPath string                 `protobuf:"bytes,2,opt,name=container_path,json=containerPath,proto3" json:"container_path,omitempty"` // Path inside the container
-	ReadOnly      bool                   `protobuf:"varint,3,opt,name=read_only,json=readOnly,proto3" json:"read_only,omitempty"`               // Whether the mount is read-only
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *VolumeMount) Reset() {
-	*x = VolumeMount{}
-	mi := &file_gravity_proto_msgTypes[25]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *VolumeMount) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*VolumeMount) ProtoMessage() {}
-
-func (x *VolumeMount) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[25]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use VolumeMount.ProtoReflect.Descriptor instead.
-func (*VolumeMount) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{25}
-}
-
-func (x *VolumeMount) GetHostPath() string {
-	if x != nil {
-		return x.HostPath
-	}
-	return ""
-}
-
-func (x *VolumeMount) GetContainerPath() string {
-	if x != nil {
-		return x.ContainerPath
-	}
-	return ""
-}
-
-func (x *VolumeMount) GetReadOnly() bool {
-	if x != nil {
-		return x.ReadOnly
-	}
-	return false
-}
-
 type ResourceRequirements struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	MemoryLimit   int64                  `protobuf:"varint,1,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`       // Maximum memory in bytes
@@ -1953,7 +1833,7 @@ type ResourceRequirements struct {
 
 func (x *ResourceRequirements) Reset() {
 	*x = ResourceRequirements{}
-	mi := &file_gravity_proto_msgTypes[26]
+	mi := &file_gravity_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1965,7 +1845,7 @@ func (x *ResourceRequirements) String() string {
 func (*ResourceRequirements) ProtoMessage() {}
 
 func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[26]
+	mi := &file_gravity_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1978,7 +1858,7 @@ func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResourceRequirements.ProtoReflect.Descriptor instead.
 func (*ResourceRequirements) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{26}
+	return file_gravity_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *ResourceRequirements) GetMemoryLimit() int64 {
@@ -2021,7 +1901,7 @@ type DeploymentCert struct {
 
 func (x *DeploymentCert) Reset() {
 	*x = DeploymentCert{}
-	mi := &file_gravity_proto_msgTypes[27]
+	mi := &file_gravity_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2033,7 +1913,7 @@ func (x *DeploymentCert) String() string {
 func (*DeploymentCert) ProtoMessage() {}
 
 func (x *DeploymentCert) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[27]
+	mi := &file_gravity_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2046,7 +1926,7 @@ func (x *DeploymentCert) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentCert.ProtoReflect.Descriptor instead.
 func (*DeploymentCert) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{27}
+	return file_gravity_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DeploymentCert) GetCert() string {
@@ -2087,7 +1967,7 @@ type CodeMetadata struct {
 
 func (x *CodeMetadata) Reset() {
 	*x = CodeMetadata{}
-	mi := &file_gravity_proto_msgTypes[28]
+	mi := &file_gravity_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2099,7 +1979,7 @@ func (x *CodeMetadata) String() string {
 func (*CodeMetadata) ProtoMessage() {}
 
 func (x *CodeMetadata) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[28]
+	mi := &file_gravity_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2112,7 +1992,7 @@ func (x *CodeMetadata) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodeMetadata.ProtoReflect.Descriptor instead.
 func (*CodeMetadata) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{28}
+	return file_gravity_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *CodeMetadata) GetEnv() []string {
@@ -2134,15 +2014,14 @@ type Resource struct {
 	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                      // Unique resource identifier
 	Status        string                 `protobuf:"bytes,2,opt,name=status,proto3" json:"status,omitempty"`                              // Current status of the resource
 	Ipv6Address   string                 `protobuf:"bytes,3,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address
-	Ports         []*PortMapping         `protobuf:"bytes,4,rep,name=ports,proto3" json:"ports,omitempty"`                                // Actual port mappings assigned
-	Created       *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created,proto3" json:"created,omitempty"`                            // When the resource was created
+	Created       *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=created,proto3" json:"created,omitempty"`                            // When the resource was created
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Resource) Reset() {
 	*x = Resource{}
-	mi := &file_gravity_proto_msgTypes[29]
+	mi := &file_gravity_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2154,7 +2033,7 @@ func (x *Resource) String() string {
 func (*Resource) ProtoMessage() {}
 
 func (x *Resource) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[29]
+	mi := &file_gravity_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2167,7 +2046,7 @@ func (x *Resource) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resource.ProtoReflect.Descriptor instead.
 func (*Resource) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{29}
+	return file_gravity_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *Resource) GetId() string {
@@ -2191,13 +2070,6 @@ func (x *Resource) GetIpv6Address() string {
 	return ""
 }
 
-func (x *Resource) GetPorts() []*PortMapping {
-	if x != nil {
-		return x.Ports
-	}
-	return nil
-}
-
 func (x *Resource) GetCreated() *timestamppb.Timestamp {
 	if x != nil {
 		return x.Created
@@ -2215,7 +2087,7 @@ type HostMapping struct {
 
 func (x *HostMapping) Reset() {
 	*x = HostMapping{}
-	mi := &file_gravity_proto_msgTypes[30]
+	mi := &file_gravity_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2227,7 +2099,7 @@ func (x *HostMapping) String() string {
 func (*HostMapping) ProtoMessage() {}
 
 func (x *HostMapping) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[30]
+	mi := &file_gravity_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2240,7 +2112,7 @@ func (x *HostMapping) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostMapping.ProtoReflect.Descriptor instead.
 func (*HostMapping) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{30}
+	return file_gravity_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *HostMapping) GetHostname() string {
@@ -2279,7 +2151,7 @@ type HTTPEvent struct {
 
 func (x *HTTPEvent) Reset() {
 	*x = HTTPEvent{}
-	mi := &file_gravity_proto_msgTypes[31]
+	mi := &file_gravity_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2291,7 +2163,7 @@ func (x *HTTPEvent) String() string {
 func (*HTTPEvent) ProtoMessage() {}
 
 func (x *HTTPEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[31]
+	mi := &file_gravity_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2304,7 +2176,7 @@ func (x *HTTPEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HTTPEvent.ProtoReflect.Descriptor instead.
 func (*HTTPEvent) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{31}
+	return file_gravity_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *HTTPEvent) GetMethod() string {
@@ -2418,7 +2290,7 @@ type SessionInfo struct {
 
 func (x *SessionInfo) Reset() {
 	*x = SessionInfo{}
-	mi := &file_gravity_proto_msgTypes[32]
+	mi := &file_gravity_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2430,7 +2302,7 @@ func (x *SessionInfo) String() string {
 func (*SessionInfo) ProtoMessage() {}
 
 func (x *SessionInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[32]
+	mi := &file_gravity_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2443,7 +2315,7 @@ func (x *SessionInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionInfo.ProtoReflect.Descriptor instead.
 func (*SessionInfo) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{32}
+	return file_gravity_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *SessionInfo) GetId() string {
@@ -2506,7 +2378,7 @@ type ServerMetrics struct {
 
 func (x *ServerMetrics) Reset() {
 	*x = ServerMetrics{}
-	mi := &file_gravity_proto_msgTypes[33]
+	mi := &file_gravity_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2518,7 +2390,7 @@ func (x *ServerMetrics) String() string {
 func (*ServerMetrics) ProtoMessage() {}
 
 func (x *ServerMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[33]
+	mi := &file_gravity_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2531,7 +2403,7 @@ func (x *ServerMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ServerMetrics.ProtoReflect.Descriptor instead.
 func (*ServerMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{33}
+	return file_gravity_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ServerMetrics) GetStartTime() int64 {
@@ -2648,7 +2520,7 @@ type GRPCConnectionMetrics struct {
 
 func (x *GRPCConnectionMetrics) Reset() {
 	*x = GRPCConnectionMetrics{}
-	mi := &file_gravity_proto_msgTypes[34]
+	mi := &file_gravity_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2660,7 +2532,7 @@ func (x *GRPCConnectionMetrics) String() string {
 func (*GRPCConnectionMetrics) ProtoMessage() {}
 
 func (x *GRPCConnectionMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[34]
+	mi := &file_gravity_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2673,7 +2545,7 @@ func (x *GRPCConnectionMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GRPCConnectionMetrics.ProtoReflect.Descriptor instead.
 func (*GRPCConnectionMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{34}
+	return file_gravity_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *GRPCConnectionMetrics) GetPoolSize() int32 {
@@ -2854,7 +2726,7 @@ type PerformanceMetrics struct {
 
 func (x *PerformanceMetrics) Reset() {
 	*x = PerformanceMetrics{}
-	mi := &file_gravity_proto_msgTypes[35]
+	mi := &file_gravity_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2866,7 +2738,7 @@ func (x *PerformanceMetrics) String() string {
 func (*PerformanceMetrics) ProtoMessage() {}
 
 func (x *PerformanceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[35]
+	mi := &file_gravity_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2879,7 +2751,7 @@ func (x *PerformanceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PerformanceMetrics.ProtoReflect.Descriptor instead.
 func (*PerformanceMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{35}
+	return file_gravity_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PerformanceMetrics) GetAvgPacketLatencyNs() int64 {
@@ -3182,7 +3054,7 @@ type MessageStatistics struct {
 
 func (x *MessageStatistics) Reset() {
 	*x = MessageStatistics{}
-	mi := &file_gravity_proto_msgTypes[36]
+	mi := &file_gravity_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3194,7 +3066,7 @@ func (x *MessageStatistics) String() string {
 func (*MessageStatistics) ProtoMessage() {}
 
 func (x *MessageStatistics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[36]
+	mi := &file_gravity_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3207,7 +3079,7 @@ func (x *MessageStatistics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageStatistics.ProtoReflect.Descriptor instead.
 func (*MessageStatistics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{36}
+	return file_gravity_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *MessageStatistics) GetPacketsSent() int64 {
@@ -3325,7 +3197,7 @@ type SystemResourceMetrics struct {
 
 func (x *SystemResourceMetrics) Reset() {
 	*x = SystemResourceMetrics{}
-	mi := &file_gravity_proto_msgTypes[37]
+	mi := &file_gravity_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3337,7 +3209,7 @@ func (x *SystemResourceMetrics) String() string {
 func (*SystemResourceMetrics) ProtoMessage() {}
 
 func (x *SystemResourceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[37]
+	mi := &file_gravity_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3350,7 +3222,7 @@ func (x *SystemResourceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SystemResourceMetrics.ProtoReflect.Descriptor instead.
 func (*SystemResourceMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{37}
+	return file_gravity_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *SystemResourceMetrics) GetMemoryUsageBytes() int64 {
@@ -3449,7 +3321,7 @@ type HistoricalMetrics struct {
 
 func (x *HistoricalMetrics) Reset() {
 	*x = HistoricalMetrics{}
-	mi := &file_gravity_proto_msgTypes[38]
+	mi := &file_gravity_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3461,7 +3333,7 @@ func (x *HistoricalMetrics) String() string {
 func (*HistoricalMetrics) ProtoMessage() {}
 
 func (x *HistoricalMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[38]
+	mi := &file_gravity_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3474,7 +3346,7 @@ func (x *HistoricalMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HistoricalMetrics.ProtoReflect.Descriptor instead.
 func (*HistoricalMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{38}
+	return file_gravity_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *HistoricalMetrics) GetThroughputHistory() []*ThroughputSample {
@@ -3525,7 +3397,7 @@ type ThroughputSample struct {
 
 func (x *ThroughputSample) Reset() {
 	*x = ThroughputSample{}
-	mi := &file_gravity_proto_msgTypes[39]
+	mi := &file_gravity_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3537,7 +3409,7 @@ func (x *ThroughputSample) String() string {
 func (*ThroughputSample) ProtoMessage() {}
 
 func (x *ThroughputSample) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[39]
+	mi := &file_gravity_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3550,7 +3422,7 @@ func (x *ThroughputSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ThroughputSample.ProtoReflect.Descriptor instead.
 func (*ThroughputSample) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{39}
+	return file_gravity_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ThroughputSample) GetTimestamp() int64 {
@@ -3595,7 +3467,7 @@ type LatencySample struct {
 
 func (x *LatencySample) Reset() {
 	*x = LatencySample{}
-	mi := &file_gravity_proto_msgTypes[40]
+	mi := &file_gravity_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3607,7 +3479,7 @@ func (x *LatencySample) String() string {
 func (*LatencySample) ProtoMessage() {}
 
 func (x *LatencySample) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[40]
+	mi := &file_gravity_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3620,7 +3492,7 @@ func (x *LatencySample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LatencySample.ProtoReflect.Descriptor instead.
 func (*LatencySample) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{40}
+	return file_gravity_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *LatencySample) GetTimestamp() int64 {
@@ -3670,7 +3542,7 @@ type ErrorRateSample struct {
 
 func (x *ErrorRateSample) Reset() {
 	*x = ErrorRateSample{}
-	mi := &file_gravity_proto_msgTypes[41]
+	mi := &file_gravity_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3682,7 +3554,7 @@ func (x *ErrorRateSample) String() string {
 func (*ErrorRateSample) ProtoMessage() {}
 
 func (x *ErrorRateSample) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[41]
+	mi := &file_gravity_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3695,7 +3567,7 @@ func (x *ErrorRateSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorRateSample.ProtoReflect.Descriptor instead.
 func (*ErrorRateSample) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{41}
+	return file_gravity_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ErrorRateSample) GetTimestamp() int64 {
@@ -3733,7 +3605,7 @@ type HealthSample struct {
 
 func (x *HealthSample) Reset() {
 	*x = HealthSample{}
-	mi := &file_gravity_proto_msgTypes[42]
+	mi := &file_gravity_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3745,7 +3617,7 @@ func (x *HealthSample) String() string {
 func (*HealthSample) ProtoMessage() {}
 
 func (x *HealthSample) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[42]
+	mi := &file_gravity_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3758,7 +3630,7 @@ func (x *HealthSample) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthSample.ProtoReflect.Descriptor instead.
 func (*HealthSample) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{42}
+	return file_gravity_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *HealthSample) GetTimestamp() int64 {
@@ -3860,7 +3732,7 @@ type DockerContainerStats struct {
 
 func (x *DockerContainerStats) Reset() {
 	*x = DockerContainerStats{}
-	mi := &file_gravity_proto_msgTypes[43]
+	mi := &file_gravity_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3872,7 +3744,7 @@ func (x *DockerContainerStats) String() string {
 func (*DockerContainerStats) ProtoMessage() {}
 
 func (x *DockerContainerStats) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[43]
+	mi := &file_gravity_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3885,7 +3757,7 @@ func (x *DockerContainerStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DockerContainerStats.ProtoReflect.Descriptor instead.
 func (*DockerContainerStats) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{43}
+	return file_gravity_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *DockerContainerStats) GetContainerId() string {
@@ -4213,7 +4085,7 @@ type ConfigItem struct {
 
 func (x *ConfigItem) Reset() {
 	*x = ConfigItem{}
-	mi := &file_gravity_proto_msgTypes[44]
+	mi := &file_gravity_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4225,7 +4097,7 @@ func (x *ConfigItem) String() string {
 func (*ConfigItem) ProtoMessage() {}
 
 func (x *ConfigItem) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[44]
+	mi := &file_gravity_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4238,7 +4110,7 @@ func (x *ConfigItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConfigItem.ProtoReflect.Descriptor instead.
 func (*ConfigItem) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{44}
+	return file_gravity_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *ConfigItem) GetKey() string {
@@ -4266,7 +4138,7 @@ type DeploymentMetadataRequest struct {
 
 func (x *DeploymentMetadataRequest) Reset() {
 	*x = DeploymentMetadataRequest{}
-	mi := &file_gravity_proto_msgTypes[45]
+	mi := &file_gravity_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4278,7 +4150,7 @@ func (x *DeploymentMetadataRequest) String() string {
 func (*DeploymentMetadataRequest) ProtoMessage() {}
 
 func (x *DeploymentMetadataRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[45]
+	mi := &file_gravity_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4291,7 +4163,7 @@ func (x *DeploymentMetadataRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentMetadataRequest.ProtoReflect.Descriptor instead.
 func (*DeploymentMetadataRequest) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{45}
+	return file_gravity_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *DeploymentMetadataRequest) GetDeploymentId() string {
@@ -4323,7 +4195,7 @@ type DeploymentMetadataResponse struct {
 
 func (x *DeploymentMetadataResponse) Reset() {
 	*x = DeploymentMetadataResponse{}
-	mi := &file_gravity_proto_msgTypes[46]
+	mi := &file_gravity_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4335,7 +4207,7 @@ func (x *DeploymentMetadataResponse) String() string {
 func (*DeploymentMetadataResponse) ProtoMessage() {}
 
 func (x *DeploymentMetadataResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_proto_msgTypes[46]
+	mi := &file_gravity_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4348,7 +4220,7 @@ func (x *DeploymentMetadataResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeploymentMetadataResponse.ProtoReflect.Descriptor instead.
 func (*DeploymentMetadataResponse) Descriptor() ([]byte, []int) {
-	return file_gravity_proto_rawDescGZIP(), []int{46}
+	return file_gravity_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *DeploymentMetadataResponse) GetSuccess() bool {
@@ -4526,15 +4398,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\asecrets\x18\x05 \x03(\tR\asecrets\x12;\n" +
 	"\tresources\x18\x06 \x01(\v2\x1d.gravity.ResourceRequirementsR\tresources\x12D\n" +
 	"\x11organization_cert\x18\a \x01(\v2\x17.gravity.DeploymentCertR\x10organizationCert\x12(\n" +
-	"\x10skip_private_key\x18\b \x01(\bR\x0eskipPrivateKey\"m\n" +
-	"\vPortMapping\x12%\n" +
-	"\x0econtainer_port\x18\x01 \x01(\x05R\rcontainerPort\x12\x1b\n" +
-	"\thost_port\x18\x02 \x01(\x05R\bhostPort\x12\x1a\n" +
-	"\bprotocol\x18\x03 \x01(\tR\bprotocol\"n\n" +
-	"\vVolumeMount\x12\x1b\n" +
-	"\thost_path\x18\x01 \x01(\tR\bhostPath\x12%\n" +
-	"\x0econtainer_path\x18\x02 \x01(\tR\rcontainerPath\x12\x1b\n" +
-	"\tread_only\x18\x03 \x01(\bR\breadOnly\"\x9e\x01\n" +
+	"\x10skip_private_key\x18\b \x01(\bR\x0eskipPrivateKey\"\x9e\x01\n" +
 	"\x14ResourceRequirements\x12!\n" +
 	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +
 	"\tcpu_limit\x18\x02 \x01(\x03R\bcpuLimit\x12%\n" +
@@ -4548,13 +4412,12 @@ const file_gravity_proto_rawDesc = "" +
 	"\adnsname\x18\x04 \x01(\tR\adnsname\":\n" +
 	"\fCodeMetadata\x12\x10\n" +
 	"\x03env\x18\x01 \x03(\tR\x03env\x12\x18\n" +
-	"\asecrets\x18\x02 \x03(\tR\asecrets\"\xb7\x01\n" +
+	"\asecrets\x18\x02 \x03(\tR\asecrets\"\x8b\x01\n" +
 	"\bResource\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\tR\x06status\x12!\n" +
-	"\fipv6_address\x18\x03 \x01(\tR\vipv6Address\x12*\n" +
-	"\x05ports\x18\x04 \x03(\v2\x14.gravity.PortMappingR\x05ports\x124\n" +
-	"\acreated\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\acreated\"H\n" +
+	"\fipv6_address\x18\x03 \x01(\tR\vipv6Address\x124\n" +
+	"\acreated\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\acreated\"H\n" +
 	"\vHostMapping\x12\x1a\n" +
 	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1d\n" +
 	"\n" +
@@ -4804,7 +4667,7 @@ func file_gravity_proto_rawDescGZIP() []byte {
 	return file_gravity_proto_rawDescData
 }
 
-var file_gravity_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_gravity_proto_msgTypes = make([]protoimpl.MessageInfo, 47)
 var file_gravity_proto_goTypes = []any{
 	(*ProvisionMachineRequest)(nil),     // 0: gravity.ProvisionMachineRequest
 	(*ProvisionMachineResponse)(nil),    // 1: gravity.ProvisionMachineResponse
@@ -4830,35 +4693,33 @@ var file_gravity_proto_goTypes = []any{
 	(*HostInfo)(nil),                    // 21: gravity.HostInfo
 	(*ExistingDeployment)(nil),          // 22: gravity.ExistingDeployment
 	(*DeploymentSpec)(nil),              // 23: gravity.DeploymentSpec
-	(*PortMapping)(nil),                 // 24: gravity.PortMapping
-	(*VolumeMount)(nil),                 // 25: gravity.VolumeMount
-	(*ResourceRequirements)(nil),        // 26: gravity.ResourceRequirements
-	(*DeploymentCert)(nil),              // 27: gravity.DeploymentCert
-	(*CodeMetadata)(nil),                // 28: gravity.CodeMetadata
-	(*Resource)(nil),                    // 29: gravity.Resource
-	(*HostMapping)(nil),                 // 30: gravity.HostMapping
-	(*HTTPEvent)(nil),                   // 31: gravity.HTTPEvent
-	(*SessionInfo)(nil),                 // 32: gravity.SessionInfo
-	(*ServerMetrics)(nil),               // 33: gravity.ServerMetrics
-	(*GRPCConnectionMetrics)(nil),       // 34: gravity.GRPCConnectionMetrics
-	(*PerformanceMetrics)(nil),          // 35: gravity.PerformanceMetrics
-	(*MessageStatistics)(nil),           // 36: gravity.MessageStatistics
-	(*SystemResourceMetrics)(nil),       // 37: gravity.SystemResourceMetrics
-	(*HistoricalMetrics)(nil),           // 38: gravity.HistoricalMetrics
-	(*ThroughputSample)(nil),            // 39: gravity.ThroughputSample
-	(*LatencySample)(nil),               // 40: gravity.LatencySample
-	(*ErrorRateSample)(nil),             // 41: gravity.ErrorRateSample
-	(*HealthSample)(nil),                // 42: gravity.HealthSample
-	(*DockerContainerStats)(nil),        // 43: gravity.DockerContainerStats
-	(*ConfigItem)(nil),                  // 44: gravity.ConfigItem
-	(*DeploymentMetadataRequest)(nil),   // 45: gravity.DeploymentMetadataRequest
-	(*DeploymentMetadataResponse)(nil),  // 46: gravity.DeploymentMetadataResponse
-	nil,                                 // 47: gravity.PerformanceMetrics.DockerStatsEntry
-	nil,                                 // 48: gravity.MessageStatistics.MessagesByTypeEntry
-	(*timestamppb.Timestamp)(nil),       // 49: google.protobuf.Timestamp
+	(*ResourceRequirements)(nil),        // 24: gravity.ResourceRequirements
+	(*DeploymentCert)(nil),              // 25: gravity.DeploymentCert
+	(*CodeMetadata)(nil),                // 26: gravity.CodeMetadata
+	(*Resource)(nil),                    // 27: gravity.Resource
+	(*HostMapping)(nil),                 // 28: gravity.HostMapping
+	(*HTTPEvent)(nil),                   // 29: gravity.HTTPEvent
+	(*SessionInfo)(nil),                 // 30: gravity.SessionInfo
+	(*ServerMetrics)(nil),               // 31: gravity.ServerMetrics
+	(*GRPCConnectionMetrics)(nil),       // 32: gravity.GRPCConnectionMetrics
+	(*PerformanceMetrics)(nil),          // 33: gravity.PerformanceMetrics
+	(*MessageStatistics)(nil),           // 34: gravity.MessageStatistics
+	(*SystemResourceMetrics)(nil),       // 35: gravity.SystemResourceMetrics
+	(*HistoricalMetrics)(nil),           // 36: gravity.HistoricalMetrics
+	(*ThroughputSample)(nil),            // 37: gravity.ThroughputSample
+	(*LatencySample)(nil),               // 38: gravity.LatencySample
+	(*ErrorRateSample)(nil),             // 39: gravity.ErrorRateSample
+	(*HealthSample)(nil),                // 40: gravity.HealthSample
+	(*DockerContainerStats)(nil),        // 41: gravity.DockerContainerStats
+	(*ConfigItem)(nil),                  // 42: gravity.ConfigItem
+	(*DeploymentMetadataRequest)(nil),   // 43: gravity.DeploymentMetadataRequest
+	(*DeploymentMetadataResponse)(nil),  // 44: gravity.DeploymentMetadataResponse
+	nil,                                 // 45: gravity.PerformanceMetrics.DockerStatsEntry
+	nil,                                 // 46: gravity.MessageStatistics.MessagesByTypeEntry
+	(*timestamppb.Timestamp)(nil),       // 47: google.protobuf.Timestamp
 }
 var file_gravity_proto_depIdxs = []int32{
-	49, // 0: gravity.ProvisionMachineResponse.expires:type_name -> google.protobuf.Timestamp
+	47, // 0: gravity.ProvisionMachineResponse.expires:type_name -> google.protobuf.Timestamp
 	5,  // 1: gravity.ControlMessage.connect:type_name -> gravity.ConnectRequest
 	6,  // 2: gravity.ControlMessage.connect_response:type_name -> gravity.ConnectResponse
 	14, // 3: gravity.ControlMessage.close:type_name -> gravity.CloseRequest
@@ -4878,46 +4739,45 @@ var file_gravity_proto_depIdxs = []int32{
 	22, // 17: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
 	21, // 18: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
 	4,  // 19: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
-	30, // 20: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
-	33, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
-	31, // 22: gravity.ActivityRequest.events:type_name -> gravity.HTTPEvent
-	49, // 23: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	49, // 24: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	44, // 25: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	28, // 20: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
+	31, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	29, // 22: gravity.ActivityRequest.events:type_name -> gravity.HTTPEvent
+	47, // 23: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	47, // 24: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	42, // 25: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
 	23, // 26: gravity.ExistingDeployment.spec:type_name -> gravity.DeploymentSpec
-	49, // 27: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	26, // 28: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
-	27, // 29: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
-	24, // 30: gravity.Resource.ports:type_name -> gravity.PortMapping
-	49, // 31: gravity.Resource.created:type_name -> google.protobuf.Timestamp
-	49, // 32: gravity.SessionInfo.connected:type_name -> google.protobuf.Timestamp
-	34, // 33: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
-	35, // 34: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
-	36, // 35: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
-	37, // 36: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
-	38, // 37: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
-	47, // 38: gravity.PerformanceMetrics.docker_stats:type_name -> gravity.PerformanceMetrics.DockerStatsEntry
-	48, // 39: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
-	39, // 40: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
-	40, // 41: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
-	41, // 42: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
-	42, // 43: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
-	28, // 44: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	27, // 45: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	43, // 46: gravity.PerformanceMetrics.DockerStatsEntry.value:type_name -> gravity.DockerContainerStats
-	0,  // 47: gravity.GravityControl.ProvisionMachine:input_type -> gravity.ProvisionMachineRequest
-	45, // 48: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	2,  // 49: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
-	3,  // 50: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
-	1,  // 51: gravity.GravityControl.ProvisionMachine:output_type -> gravity.ProvisionMachineResponse
-	46, // 52: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	2,  // 53: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
-	3,  // 54: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
-	51, // [51:55] is the sub-list for method output_type
-	47, // [47:51] is the sub-list for method input_type
-	47, // [47:47] is the sub-list for extension type_name
-	47, // [47:47] is the sub-list for extension extendee
-	0,  // [0:47] is the sub-list for field type_name
+	47, // 27: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	24, // 28: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
+	25, // 29: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
+	47, // 30: gravity.Resource.created:type_name -> google.protobuf.Timestamp
+	47, // 31: gravity.SessionInfo.connected:type_name -> google.protobuf.Timestamp
+	32, // 32: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
+	33, // 33: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
+	34, // 34: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
+	35, // 35: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
+	36, // 36: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
+	45, // 37: gravity.PerformanceMetrics.docker_stats:type_name -> gravity.PerformanceMetrics.DockerStatsEntry
+	46, // 38: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
+	37, // 39: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
+	38, // 40: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
+	39, // 41: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
+	40, // 42: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
+	26, // 43: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	25, // 44: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	41, // 45: gravity.PerformanceMetrics.DockerStatsEntry.value:type_name -> gravity.DockerContainerStats
+	0,  // 46: gravity.GravityControl.ProvisionMachine:input_type -> gravity.ProvisionMachineRequest
+	43, // 47: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	2,  // 48: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
+	3,  // 49: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
+	1,  // 50: gravity.GravityControl.ProvisionMachine:output_type -> gravity.ProvisionMachineResponse
+	44, // 51: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	2,  // 52: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
+	3,  // 53: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
+	50, // [50:54] is the sub-list for method output_type
+	46, // [46:50] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_gravity_proto_init() }
@@ -4949,7 +4809,7 @@ func file_gravity_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_proto_rawDesc), len(file_gravity_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   49,
+			NumMessages:   47,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

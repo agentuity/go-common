@@ -604,9 +604,9 @@ func (g *GRPCGravityServer) sendConnectMessage() error {
 
 	// Send connect message on FIRST control stream only to establish client identity
 	g.logger.Info("Sending connect message on primary control stream")
-	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v]",
+	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v, ProjectRouting:%s]",
 		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion,
-		connectReq.Capabilities.GetProvisionDeployments(), connectReq.Capabilities.GetUnprovisionDeployments())
+		connectReq.Capabilities.GetProvisionDeployments(), connectReq.Capabilities.GetUnprovisionDeployments(), connectReq.Capabilities.GetDynamicProjectRouting())
 
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]

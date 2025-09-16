@@ -101,6 +101,7 @@ message TunnelPacket {
 message ClientCapabilities {
   bool provision_deployments = 1;   // Can handle provision deployment requests
   bool unprovision_deployments = 2; // Can handle unprovision deployment requests
+  string dynamic_project_routing = 3; // Project ID for dynamic routing (empty = no routing)
 }
 
 // Connect request from client to Gravity

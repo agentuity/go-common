@@ -618,6 +618,7 @@ type ClientCapabilities struct {
 	state                  protoimpl.MessageState `protogen:"open.v1"`
 	ProvisionDeployments   bool                   `protobuf:"varint,1,opt,name=provision_deployments,json=provisionDeployments,proto3" json:"provision_deployments,omitempty"`       // Can handle provision deployment requests
 	UnprovisionDeployments bool                   `protobuf:"varint,2,opt,name=unprovision_deployments,json=unprovisionDeployments,proto3" json:"unprovision_deployments,omitempty"` // Can handle unprovision deployment requests
+	DynamicProjectRouting  string                 `protobuf:"bytes,3,opt,name=dynamic_project_routing,json=dynamicProjectRouting,proto3" json:"dynamic_project_routing,omitempty"`   // Project ID for dynamic routing (empty = no routing)
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -664,6 +665,13 @@ func (x *ClientCapabilities) GetUnprovisionDeployments() bool {
 		return x.UnprovisionDeployments
 	}
 	return false
+}
+
+func (x *ClientCapabilities) GetDynamicProjectRouting() string {
+	if x != nil {
+		return x.DynamicProjectRouting
+	}
+	return ""
 }
 
 // Connect request from client to Gravity
@@ -4248,10 +4256,11 @@ const file_gravity_proto_rawDesc = "" +
 	"\fmessage_type\"?\n" +
 	"\fTunnelPacket\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
-	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\x82\x01\n" +
+	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\xba\x01\n" +
 	"\x12ClientCapabilities\x123\n" +
 	"\x15provision_deployments\x18\x01 \x01(\bR\x14provisionDeployments\x127\n" +
-	"\x17unprovision_deployments\x18\x02 \x01(\bR\x16unprovisionDeployments\"\xb3\x02\n" +
+	"\x17unprovision_deployments\x18\x02 \x01(\bR\x16unprovisionDeployments\x126\n" +
+	"\x17dynamic_project_routing\x18\x03 \x01(\tR\x15dynamicProjectRouting\"\xb3\x02\n" +
 	"\x0eConnectRequest\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12%\n" +
 	"\x0eclient_version\x18\x02 \x01(\tR\rclientVersion\x12\x1f\n" +

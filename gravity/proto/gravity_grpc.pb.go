@@ -177,7 +177,8 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GravityTunnel service handles bidirectional streaming for packet data and control messages
+// GravityTunnel service handles bidirectional streaming for packet data and
+// control messages
 type GravityTunnelClient interface {
 	// establish a tunnel for the machine to send and receive control messages
 	// after it has been provisioned
@@ -224,7 +225,8 @@ type GravityTunnel_StreamPacketsClient = grpc.BidiStreamingClient[TunnelPacket, 
 // All implementations must embed UnimplementedGravityTunnelServer
 // for forward compatibility.
 //
-// GravityTunnel service handles bidirectional streaming for packet data and control messages
+// GravityTunnel service handles bidirectional streaming for packet data and
+// control messages
 type GravityTunnelServer interface {
 	// establish a tunnel for the machine to send and receive control messages
 	// after it has been provisioned

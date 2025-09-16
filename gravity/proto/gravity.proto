@@ -17,7 +17,8 @@ service GravityControl {
       returns (DeploymentMetadataResponse);
 }
 
-// GravityTunnel service handles bidirectional streaming for packet data and control messages
+// GravityTunnel service handles bidirectional streaming for packet data and
+// control messages
 service GravityTunnel {
   // establish a tunnel for the machine to send and receive control messages
   // after it has been provisioned
@@ -99,24 +100,27 @@ message TunnelPacket {
 
 // ClientCapabilities defines what capabilities a client supports
 message ClientCapabilities {
-  bool provision_deployments = 1;   // Can handle provision deployment requests
-  bool unprovision_deployments = 2; // Can handle unprovision deployment requests
-  string dynamic_project_routing = 3; // Project ID for dynamic routing (empty = no routing)
-  bool dynamic_hostname = 4;         // Request dynamic hostname generation and routing
+  bool provision_deployments = 1; // Can handle provision deployment requests
+  bool unprovision_deployments =
+      2; // Can handle unprovision deployment requests
+  string dynamic_project_routing =
+      3; // Project ID for dynamic routing (empty = no routing)
+  bool dynamic_hostname = 4; // Request dynamic hostname generation and routing
 }
 
 // Connect request from client to Gravity
 message ConnectRequest {
   int32 protocol_version = 1; // Protocol version number for compatibility
-  string client_version = 2;  // Version string of the client (e.g., SHA, semver)
-  string client_name = 3;     // Name of the client application (e.g., "hadron")
+  string client_version = 2; // Version string of the client (e.g., SHA, semver)
+  string client_name = 3;    // Name of the client application (e.g., "hadron")
   repeated ExistingDeployment deployments =
       4;                  // List of existing deployments to restore
   HostInfo host_info = 5; // Information about the host system
-  ClientCapabilities capabilities = 6; // Client capabilities for this connection
+  ClientCapabilities capabilities =
+      6; // Client capabilities for this connection
 }
 
-// Connect response from Gravity to Hadron
+// Connect response from Gravity to client
 message ConnectResponse {
   string otlp_url = 1;             // OpenTelemetry endpoint URL for metrics
   string api_url = 3;              // Base URL for API operations
@@ -230,8 +234,6 @@ message DeploymentSpec {
   bool skip_private_key = 8; // Skip the private key for the deployment
 }
 
-
-
 message ResourceRequirements {
   int64 memory_limit = 1;   // Maximum memory in bytes
   int64 cpu_limit = 2;      // Maximum CPU in millicores (1000 = 1 core)
@@ -250,8 +252,6 @@ message CodeMetadata {
   repeated string env = 1;     // Environment variable names
   repeated string secrets = 2; // Secret names required by the code
 }
-
-
 
 message HostMapping {
   string hostname = 1;   // Hostname to map
@@ -275,13 +275,7 @@ message HTTPEvent {
   int64 disk_units = 14;    // Disk units consumed
 }
 
-message SessionInfo {
-  string id = 1;         // Unique session identifier
-  string machine_id = 2; // Machine identifier for this session
-  google.protobuf.Timestamp connected = 3; // When the session was established
-  bool authenticated = 4;          // Whether the session is authenticated
-  repeated string deployments = 5; // List of deployment IDs in this session
-}
+
 
 // Enhanced ServerMetrics with comprehensive performance and health data
 message ServerMetrics {

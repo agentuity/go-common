@@ -41,3 +41,8 @@ bench:
 gen:
 	@echo "generating..."
 	@go generate ./... && go fmt ./...
+
+# Install required protobuf tools
+install-proto-tools:
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest

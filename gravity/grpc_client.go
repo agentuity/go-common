@@ -1520,8 +1520,8 @@ func (g *GravityClient) sendControlMessageAsync(msg *pb.ControlMessage) error {
 	})
 }
 
-// sendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
-func (g *GravityClient) sendRouteDeploymentRequest(deploymentID, hostname, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
+// SendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
+func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
 	msgID := generateMessageID()
 
 	// Create response channel

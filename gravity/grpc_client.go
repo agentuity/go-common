@@ -213,7 +213,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 	}
 
 	// Get host information
-	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, config.IP6Address, config.InstanceID)
+	hostInfo, err := getHostInfo(config.IP4Address, config.IP6Address, config.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -421,7 +421,10 @@ func (g *GravityClient) Start() error {
 
 	go g.monitorConnectionHealth()
 	go g.handlePingHeartbeat()
-	go g.handleReportDelivery()
+
+	if g.reportStats {
+		go g.handleReportDelivery()
+	}
 	g.logger.Debug("All background goroutines started successfully")
 
 	g.logger.Debug("gRPC Gravity client startup completed successfully")
@@ -2076,7 +2079,7 @@ func createTLSConfig(certPEM, keyPEM, caCertPEM string) (*tls.Config, error) {
 	}, nil
 }
 
-func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
+func getHostInfo(ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
 	// Get runtime information about the host
 	hostname, err := os.Hostname()
 	if err != nil {

@@ -63,7 +63,7 @@ func TestStreamSelection(t *testing.T) {
 	}
 
 	// Mock gRPC gravity server
-	g := &GRPCGravityServer{
+	g := &GravityClient{
 		streamManager: sm,
 	}
 

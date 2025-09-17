@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/agentuity/go-common/logger"
 	"github.com/agentuity/go-common/gravity/network"
-	"github.com/agentuity/go-common/gravity/provider"
 	pb "github.com/agentuity/go-common/gravity/proto"
+	"github.com/agentuity/go-common/gravity/provider"
+	"github.com/agentuity/go-common/logger"
 )
 
 // Buffer pool constants
@@ -24,24 +24,25 @@ type PooledBuffer struct {
 
 // GravityConfig contains configuration for the Gravity client
 type GravityConfig struct {
-	Context         context.Context
-	Logger          logger.Logger
-	Provider        provider.Provider
-	URL             string
-	Cert            string
-	Key             string
-	CACert          string
-	IP4Address      string
-	IP6Address      string
-	InstanceID      string
-	AuthToken       string
-	Secret          string
-	ClientVersion   string
-	ClientName      string
-	Capabilities    *pb.ClientCapabilities
-	PingInterval    time.Duration
-	ReportInterval  time.Duration
-	WorkingDir      string
-	TraceLogPackets bool
-	TunInterface    network.TUNInterface
+	Context              context.Context
+	Logger               logger.Logger
+	Provider             provider.Provider
+	URL                  string
+	Cert                 string
+	Key                  string
+	CACert               string
+	IP4Address           string
+	IP6Address           string
+	InstanceID           string
+	AuthToken            string
+	ClientVersion        string
+	ClientName           string
+	Capabilities         *pb.ClientCapabilities
+	PingInterval         time.Duration
+	ReportInterval       time.Duration
+	WorkingDir           string
+	TraceLogPackets      bool
+	NetworkInterface     network.NetworkInterface
+	ConnectionPoolConfig *ConnectionPoolConfig
+	ReportStats          bool
 }

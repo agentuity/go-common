@@ -6,11 +6,10 @@ option go_package = "github.com/agentuity/go-common/gravity/proto";
 
 import "google/protobuf/timestamp.proto";
 
-// GravityControl service handles machine provisioning and metadata
+// GravityControl service handles client provisioning and metadata
 service GravityControl {
   // provision is called on startup to get certificates and configuration
-  rpc Provision(ProvisionRequest)
-      returns (ProvisionResponse);
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
   // get deployment metadata for provisioning
   rpc GetDeploymentMetadata(DeploymentMetadataRequest)
       returns (DeploymentMetadataResponse);
@@ -19,7 +18,7 @@ service GravityControl {
 // GravityTunnel service handles bidirectional streaming for packet data and
 // control messages
 service GravityTunnel {
-  // establish a tunnel for the machine to send and receive control messages
+  // establish a tunnel for the client to send and receive control messages
   // after it has been provisioned
   rpc EstablishTunnel(stream ControlMessage) returns (stream ControlMessage);
   // stream packet data with multiplexing
@@ -27,16 +26,16 @@ service GravityTunnel {
 }
 
 message ProvisionRequest {
-  string region = 1;            // the region for the machine
-  string availability_zone = 2; // the availability zone for the machine
-  string provider = 3;          // the provider for the machine
-  string instance_id = 4;       // the unique machine id for the server
+  string region = 1;            // the region for the client
+  string availability_zone = 2; // the availability zone for the client
+  string provider = 3;          // the provider for the client
+  string instance_id = 4;       // the unique client id for the server
   string private_ipv4 = 5;      // the ip v4 address to use for the server
   string public_key = 6;        // the public key to use for the server
   string hostname = 7;          // the hostname of the server
-  string error_message = 8;     // the error message if the machine has an error
+  string error_message = 8;     // the error message if the client has an error
                                 // during boot or provisioning
-  bool ephemeral = 9;           // if the machine is ephemeral
+  bool ephemeral = 9;           // if the client is ephemeral
 }
 
 message ProvisionResponse {
@@ -46,10 +45,10 @@ message ProvisionResponse {
   bytes private_key = 3; // the key to use for the server
   google.protobuf.Timestamp expires =
       4; // the expiration time of the certificates
-  string machine_token =
-      5;                 // the machine token to use for communication with APIs
-  string org_id = 6;     // the organization id for the machine
-  string cluster_id = 7; // the cluster id for the machine
+  string client_token =
+      5;                 // the client token to use for communication with APIs
+  string org_id = 6;     // the organization id for the client
+  string cluster_id = 7; // the cluster id for the client
   bytes deployment_private_key =
       8; // the sourcecode private key for the organization, usually nil unless
          // Agentuity, Inc.
@@ -206,7 +205,7 @@ message HostInfo {
   string ipv4_address = 5; // IPv4 address
   string ipv6_address = 6; // IPv6 address
   string hostname = 7;     // hostname
-  string instance_id = 8;  // instance id of the machine
+  string instance_id = 8;  // instance id of the client
 }
 
 message ExistingDeployment {

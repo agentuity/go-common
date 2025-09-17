@@ -11,15 +11,13 @@ import (
 // TestGRPCGravityServerImplementsProviderServer verifies interface compliance
 func TestGRPCGravityServerImplementsProviderServer(t *testing.T) {
 	// This will fail at compile time if GRPCGravityServer doesn't implement provider.Server
-	var _ provider.Server = (*GRPCGravityServer)(nil)
+	var _ provider.Server = (*GravityClient)(nil)
 }
-
-
 
 // TestWritePacketMethod tests the WritePacket method with no connection
 func TestWritePacketMethodWithoutConnection(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (not connected)
-	server := &GRPCGravityServer{
+	server := &GravityClient{
 		connected: false,
 		closing:   false,
 	}
@@ -35,7 +33,7 @@ func TestWritePacketMethodWithoutConnection(t *testing.T) {
 // TestUnprovisionMethod tests the Unprovision method with no streams
 func TestUnprovisionMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
-	server := &GRPCGravityServer{
+	server := &GravityClient{
 		streamManager: &StreamManager{
 			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
 		},
@@ -57,7 +55,7 @@ func TestUnprovisionMethodWithoutStreams(t *testing.T) {
 // TestPauseMethod tests the Pause method with no streams
 func TestPauseMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
-	server := &GRPCGravityServer{
+	server := &GravityClient{
 		streamManager: &StreamManager{
 			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
 		},
@@ -79,7 +77,7 @@ func TestPauseMethodWithoutStreams(t *testing.T) {
 // TestResumeMethod tests the Resume method with no streams
 func TestResumeMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
-	server := &GRPCGravityServer{
+	server := &GravityClient{
 		streamManager: &StreamManager{
 			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
 		},

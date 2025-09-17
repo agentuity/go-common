@@ -220,8 +220,8 @@ func New(config GravityConfig) (*GravityClient, error) {
 
 	ctx, cancel := context.WithCancel(config.Context)
 
-	var poolConfig *ConnectionPoolConfig
-	if config.ConnectionPoolConfig == nil {
+	poolConfig := config.ConnectionPoolConfig
+	if poolConfig == nil {
 		// Default connection pool configuration
 		poolConfig = &ConnectionPoolConfig{
 			PoolSize:             4,                  // Start with 4 connections (PLAN.md: 4-8)

@@ -1597,6 +1597,20 @@ func (sm *StreamManager) selectOptimalTunnelStream() *StreamInfo {
 	return bestStream
 }
 
+// releaseStream decrements the load count for the given stream
+func (sm *StreamManager) releaseStream(stream *StreamInfo) {
+	if stream == nil {
+		return
+	}
+
+	sm.tunnelMu.Lock()
+	defer sm.tunnelMu.Unlock()
+
+	if stream.loadCount > 0 {
+		stream.loadCount--
+	}
+}
+
 // Provider.Server interface implementations
 
 // Unprovision sends an unprovision request to the gravity server
@@ -1679,6 +1693,9 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	if g.tracePackets {
 		g.tracePacketLogger.Debug("WritePacket selected stream: %s", stream.streamID)
 	}
+
+	// Ensure load count is decremented in all exit paths
+	defer g.streamManager.releaseStream(stream)
 
 	tunnelPacket := &pb.TunnelPacket{
 		Data:     payload,
@@ -2093,7 +2110,7 @@ func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.Hos
 	memoryBytes := getSystemMemory()
 
 	// Get disk info for current working directory
-	diskBytes := getDiskSpace(workingDir)
+	diskBytes := getDiskFreeSpace(workingDir)
 
 	return &pb.HostInfo{
 		Started:     uint64(time.Now().UnixMilli()),

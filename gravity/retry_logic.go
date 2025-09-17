@@ -113,15 +113,18 @@ func calculateBackoff(attempt int, config RetryConfig) time.Duration {
 	// Calculate exponential backoff
 	backoff := float64(config.InitialBackoff) * math.Pow(config.BackoffMultiplier, float64(attempt))
 
-	// Apply maximum backoff limit
-	if backoff > float64(config.MaxBackoff) {
-		backoff = float64(config.MaxBackoff)
-	}
-
 	// Add jitter to avoid thundering herd
 	if config.Jitter {
 		jitter := rand.Float64() * 0.1 * backoff // 10% jitter
 		backoff += jitter
+	}
+
+	// Apply maximum backoff limit and ensure non-negative
+	if backoff > float64(config.MaxBackoff) {
+		backoff = float64(config.MaxBackoff)
+	}
+	if backoff < 0 {
+		backoff = 0
 	}
 
 	return time.Duration(backoff)

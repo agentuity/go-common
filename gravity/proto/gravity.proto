@@ -202,7 +202,7 @@ message HostInfo {
   uint64 started = 1;      // epoch time in milliseconds since server started
   uint32 cpu = 2;          // number of CPUs
   uint64 memory = 3;       // memory in bytes
-  uint64 disk = 4;         // disk space in bytes
+  uint64 disk = 4;         // disk free space in bytes
   string ipv4_address = 5; // IPv4 address
   string ipv6_address = 6; // IPv6 address
   string hostname = 7;     // hostname

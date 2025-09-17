@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "github.com/agentuity/go-common/gravity/proto"
+	"google.golang.org/protobuf/proto"
 )
 
 // ServerMetrics represents enhanced server performance metrics with gRPC-specific data
@@ -252,11 +253,11 @@ func (sm *ServerMetrics) GetSnapshot() *pb.ServerMetrics {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
-	// Update uptime and return the protobuf metrics directly
+	// Update uptime and return a deep copy of the protobuf metrics
 	now := time.Now().UnixMilli()
 	sm.pb.Uptime = uint64(now - sm.pb.StartTime)
 
-	return sm.pb
+	return proto.Clone(sm.pb).(*pb.ServerMetrics)
 }
 
 // Reset resets all metrics to initial state

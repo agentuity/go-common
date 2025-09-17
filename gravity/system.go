@@ -14,10 +14,10 @@ func getSystemMemory() uint64 {
 	return uint64(0)
 }
 
-// getDiskSpace returns the available disk space for the current working directory on Linux
-func getDiskSpace(dir string) uint64 {
+// getDiskFreeSpace returns the available disk space for the current working directory on Linux
+func getDiskFreeSpace(dir string) uint64 {
 	if usage, err := disk.Usage(dir); err == nil {
-		return usage.Total
+		return usage.Free
 	}
 
 	// Fallback if gopsutil fails

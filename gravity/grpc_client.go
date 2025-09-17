@@ -2068,9 +2068,11 @@ func createTLSConfig(certPEM, keyPEM, caCertPEM string) (*tls.Config, error) {
 	}
 
 	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		RootCAs:      caCertPool,
-		MinVersion:   tls.VersionTLS13,
+		Certificates:     []tls.Certificate{cert},
+		RootCAs:          caCertPool,
+		MinVersion:       tls.VersionTLS13,
+		CurvePreferences: []tls.CurveID{tls.X25519, tls.X25519MLKEM768, tls.CurveP256},
+		NextProtos:       []string{"h2", "http/1.1"}, // Prefer HTTP/2
 	}, nil
 }
 
@@ -2323,4 +2325,9 @@ func (g *GravityClient) GetIPv6Address() string {
 // GetSecret returns the authentication secret for external use
 func (g *GravityClient) GetSecret() string {
 	return g.authorizationToken
+}
+
+// GetAPIURL returns the API URL received from gravity server
+func (g *GravityClient) GetAPIURL() string {
+	return g.apiURL
 }

@@ -7,7 +7,7 @@ Generic gRPC client for connecting to Gravity servers. This package was extracte
 - `gravity/` - Main gravity client implementation
 - `gravity/proto/` - Protocol buffer definitions and generated code
 - `gravity/provider/` - Provider interface definitions
-- `gravity/network/` - Network interface definitions  
+- `gravity/network/` - Network interface definitions
 - `gravity/api/` - API helper utilities
 
 ## Module Path Conventions
@@ -31,7 +31,7 @@ import (
 // Create gravity client with your provider and network implementations
 config := gravity.GravityConfig{
     Provider:     myProvider,
-    TunInterface: myNetworkInterface,
+    NetworkInterface: myNetworkInterface,
     // ... other config
 }
 

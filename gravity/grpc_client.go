@@ -213,7 +213,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 	}
 
 	// Get host information
-	hostInfo, err := getHostInfo(config.IP4Address, config.IP6Address, config.InstanceID)
+	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, config.IP6Address, config.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -237,7 +237,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 
 	g := &GravityClient{
 		context:                config.Context,
-		logger:                 config.Logger.WithPrefix("[gravity-client]"),
+		logger:                 config.Logger.WithPrefix("[gravity]"),
 		provider:               config.Provider,
 		url:                    config.URL,
 		authorizationToken:     config.AuthToken,
@@ -2079,7 +2079,7 @@ func createTLSConfig(certPEM, keyPEM, caCertPEM string) (*tls.Config, error) {
 	}, nil
 }
 
-func getHostInfo(ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
+func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
 	// Get runtime information about the host
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -2089,11 +2089,11 @@ func getHostInfo(ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error
 	// Get CPU count
 	cpuCount := runtime.NumCPU()
 
-	// Get actual memory info using system calls - now handled by hadron
-	memoryBytes := uint64(0)
+	// Get actual memory info using system calls
+	memoryBytes := getSystemMemory()
 
-	// Get disk info for current working directory - now handled by hadron
-	diskBytes := uint64(0)
+	// Get disk info for current working directory
+	diskBytes := getDiskSpace(workingDir)
 
 	return &pb.HostInfo{
 		Started:     uint64(time.Now().UnixMilli()),

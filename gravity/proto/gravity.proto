@@ -125,6 +125,7 @@ message ConnectResponse {
   repeated HostMapping host_mapping = 5; // Host to IP address mappings
   repeated string subnet_routes = 6;
   string gravity_server = 7; // the gravity server that we're connected to
+  string hostname = 8;       // this hostname if dynamic hostname is requested
 }
 
 message RouteDeploymentRequest {

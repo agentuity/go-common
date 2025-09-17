@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/agentuity/go-common/logger"
 	pb "github.com/agentuity/go-common/gravity/proto"
+	"github.com/agentuity/go-common/logger"
 )
 
 // Resource represents a provisioned resource
@@ -14,14 +14,14 @@ type Resource struct {
 	Hostname  string `json:"-"`
 	IPAddress string `json:"-"`
 	// Hostport is the hostname and port of the resource.
-	// Usually it is [ip]:[port]. In dev, container mode, it is [host.docker.agentuity.io]:[port].
-	Hostport       string                `json:"hostport"`
-	Paused         bool                  `json:"-"`
-	PausedDuration time.Duration         `json:"-"`
-	Errored        bool                  `json:"-"`
+	// Usually it is [ip]:[port]
+	Hostport       string             `json:"hostport"`
+	Paused         bool               `json:"-"`
+	PausedDuration time.Duration      `json:"-"`
+	Errored        bool               `json:"-"`
 	Spec           *pb.DeploymentSpec `json:"-"`
-	IPV6Address    string                `json:"-"`
-	Started        time.Time             `json:"-"`
+	IPV6Address    string             `json:"-"`
+	Started        time.Time          `json:"-"`
 }
 
 // Server interface for gravity server communication
@@ -63,10 +63,10 @@ type Configuration struct {
 
 // ProvisionRequest for new deployment
 type ProvisionRequest struct {
-	DeploymentId string                `json:"deployment_id,omitempty"` // Unique identifier for the deployment
+	DeploymentId string             `json:"deployment_id,omitempty"` // Unique identifier for the deployment
 	Spec         *pb.DeploymentSpec `json:"spec,omitempty"`          // Container and runtime specification
-	AuthToken    string                `json:"auth_token,omitempty"`    // Authentication token for this deployment
-	OtlpToken    string                `json:"otlp_token,omitempty"`    // OpenTelemetry token for metrics
+	AuthToken    string             `json:"auth_token,omitempty"`    // Authentication token for this deployment
+	OtlpToken    string             `json:"otlp_token,omitempty"`    // OpenTelemetry token for metrics
 }
 
 // DeprovisionReason specifies why a resource is being deprovisioned
@@ -80,12 +80,12 @@ const (
 	DeprovisionReasonUnprovision DeprovisionReason = "unprovision"
 )
 
-// DockerStatsCollector interface for collecting Docker container statistics
-type DockerStatsCollector interface {
-	UpdateDockerStats(deploymentID string, stats interface{})
-	RemoveDockerStats(deploymentID string)
-	PauseDockerStats(deploymentID string)
-	UnpauseDockerStats(deploymentID string)
+// ProjectRuntimeStatsCollector interface for collecting project runtime statistics
+type ProjectRuntimeStatsCollector interface {
+	UpdateRuntimeStats(deploymentID string, stats interface{})
+	RemoveRuntimeStats(deploymentID string)
+	PauseRuntimeStats(deploymentID string)
+	UnpauseRuntimeStats(deploymentID string)
 }
 
 // Provider interface defines the minimal set of methods required by the gravity client
@@ -102,8 +102,8 @@ type Provider interface {
 	// Resources returns a list of all resources regardless of state
 	Resources() []*Resource
 
-	// SetMetricsCollector sets the metrics collector for Docker stats collection
-	SetMetricsCollector(collector DockerStatsCollector)
+	// SetMetricsCollector sets the metrics collector for runtime stats collection
+	SetMetricsCollector(collector ProjectRuntimeStatsCollector)
 
 	// ProcessInPacket processes an inbound packet from the gravity server
 	ProcessInPacket(payload []byte)

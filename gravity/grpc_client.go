@@ -3,11 +3,13 @@ package gravity
 import (
 	"compress/gzip"
 	"context"
+	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"runtime"
@@ -133,7 +135,7 @@ type GravityClient struct {
 	pendingRouteDeployment   map[string]chan *pb.RouteDeploymentResponse
 	pendingRouteDeploymentMu sync.RWMutex
 
-	// Packet channels for TUN device multiplexing
+	// Packet channels for network device multiplexing
 	inboundPackets  chan *PooledBuffer
 	outboundPackets chan []byte
 	textMessages    chan *PooledBuffer
@@ -493,8 +495,8 @@ func (g *GravityClient) establishTunnelStreams() error {
 
 	streamIndex := 0
 	for connIndex, client := range g.tunnelClients {
-		for streamNum := range streamsPerConnection {
-			streamID := fmt.Sprintf("stream_%d_%d", connIndex, streamNum)
+		for range streamsPerConnection {
+			streamID := fmt.Sprintf("stream_%s", rand.Text())
 			ctx := context.WithValue(g.ctx, "connection-id", connectionID)
 			ctx = context.WithValue(ctx, "stream-id", streamID)
 
@@ -608,14 +610,10 @@ func (g *GravityClient) sendConnectMessage() error {
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 
-	// Metrics recording is now hadron-specific
-
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
 		g.logger.Debug("Actually sending connect message on primary control stream")
 		return stream.Send(msg)
 	})
-
-	// Metrics recording is now hadron-specific
 
 	if err != nil {
 		return fmt.Errorf("failed to send connect message: %w", err)
@@ -968,7 +966,7 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 	g.logger.Debug("Received unprovision request: deployment_id=%s", request.DeploymentId)
 
 	// Call provider to deprovision the deployment
-	ctx := context.Background()
+	ctx := context.WithoutCancel(g.context)
 	err := g.provider.Deprovision(ctx, request.DeploymentId, provider.DeprovisionReasonUnprovision)
 
 	// Create generic response since there's no UnprovisionResponse message type
@@ -1256,10 +1254,7 @@ func (g *GravityClient) attemptReconnection(reason string) {
 			select {
 			case <-time.After(backoff):
 				// Increase backoff exponentially, capped at maxBackoff
-				backoff = backoff * 2
-				if backoff > maxBackoff {
-					backoff = maxBackoff
-				}
+				backoff = min(backoff*2, maxBackoff)
 			case <-g.ctx.Done():
 				g.logger.Info("Reconnection cancelled due to context cancellation")
 				return
@@ -1459,25 +1454,10 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 
 // extractHostnameFromURL extracts the hostname (without port) from a gRPC URL for TLS ServerName
 func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) {
-	// Parse the URL to extract just the hostname
-	var urlStr string
-	if len(inputURL) >= 7 && inputURL[:7] == "grpc://" {
-		// Convert grpc:// to http:// for URL parsing
-		urlStr = "http://" + inputURL[7:]
-	} else {
-		urlStr = "http://" + inputURL
-	}
-
-	parsedURL, err := url.Parse(urlStr)
+	hostname, err := extractHostnameFromGravityURL(inputURL)
 	if err != nil {
-		return "", fmt.Errorf("failed to parse URL: %w", err)
+		return "", err
 	}
-
-	hostname := parsedURL.Hostname()
-	if hostname == "" {
-		return "", fmt.Errorf("no hostname found in URL")
-	}
-
 	g.logger.Debug("Extracted hostname for TLS ServerName: %s", hostname)
 	return hostname, nil
 }
@@ -1499,7 +1479,11 @@ func (g *GravityClient) cleanup() {
 }
 
 func generateMessageID() string {
-	return uuid.New().String()
+	uid, err := uuid.NewV7()
+	if err != nil {
+		return uuid.New().String()
+	}
+	return uid.String()
 }
 
 // sendControlMessageAsync sends a control message without waiting for response (async)
@@ -1515,7 +1499,7 @@ func (g *GravityClient) sendControlMessageAsync(msg *pb.ControlMessage) error {
 
 	circuitBreaker := g.circuitBreakers[0]
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(g.ctx), 10*time.Second)
 	defer cancel()
 
 	return RetryWithCircuitBreaker(ctx, g.retryConfig, circuitBreaker, func() error {
@@ -1796,7 +1780,7 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 
 	// Record packet transmission attempt
 
-	err = RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
+	err = RetryWithCircuitBreaker(context.WithoutCancel(g.ctx), g.retryConfig, circuitBreaker, func() error {
 		return streamInfo.stream.Send(packet)
 	})
 
@@ -1981,7 +1965,7 @@ func (g *GravityClient) performHealthCheck() {
 }
 
 // GetConnectionPoolStats returns current connection pool statistics for monitoring
-func (g *GravityClient) GetConnectionPoolStats() map[string]interface{} {
+func (g *GravityClient) GetConnectionPoolStats() map[string]any {
 	g.streamManager.healthMu.RLock()
 	g.streamManager.tunnelMu.RLock()
 	g.streamManager.metricsMu.RLock()
@@ -2005,7 +1989,7 @@ func (g *GravityClient) GetConnectionPoolStats() map[string]interface{} {
 		}
 	}
 
-	stats := map[string]interface{}{
+	stats := map[string]any{
 		"pool_size":              g.poolConfig.PoolSize,
 		"streams_per_connection": g.poolConfig.StreamsPerConnection,
 		"allocation_strategy":    g.poolConfig.AllocationStrategy.String(),
@@ -2069,6 +2053,10 @@ func extractHostnameFromGravityURL(inputURL string) (string, error) {
 	hostname := parsedURL.Hostname()
 	if hostname == "" {
 		return "", fmt.Errorf("no hostname found in URL")
+	}
+
+	if net.ParseIP(hostname) != nil {
+		hostname = "gravity.agentuity.com" // in case we provided a hardcoded ip
 	}
 
 	return hostname, nil
@@ -2151,7 +2139,7 @@ func (g *GravityClient) sendReport() {
 	g.streamManager.controlMu.RUnlock()
 
 	started := time.Now()
-	reportID := uuid.New().String()
+	reportID := generateMessageID()
 
 	reportMsg := &pb.ControlMessage{
 		Id: reportID,
@@ -2206,7 +2194,7 @@ func (g *GravityClient) sendPing() {
 	g.streamManager.controlMu.RUnlock()
 
 	started := time.Now()
-	pingID := uuid.New().String()
+	pingID := generateMessageID()
 
 	pingMsg := &pb.ControlMessage{
 		Id: pingID,
@@ -2251,7 +2239,7 @@ func (g *GravityClient) returnBuffer(pooledBuf *PooledBuffer) {
 
 // ProvisionMachine calls the Provision gRPC method with TLS verification disabled
 // This is a standalone method for initial machine provisioning
-func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider, privateIP, token, publicKey, hostname, errorMessage string, ephemeral bool) (*pb.ProvisionResponse, error) {
+func ProvisionMachine(ctx context.Context, gravityURL, instanceID, region, availabilityZone, provider, privateIP, token, publicKey, hostname, errorMessage string, ephemeral bool) (*pb.ProvisionResponse, error) {
 	// Parse gRPC URL
 	serverName, err := extractHostnameFromGravityURL(gravityURL)
 	if err != nil {
@@ -2296,16 +2284,16 @@ func ProvisionMachine(gravityURL, instanceID, region, availabilityZone, provider
 	}
 
 	// Call Provision with a timeout and JWT token
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	// Add JWT token as Authorization header in gRPC metadata
 	if token != "" {
 		md := metadata.Pairs("authorization", "Bearer "+token)
-		ctx = metadata.NewOutgoingContext(ctx, md)
+		pctx = metadata.NewOutgoingContext(pctx, md)
 	}
 
-	response, err := client.Provision(ctx, req)
+	response, err := client.Provision(pctx, req)
 	if err != nil {
 		return nil, fmt.Errorf("Provision call failed: %w", err)
 	}

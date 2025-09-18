@@ -6,6 +6,7 @@ import (
 
 	pb "github.com/agentuity/go-common/gravity/proto"
 	"github.com/agentuity/go-common/gravity/provider"
+	"github.com/agentuity/go-common/logger"
 )
 
 // TestGRPCGravityServerImplementsProviderServer verifies interface compliance
@@ -169,5 +170,24 @@ func TestSelectOptimalTunnelStreamWithHealthyStreams(t *testing.T) {
 
 	if stream.loadCount != 3 { // Should be incremented from 2 to 3
 		t.Errorf("Expected load count to be incremented to 3, got %d", stream.loadCount)
+	}
+}
+
+func TestExtractHostnameFromURL(t *testing.T) {
+	var c GravityClient
+	c.logger = logger.NewTestLogger()
+	val, err := extractHostnameFromGravityURL("grpc://127.0.0.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "gravity.agentuity.com" {
+		t.Errorf("Expected hostname to be gravity.agentuity.com, got %s", val)
+	}
+	val, err = c.extractHostnameFromURL("grpc://gravity.agentuity.io")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "gravity.agentuity.io" {
+		t.Errorf("Expected hostname to be gravity.agentuity.io, got %s", val)
 	}
 }

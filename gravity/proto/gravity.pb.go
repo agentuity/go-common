@@ -762,6 +762,7 @@ type ConnectResponse struct {
 	GravityServer string                 `protobuf:"bytes,7,opt,name=gravity_server,json=gravityServer,proto3" json:"gravity_server,omitempty"` // the gravity server that we're connected to
 	Hostname      string                 `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`                                // this hostname if dynamic hostname is requested
 	OtlpKey       string                 `protobuf:"bytes,9,opt,name=otlp_key,json=otlpKey,proto3" json:"otlp_key,omitempty"`                   // OpenTelemetry API key for authentication (if needed)
+	OrgId         string                 `protobuf:"bytes,10,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                        // Organization ID for authentication
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -848,6 +849,13 @@ func (x *ConnectResponse) GetHostname() string {
 func (x *ConnectResponse) GetOtlpKey() string {
 	if x != nil {
 		return x.OtlpKey
+	}
+	return ""
+}
+
+func (x *ConnectResponse) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
 	}
 	return ""
 }
@@ -4007,7 +4015,7 @@ const file_gravity_proto_rawDesc = "" +
 	"clientName\x12=\n" +
 	"\vdeployments\x18\x04 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
 	"\thost_info\x18\x05 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\x12?\n" +
-	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xa3\x02\n" +
+	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xba\x02\n" +
 	"\x0fConnectResponse\x12\x19\n" +
 	"\botlp_url\x18\x01 \x01(\tR\aotlpUrl\x12\x17\n" +
 	"\aapi_url\x18\x03 \x01(\tR\x06apiUrl\x12 \n" +
@@ -4016,7 +4024,9 @@ const file_gravity_proto_rawDesc = "" +
 	"\rsubnet_routes\x18\x06 \x03(\tR\fsubnetRoutes\x12%\n" +
 	"\x0egravity_server\x18\a \x01(\tR\rgravityServer\x12\x1a\n" +
 	"\bhostname\x18\b \x01(\tR\bhostname\x12\x19\n" +
-	"\botlp_key\x18\t \x01(\tR\aotlpKey\"x\n" +
+	"\botlp_key\x18\t \x01(\tR\aotlpKey\x12\x15\n" +
+	"\x06org_id\x18\n" +
+	" \x01(\tR\x05orgId\"x\n" +
 	"\x16RouteDeploymentRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x1d\n" +

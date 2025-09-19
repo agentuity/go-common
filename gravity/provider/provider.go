@@ -49,6 +49,8 @@ type Configuration struct {
 	APIURL string
 	// TelemetryURL is the url of the telemetry server
 	TelemetryURL string
+	// TelemetryAPIKey is the API key for the telemetry server (if needed)
+	TelemetryAPIKey string
 	// GravityURL is the url of the gravity server
 	GravityURL string
 	// AgentuityCACert is the ca cert of the gravity server
@@ -59,6 +61,8 @@ type Configuration struct {
 	Environment []string
 	// SubnetRoutes
 	SubnetRoutes []string
+	// Hostname if the client requested a dynamic hostname
+	Hostname string
 }
 
 // ProvisionRequest for new deployment

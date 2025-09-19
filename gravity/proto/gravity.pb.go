@@ -24,16 +24,16 @@ const (
 
 type ProvisionRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
-	Region           string                 `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`                                             // the region for the machine
-	AvailabilityZone string                 `protobuf:"bytes,2,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the machine
-	Provider         string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                         // the provider for the machine
-	InstanceId       string                 `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                   // the unique machine id for the server
+	Region           string                 `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`                                             // the region for the client
+	AvailabilityZone string                 `protobuf:"bytes,2,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the client
+	Provider         string                 `protobuf:"bytes,3,opt,name=provider,proto3" json:"provider,omitempty"`                                         // the provider for the client
+	InstanceId       string                 `protobuf:"bytes,4,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                   // the unique client id for the server
 	PrivateIpv4      string                 `protobuf:"bytes,5,opt,name=private_ipv4,json=privateIpv4,proto3" json:"private_ipv4,omitempty"`                // the ip v4 address to use for the server
 	PublicKey        string                 `protobuf:"bytes,6,opt,name=public_key,json=publicKey,proto3" json:"public_key,omitempty"`                      // the public key to use for the server
 	Hostname         string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                                         // the hostname of the server
-	ErrorMessage     string                 `protobuf:"bytes,8,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`             // the error message if the machine has an error
+	ErrorMessage     string                 `protobuf:"bytes,8,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`             // the error message if the client has an error
 	// during boot or provisioning
-	Ephemeral     bool `protobuf:"varint,9,opt,name=ephemeral,proto3" json:"ephemeral,omitempty"` // if the machine is ephemeral
+	Ephemeral     bool `protobuf:"varint,9,opt,name=ephemeral,proto3" json:"ephemeral,omitempty"` // if the client is ephemeral
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -137,9 +137,9 @@ type ProvisionResponse struct {
 	Certificate          []byte                 `protobuf:"bytes,2,opt,name=certificate,proto3" json:"certificate,omitempty"`                                                 // the cert to use for the server
 	PrivateKey           []byte                 `protobuf:"bytes,3,opt,name=private_key,json=privateKey,proto3" json:"private_key,omitempty"`                                 // the key to use for the server
 	Expires              *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expires,proto3" json:"expires,omitempty"`                                                         // the expiration time of the certificates
-	MachineToken         string                 `protobuf:"bytes,5,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`                           // the machine token to use for communication with APIs
-	OrgId                string                 `protobuf:"bytes,6,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                                                // the organization id for the machine
-	ClusterId            string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`                                    // the cluster id for the machine
+	ClientToken          string                 `protobuf:"bytes,5,opt,name=client_token,json=clientToken,proto3" json:"client_token,omitempty"`                              // the client token to use for communication with APIs
+	OrgId                string                 `protobuf:"bytes,6,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                                                // the organization id for the client
+	ClusterId            string                 `protobuf:"bytes,7,opt,name=cluster_id,json=clusterId,proto3" json:"cluster_id,omitempty"`                                    // the cluster id for the client
 	DeploymentPrivateKey []byte                 `protobuf:"bytes,8,opt,name=deployment_private_key,json=deploymentPrivateKey,proto3" json:"deployment_private_key,omitempty"` // the sourcecode private key for the organization, usually nil unless
 	unknownFields        protoimpl.UnknownFields
 	sizeCache            protoimpl.SizeCache
@@ -203,9 +203,9 @@ func (x *ProvisionResponse) GetExpires() *timestamppb.Timestamp {
 	return nil
 }
 
-func (x *ProvisionResponse) GetMachineToken() string {
+func (x *ProvisionResponse) GetClientToken() string {
 	if x != nil {
-		return x.MachineToken
+		return x.ClientToken
 	}
 	return ""
 }
@@ -760,6 +760,8 @@ type ConnectResponse struct {
 	HostMapping   []*HostMapping         `protobuf:"bytes,5,rep,name=host_mapping,json=hostMapping,proto3" json:"host_mapping,omitempty"` // Host to IP address mappings
 	SubnetRoutes  []string               `protobuf:"bytes,6,rep,name=subnet_routes,json=subnetRoutes,proto3" json:"subnet_routes,omitempty"`
 	GravityServer string                 `protobuf:"bytes,7,opt,name=gravity_server,json=gravityServer,proto3" json:"gravity_server,omitempty"` // the gravity server that we're connected to
+	Hostname      string                 `protobuf:"bytes,8,opt,name=hostname,proto3" json:"hostname,omitempty"`                                // this hostname if dynamic hostname is requested
+	OtlpKey       string                 `protobuf:"bytes,9,opt,name=otlp_key,json=otlpKey,proto3" json:"otlp_key,omitempty"`                   // OpenTelemetry API key for authentication (if needed)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -832,6 +834,20 @@ func (x *ConnectResponse) GetSubnetRoutes() []string {
 func (x *ConnectResponse) GetGravityServer() string {
 	if x != nil {
 		return x.GravityServer
+	}
+	return ""
+}
+
+func (x *ConnectResponse) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *ConnectResponse) GetOtlpKey() string {
+	if x != nil {
+		return x.OtlpKey
 	}
 	return ""
 }
@@ -1513,11 +1529,11 @@ type HostInfo struct {
 	Started       uint64                 `protobuf:"varint,1,opt,name=started,proto3" json:"started,omitempty"`                           // epoch time in milliseconds since server started
 	Cpu           uint32                 `protobuf:"varint,2,opt,name=cpu,proto3" json:"cpu,omitempty"`                                   // number of CPUs
 	Memory        uint64                 `protobuf:"varint,3,opt,name=memory,proto3" json:"memory,omitempty"`                             // memory in bytes
-	Disk          uint64                 `protobuf:"varint,4,opt,name=disk,proto3" json:"disk,omitempty"`                                 // disk space in bytes
+	Disk          uint64                 `protobuf:"varint,4,opt,name=disk,proto3" json:"disk,omitempty"`                                 // disk free space in bytes
 	Ipv4Address   string                 `protobuf:"bytes,5,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"` // IPv4 address
 	Ipv6Address   string                 `protobuf:"bytes,6,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // IPv6 address
 	Hostname      string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                          // hostname
-	InstanceId    string                 `protobuf:"bytes,8,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`    // instance id of the machine
+	InstanceId    string                 `protobuf:"bytes,8,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`    // instance id of the client
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3944,14 +3960,14 @@ const file_gravity_proto_rawDesc = "" +
 	"public_key\x18\x06 \x01(\tR\tpublicKey\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12#\n" +
 	"\rerror_message\x18\b \x01(\tR\ferrorMessage\x12\x1c\n" +
-	"\tephemeral\x18\t \x01(\bR\tephemeral\"\xc4\x02\n" +
+	"\tephemeral\x18\t \x01(\bR\tephemeral\"\xc2\x02\n" +
 	"\x11ProvisionResponse\x12%\n" +
 	"\x0eca_certificate\x18\x01 \x01(\fR\rcaCertificate\x12 \n" +
 	"\vcertificate\x18\x02 \x01(\fR\vcertificate\x12\x1f\n" +
 	"\vprivate_key\x18\x03 \x01(\fR\n" +
 	"privateKey\x124\n" +
-	"\aexpires\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\aexpires\x12#\n" +
-	"\rmachine_token\x18\x05 \x01(\tR\fmachineToken\x12\x15\n" +
+	"\aexpires\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\aexpires\x12!\n" +
+	"\fclient_token\x18\x05 \x01(\tR\vclientToken\x12\x15\n" +
 	"\x06org_id\x18\x06 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\a \x01(\tR\tclusterId\x124\n" +
@@ -3991,14 +4007,16 @@ const file_gravity_proto_rawDesc = "" +
 	"clientName\x12=\n" +
 	"\vdeployments\x18\x04 \x03(\v2\x1b.gravity.ExistingDeploymentR\vdeployments\x12.\n" +
 	"\thost_info\x18\x05 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\x12?\n" +
-	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xec\x01\n" +
+	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xa3\x02\n" +
 	"\x0fConnectResponse\x12\x19\n" +
 	"\botlp_url\x18\x01 \x01(\tR\aotlpUrl\x12\x17\n" +
 	"\aapi_url\x18\x03 \x01(\tR\x06apiUrl\x12 \n" +
 	"\venvironment\x18\x04 \x03(\tR\venvironment\x127\n" +
 	"\fhost_mapping\x18\x05 \x03(\v2\x14.gravity.HostMappingR\vhostMapping\x12#\n" +
 	"\rsubnet_routes\x18\x06 \x03(\tR\fsubnetRoutes\x12%\n" +
-	"\x0egravity_server\x18\a \x01(\tR\rgravityServer\"x\n" +
+	"\x0egravity_server\x18\a \x01(\tR\rgravityServer\x12\x1a\n" +
+	"\bhostname\x18\b \x01(\tR\bhostname\x12\x19\n" +
+	"\botlp_key\x18\t \x01(\tR\aotlpKey\"x\n" +
 	"\x16RouteDeploymentRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x1a\n" +
 	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x1d\n" +

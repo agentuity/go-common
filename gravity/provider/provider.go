@@ -32,7 +32,6 @@ type Server interface {
 	Pause(reason string) error
 	// Resume is called to tell the server to resume sending provisioned events
 	Resume(reason string) error
-
 	// Write a packet to the gravity server
 	WritePacket(payload []byte) error
 }
@@ -63,6 +62,8 @@ type Configuration struct {
 	SubnetRoutes []string
 	// Hostname if the client requested a dynamic hostname
 	Hostname string
+	// OrgID is the organization ID for authentication
+	OrgID string
 }
 
 // ProvisionRequest for new deployment

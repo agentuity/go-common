@@ -781,11 +781,13 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		Logger:          g.logger,
 		APIURL:          g.apiURL,
 		TelemetryURL:    g.otlpURL,
+		TelemetryAPIKey: response.OtlpKey,
 		GravityURL:      g.url,
 		AgentuityCACert: g.caCert,
 		HostMapping:     g.hostMapping,
 		Environment:     g.hostEnvironment,
 		SubnetRoutes:    response.SubnetRoutes,
+		Hostname:        response.Hostname,
 	}); err != nil {
 		g.logger.Error("error configuring provider after connect: %v", err)
 		return

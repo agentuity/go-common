@@ -27,7 +27,7 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GravityControl service handles machine provisioning and metadata
+// GravityControl service handles client provisioning and metadata
 type GravityControlClient interface {
 	// provision is called on startup to get certificates and configuration
 	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
@@ -67,7 +67,7 @@ func (c *gravityControlClient) GetDeploymentMetadata(ctx context.Context, in *De
 // All implementations must embed UnimplementedGravityControlServer
 // for forward compatibility.
 //
-// GravityControl service handles machine provisioning and metadata
+// GravityControl service handles client provisioning and metadata
 type GravityControlServer interface {
 	// provision is called on startup to get certificates and configuration
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
@@ -178,7 +178,7 @@ const (
 // GravityTunnel service handles bidirectional streaming for packet data and
 // control messages
 type GravityTunnelClient interface {
-	// establish a tunnel for the machine to send and receive control messages
+	// establish a tunnel for the client to send and receive control messages
 	// after it has been provisioned
 	EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error)
 	// stream packet data with multiplexing
@@ -226,7 +226,7 @@ type GravityTunnel_StreamPacketsClient = grpc.BidiStreamingClient[TunnelPacket, 
 // GravityTunnel service handles bidirectional streaming for packet data and
 // control messages
 type GravityTunnelServer interface {
-	// establish a tunnel for the machine to send and receive control messages
+	// establish a tunnel for the client to send and receive control messages
 	// after it has been provisioned
 	EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error
 	// stream packet data with multiplexing

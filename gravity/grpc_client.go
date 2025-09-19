@@ -788,6 +788,7 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		Environment:     g.hostEnvironment,
 		SubnetRoutes:    response.SubnetRoutes,
 		Hostname:        response.Hostname,
+		OrgID:           response.OrgId,
 	}); err != nil {
 		g.logger.Error("error configuring provider after connect: %v", err)
 		return

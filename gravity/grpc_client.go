@@ -21,7 +21,6 @@ import (
 	pb "github.com/agentuity/go-common/gravity/proto"
 	"github.com/agentuity/go-common/gravity/provider"
 	"github.com/agentuity/go-common/logger"
-	cstr "github.com/agentuity/go-common/string"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
@@ -740,7 +739,6 @@ func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
 // Helper functions
 func (g *GravityClient) handleConnectResponse(msgID string, connectionID string, response *pb.ConnectResponse) {
 	g.logger.Debug("handleConnectResponse called: msgID=%s, connectionID=%s, gravityServer=%s response=%v", msgID, connectionID, response.GravityServer, response)
-	g.logger.Debug("connect response: %s", cstr.JSONStringify(response))
 
 	g.logger.Debug("About to acquire mutex...")
 	g.mu.Lock()

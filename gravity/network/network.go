@@ -9,16 +9,16 @@ type NetworkInterface interface {
 	// UnrouteTraffic removes all routing configurations
 	UnrouteTraffic() error
 
-	// Read reads a packet from the TUN interface into the provided buffer
+	// Read reads a packet from the network interface into the provided buffer
 	Read(buffer []byte) (int, error)
 
-	// Write writes a packet to the TUN interface
+	// Write writes a packet to the network interface
 	Write(packet []byte) (int, error)
 
-	// Running returns true if the TUN interface is currently running
+	// Running returns true if the network interface is currently running
 	Running() bool
 
-	// Start starts the TUN interface and calls the handler with each outbound packet.
+	// Start starts the network interface and calls the handler with each outbound packet.
 	// The packet passed to the handler is NOT a copy, so it must be copied if used after the handler returns.
 	Start(handler func(packet []byte))
 }

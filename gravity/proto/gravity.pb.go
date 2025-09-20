@@ -33,7 +33,8 @@ type ProvisionRequest struct {
 	Hostname         string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                                         // the hostname of the server
 	ErrorMessage     string                 `protobuf:"bytes,8,opt,name=error_message,json=errorMessage,proto3" json:"error_message,omitempty"`             // the error message if the client has an error
 	// during boot or provisioning
-	Ephemeral     bool `protobuf:"varint,9,opt,name=ephemeral,proto3" json:"ephemeral,omitempty"` // if the client is ephemeral
+	Ephemeral     bool                `protobuf:"varint,9,opt,name=ephemeral,proto3" json:"ephemeral,omitempty"`       // if the client is ephemeral
+	Capabilities  *ClientCapabilities `protobuf:"bytes,10,opt,name=capabilities,proto3" json:"capabilities,omitempty"` // the client capabilities requested
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -129,6 +130,13 @@ func (x *ProvisionRequest) GetEphemeral() bool {
 		return x.Ephemeral
 	}
 	return false
+}
+
+func (x *ProvisionRequest) GetCapabilities() *ClientCapabilities {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
 }
 
 type ProvisionResponse struct {
@@ -3956,7 +3964,7 @@ var File_gravity_proto protoreflect.FileDescriptor
 
 const file_gravity_proto_rawDesc = "" +
 	"\n" +
-	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\"\xb5\x02\n" +
+	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x02\n" +
 	"\x10ProvisionRequest\x12\x16\n" +
 	"\x06region\x18\x01 \x01(\tR\x06region\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x1a\n" +
@@ -3968,7 +3976,9 @@ const file_gravity_proto_rawDesc = "" +
 	"public_key\x18\x06 \x01(\tR\tpublicKey\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12#\n" +
 	"\rerror_message\x18\b \x01(\tR\ferrorMessage\x12\x1c\n" +
-	"\tephemeral\x18\t \x01(\bR\tephemeral\"\xc2\x02\n" +
+	"\tephemeral\x18\t \x01(\bR\tephemeral\x12?\n" +
+	"\fcapabilities\x18\n" +
+	" \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xc2\x02\n" +
 	"\x11ProvisionResponse\x12%\n" +
 	"\x0eca_certificate\x18\x01 \x01(\fR\rcaCertificate\x12 \n" +
 	"\vcertificate\x18\x02 \x01(\fR\vcertificate\x12\x1f\n" +
@@ -4374,61 +4384,62 @@ var file_gravity_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
 }
 var file_gravity_proto_depIdxs = []int32{
-	43, // 0: gravity.ProvisionResponse.expires:type_name -> google.protobuf.Timestamp
-	5,  // 1: gravity.ControlMessage.connect:type_name -> gravity.ConnectRequest
-	6,  // 2: gravity.ControlMessage.connect_response:type_name -> gravity.ConnectResponse
-	13, // 3: gravity.ControlMessage.close:type_name -> gravity.CloseRequest
-	7,  // 4: gravity.ControlMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
-	8,  // 5: gravity.ControlMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
-	9,  // 6: gravity.ControlMessage.unprovision:type_name -> gravity.UnprovisionRequest
-	11, // 7: gravity.ControlMessage.ping:type_name -> gravity.PingRequest
-	12, // 8: gravity.ControlMessage.pong:type_name -> gravity.PongResponse
-	10, // 9: gravity.ControlMessage.report:type_name -> gravity.ReportRequest
-	14, // 10: gravity.ControlMessage.pause:type_name -> gravity.PauseRequest
-	15, // 11: gravity.ControlMessage.resume:type_name -> gravity.ResumeRequest
-	18, // 12: gravity.ControlMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	19, // 13: gravity.ControlMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	16, // 14: gravity.ControlMessage.response:type_name -> gravity.ProtocolResponse
-	17, // 15: gravity.ControlMessage.event:type_name -> gravity.ProtocolEvent
-	21, // 16: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
-	20, // 17: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
-	4,  // 18: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
-	26, // 19: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
-	27, // 20: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
-	43, // 21: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	43, // 22: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	38, // 23: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
-	22, // 24: gravity.ExistingDeployment.spec:type_name -> gravity.DeploymentSpec
-	43, // 25: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	23, // 26: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
-	24, // 27: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
-	28, // 28: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
-	29, // 29: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
-	30, // 30: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
-	31, // 31: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
-	32, // 32: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
-	41, // 33: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
-	42, // 34: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
-	33, // 35: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
-	34, // 36: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
-	35, // 37: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
-	36, // 38: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
-	25, // 39: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	24, // 40: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	37, // 41: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
-	0,  // 42: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
-	39, // 43: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	2,  // 44: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
-	3,  // 45: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
-	1,  // 46: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
-	40, // 47: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	2,  // 48: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
-	3,  // 49: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
-	46, // [46:50] is the sub-list for method output_type
-	42, // [42:46] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	4,  // 0: gravity.ProvisionRequest.capabilities:type_name -> gravity.ClientCapabilities
+	43, // 1: gravity.ProvisionResponse.expires:type_name -> google.protobuf.Timestamp
+	5,  // 2: gravity.ControlMessage.connect:type_name -> gravity.ConnectRequest
+	6,  // 3: gravity.ControlMessage.connect_response:type_name -> gravity.ConnectResponse
+	13, // 4: gravity.ControlMessage.close:type_name -> gravity.CloseRequest
+	7,  // 5: gravity.ControlMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
+	8,  // 6: gravity.ControlMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
+	9,  // 7: gravity.ControlMessage.unprovision:type_name -> gravity.UnprovisionRequest
+	11, // 8: gravity.ControlMessage.ping:type_name -> gravity.PingRequest
+	12, // 9: gravity.ControlMessage.pong:type_name -> gravity.PongResponse
+	10, // 10: gravity.ControlMessage.report:type_name -> gravity.ReportRequest
+	14, // 11: gravity.ControlMessage.pause:type_name -> gravity.PauseRequest
+	15, // 12: gravity.ControlMessage.resume:type_name -> gravity.ResumeRequest
+	18, // 13: gravity.ControlMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	19, // 14: gravity.ControlMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	16, // 15: gravity.ControlMessage.response:type_name -> gravity.ProtocolResponse
+	17, // 16: gravity.ControlMessage.event:type_name -> gravity.ProtocolEvent
+	21, // 17: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
+	20, // 18: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
+	4,  // 19: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
+	26, // 20: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
+	27, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	43, // 22: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	43, // 23: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	38, // 24: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	22, // 25: gravity.ExistingDeployment.spec:type_name -> gravity.DeploymentSpec
+	43, // 26: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	23, // 27: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
+	24, // 28: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
+	28, // 29: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
+	29, // 30: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
+	30, // 31: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
+	31, // 32: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
+	32, // 33: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
+	41, // 34: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
+	42, // 35: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
+	33, // 36: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
+	34, // 37: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
+	35, // 38: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
+	36, // 39: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
+	25, // 40: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	24, // 41: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	37, // 42: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
+	0,  // 43: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
+	39, // 44: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	2,  // 45: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
+	3,  // 46: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
+	1,  // 47: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
+	40, // 48: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	2,  // 49: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
+	3,  // 50: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
+	47, // [47:51] is the sub-list for method output_type
+	43, // [43:47] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_gravity_proto_init() }

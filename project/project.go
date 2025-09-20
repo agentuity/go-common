@@ -498,7 +498,7 @@ func (p *Project) Load(dir string) error {
 		return fmt.Errorf("missing bundler.language value, please run `agentuity new` to create a new project")
 	}
 	switch p.Bundler.Language {
-	case "js", "javascript", "typescript":
+	case "js", "javascript", "ts", "typescript":
 		if p.Bundler.Runtime != "bunjs" && p.Bundler.Runtime != "nodejs" {
 			return fmt.Errorf("invalid bundler.runtime value: %s. only bunjs and nodejs are supported", p.Bundler.Runtime)
 		}
@@ -511,30 +511,6 @@ func (p *Project) Load(dir string) error {
 	}
 	if p.Bundler.AgentConfig.Dir == "" {
 		return fmt.Errorf("missing bundler.Agents.dir value (or its empty), please run `agentuity new` to create a new project")
-	}
-	if p.Deployment != nil {
-		if p.Deployment.Resources != nil {
-			val, err := resource.ParseQuantity(p.Deployment.Resources.CPU)
-			if err != nil {
-				return fmt.Errorf("error validating deploy cpu value '%s'. %w", p.Deployment.Resources.CPU, err)
-			}
-			p.Deployment.Resources.CPUQuantity = val
-			val, err = resource.ParseQuantity(p.Deployment.Resources.Memory)
-			if err != nil {
-				return fmt.Errorf("error validating deploy memory value '%s'. %w", p.Deployment.Resources.Memory, err)
-			}
-			p.Deployment.Resources.MemoryQuantity = val
-			val, err = resource.ParseQuantity(p.Deployment.Resources.Disk)
-			if err != nil {
-				return fmt.Errorf("error validating deploy disk value '%s'. %w", p.Deployment.Resources.Disk, err)
-			}
-			p.Deployment.Resources.DiskQuantity = val
-		}
-		if p.Deployment.Mode != nil {
-			if p.Deployment.Mode.Type != "on-demand" && p.Deployment.Mode.Type != "provisioned" {
-				return fmt.Errorf("invalid deployment mode value: %s. only on-demand or provisioned are supported", p.Deployment.Mode.Type)
-			}
-		}
 	}
 	return nil
 }

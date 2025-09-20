@@ -412,7 +412,7 @@ func (g *GravityClient) Start() error {
 	g.mu.Unlock()
 
 	g.serverMetrics.UpdateConnection(true)
-	g.logger.Info("Connected to Gravity server via gRPC: %s", grpcURL)
+	g.logger.Debug("Connected to Gravity server via gRPC: %s", grpcURL)
 
 	g.logger.Debug("Starting background goroutines...")
 	// Start background goroutines
@@ -1449,7 +1449,7 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 		u.Host = u.Host + ":443"
 	}
 
-	g.logger.Info("Parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
+	g.logger.Debug("Parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
 	return u.Host, nil
 }
 

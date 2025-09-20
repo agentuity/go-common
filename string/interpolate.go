@@ -6,10 +6,24 @@ import (
 	"strings"
 )
 
-var re = regexp.MustCompile(`(\$?{(.*?)})`)
+var re = regexp.MustCompile(`(\$?{{?(.*?)}}?)`)
 
 // InterpolateString replaces { } in string with values from environment maps.
-func InterpolateString(val string, env ...map[string]interface{}) (string, error) {
+func InterpolateString(val string, env ...map[string]any) (any, error) {
+	return Interpolate(val, func(key string) (any, bool) {
+		for _, e := range env {
+			if v, ok := e[key]; ok {
+				return v, true
+			}
+		}
+		return nil, false
+	})
+}
+
+type LookupFunc func(string) (any, bool)
+
+// Interpolate replaces { } in string with values from lookup function.
+func Interpolate(val string, lookup LookupFunc) (string, error) {
 	if val == "" {
 		return val, nil
 	}
@@ -27,12 +41,9 @@ func InterpolateString(val string, env ...map[string]interface{}) (string, error
 			def = key[idx+2:]
 			key = key[:idx]
 		}
-		var v interface{}
-		for _, e := range env {
-			if nv, ok := e[key]; ok {
-				v = nv
-				break
-			}
+		var v any
+		if res, ok := lookup(key); ok {
+			v = res
 		}
 		if v == nil {
 			if required {

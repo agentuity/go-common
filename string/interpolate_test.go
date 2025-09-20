@@ -29,6 +29,8 @@ func TestInterpolateStrings(t *testing.T) {
 		{input: "this is a {!test}", env: []map[string]interface{}{{"test": nil}}, expectedVal: "", expectedErr: fmt.Errorf("required value not found for key 'test'")},
 		{input: "this is a ${test}", env: []map[string]interface{}{{"test": nil}}, expectedVal: "this is a ${test}", expectedErr: nil},
 		{input: "this is a ${test:-foo}", env: []map[string]interface{}{{"test": "foo"}}, expectedVal: "this is a foo", expectedErr: nil},
+		{input: "this is a {{test}}", env: []map[string]interface{}{{"test": "foo"}}, expectedVal: "this is a foo", expectedErr: nil},
+		{input: "this is a {{test2:-foo}}", env: []map[string]interface{}{{"test": "foo"}}, expectedVal: "this is a foo", expectedErr: nil},
 	}
 
 	for _, tc := range testCases {

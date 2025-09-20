@@ -35,6 +35,9 @@ func (a *Resources) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return fmt.Errorf("error validating deploy cpu value '%s'. %w", a.CPU, err)
 		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource CPU must be >= 0, got '%s'", a.CPU)
+		}
 		a.CPUQuantity = val
 	}
 
@@ -44,6 +47,9 @@ func (a *Resources) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return fmt.Errorf("error validating deploy memory value '%s'. %w", a.Memory, err)
 		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource Memory must be >= 0, got '%s'", a.Memory)
+		}
 		a.MemoryQuantity = val
 	}
 
@@ -52,6 +58,9 @@ func (a *Resources) UnmarshalJSON(data []byte) error {
 		val, err := resource.ParseQuantity(a.Disk)
 		if err != nil {
 			return fmt.Errorf("error validating deploy disk value '%s'. %w", a.Disk, err)
+		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource Disk must be >= 0, got '%s'", a.Disk)
 		}
 		a.DiskQuantity = val
 	}
@@ -83,6 +92,9 @@ func (a *Resources) UnmarshalYAML(value *yaml.Node) error {
 		if err != nil {
 			return fmt.Errorf("error validating deploy cpu value '%s'. %w", a.CPU, err)
 		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource CPU must be >= 0, got '%s'", a.CPU)
+		}
 		a.CPUQuantity = val
 	}
 
@@ -92,6 +104,9 @@ func (a *Resources) UnmarshalYAML(value *yaml.Node) error {
 		if err != nil {
 			return fmt.Errorf("error validating deploy memory value '%s'. %w", a.Memory, err)
 		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource Memory must be >= 0, got '%s'", a.Memory)
+		}
 		a.MemoryQuantity = val
 	}
 
@@ -100,6 +115,9 @@ func (a *Resources) UnmarshalYAML(value *yaml.Node) error {
 		val, err := resource.ParseQuantity(a.Disk)
 		if err != nil {
 			return fmt.Errorf("error validating deploy disk value '%s'. %w", a.Disk, err)
+		}
+		if val.Sign() < 0 {
+			return fmt.Errorf("resource Disk must be >= 0, got '%s'", a.Disk)
 		}
 		a.DiskQuantity = val
 	}
@@ -175,41 +193,105 @@ func (a *Trigger) UnmarshalJSON(data []byte) error {
 	return a.decodeMap(raw)
 }
 
-// shared logic
-func (a *Trigger) decodeMap(raw map[string]any) error {
-	if t, ok := raw["type"].(string); ok {
-		switch t {
-		case "api":
-			a.Type = TriggerTypeAPI
-		case "webhook":
-			a.Type = TriggerTypeWebhook
-		case "cron":
-			a.Type = TriggerTypeCron
-		case "manual":
-			a.Type = TriggerTypeManual
-		case "agent":
-			a.Type = TriggerTypeAgent
-		case "sms":
-			a.Type = TriggerTypeSMS
-		case "email":
-			a.Type = TriggerTypeEmail
-		default:
-			return fmt.Errorf("unknown trigger type: %s. should be one of api, webhook, cron, manual, agent, sms, or email", t)
+// MarshalJSON implements json.Marshaler
+func (a Trigger) MarshalJSON() ([]byte, error) {
+	data := a.encodeMap()
+	return json.Marshal(data)
+}
+
+// MarshalYAML implements yaml.Marshaler
+func (a Trigger) MarshalYAML() (interface{}, error) {
+	return a.encodeMap(), nil
+}
+
+// shared logic for encoding
+func (a Trigger) encodeMap() map[string]any {
+	result := make(map[string]any)
+
+	// Copy Fields first
+	if a.Fields != nil {
+		for k, v := range a.Fields {
+			result[k] = v
 		}
 	}
-	if d, ok := raw["destination"].(string); ok {
+
+	// Add type if set
+	if a.Type != TriggerType("") {
+		result["type"] = string(a.Type)
+	}
+
+	// Add destination if set
+	if a.Destination != TriggerDirection("") {
+		result["destination"] = string(a.Destination)
+	}
+
+	return result
+}
+
+// shared logic
+func (a *Trigger) decodeMap(raw map[string]any) error {
+	// Require "type" field to exist and be a string
+	typeVal, typeExists := raw["type"]
+	if !typeExists {
+		return fmt.Errorf("trigger type is required")
+	}
+
+	t, ok := typeVal.(string)
+	if !ok {
+		return fmt.Errorf("trigger type must be a string, got %T", typeVal)
+	}
+
+	var triggerType TriggerType
+	switch t {
+	case "api":
+		triggerType = TriggerTypeAPI
+	case "webhook":
+		triggerType = TriggerTypeWebhook
+	case "cron":
+		triggerType = TriggerTypeCron
+	case "manual":
+		triggerType = TriggerTypeManual
+	case "agent":
+		triggerType = TriggerTypeAgent
+	case "sms":
+		triggerType = TriggerTypeSMS
+	case "email":
+		triggerType = TriggerTypeEmail
+	default:
+		return fmt.Errorf("unknown trigger type: %s. should be one of api, webhook, cron, manual, agent, sms, or email", t)
+	}
+
+	// Validate "destination" field if present
+	var triggerDestination TriggerDirection
+	if destVal, destExists := raw["destination"]; destExists {
+		d, ok := destVal.(string)
+		if !ok {
+			return fmt.Errorf("trigger destination must be a string, got %T", destVal)
+		}
+
 		switch d {
 		case "source":
-			a.Destination = TriggerDirectionSource
+			triggerDestination = TriggerDirectionSource
 		case "destination":
-			a.Destination = TriggerDirectionDestination
+			triggerDestination = TriggerDirectionDestination
 		default:
 			return fmt.Errorf("unknown trigger destination: %s. should be one of source or destination", d)
 		}
 	}
-	delete(raw, "type")
-	delete(raw, "destination")
-	a.Fields = raw
+
+	// Only assign and delete keys after successful validation
+	a.Type = triggerType
+	a.Destination = triggerDestination
+
+	// Create a copy of raw without type and destination for Fields
+	fields := make(map[string]any)
+	for k, v := range raw {
+		if k != "type" && k != "destination" {
+			fields[k] = v
+		}
+	}
+	a.Fields = fields
+
 	return nil
 }
 
@@ -278,24 +360,75 @@ func (a *Authentication) UnmarshalJSON(data []byte) error {
 	return a.decodeMap(raw)
 }
 
-// shared logic
-func (a *Authentication) decodeMap(raw map[string]any) error {
-	if t, ok := raw["type"].(string); ok {
-		switch t {
-		case "project":
-			a.Type = AuthenticationTypeProject
-		case "bearer":
-			a.Type = AuthenticationTypeBearer
-		case "basic":
-			a.Type = AuthenticationTypeBasic
-		case "header":
-			a.Type = AuthenticationTypeHeader
-		default:
-			return fmt.Errorf("unknown authentication type: %s. should be one of project, bearer, basic, or header", t)
+// MarshalJSON implements json.Marshaler
+func (a Authentication) MarshalJSON() ([]byte, error) {
+	data := a.encodeMap()
+	return json.Marshal(data)
+}
+
+// MarshalYAML implements yaml.Marshaler
+func (a Authentication) MarshalYAML() (interface{}, error) {
+	return a.encodeMap(), nil
+}
+
+// shared logic for encoding
+func (a Authentication) encodeMap() map[string]any {
+	result := make(map[string]any)
+
+	// Copy Fields first (handle nil case)
+	if a.Fields != nil {
+		for k, v := range a.Fields {
+			result[k] = v
 		}
 	}
-	delete(raw, "type")
-	a.Fields = raw
+
+	// Add type if set
+	if a.Type != AuthenticationType("") {
+		result["type"] = string(a.Type)
+	}
+
+	return result
+}
+
+// shared logic
+func (a *Authentication) decodeMap(raw map[string]any) error {
+	// Require "type" field to exist and be a string
+	typeVal, typeExists := raw["type"]
+	if !typeExists {
+		return fmt.Errorf("authentication type is required")
+	}
+
+	t, ok := typeVal.(string)
+	if !ok {
+		return fmt.Errorf("authentication type must be a string, got %T", typeVal)
+	}
+
+	var authenticationType AuthenticationType
+	switch t {
+	case "project":
+		authenticationType = AuthenticationTypeProject
+	case "bearer":
+		authenticationType = AuthenticationTypeBearer
+	case "basic":
+		authenticationType = AuthenticationTypeBasic
+	case "header":
+		authenticationType = AuthenticationTypeHeader
+	default:
+		return fmt.Errorf("unknown authentication type: %s. should be one of project, bearer, basic, or header", t)
+	}
+
+	// Only assign and delete keys after successful validation
+	a.Type = authenticationType
+
+	// Create a copy of raw without type for Fields
+	fields := make(map[string]any)
+	for k, v := range raw {
+		if k != "type" {
+			fields[k] = v
+		}
+	}
+	a.Fields = fields
+
 	return nil
 }
 

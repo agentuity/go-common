@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/agentuity/go-common/project"
+	cstr "github.com/agentuity/go-common/string"
 )
 
 func createAgentSecretPrefix(agentId string, suffix string) string {
@@ -38,8 +39,14 @@ func getBasicToken(headers http.Header) (string, bool) {
 type EnvLookupFunc func(string) (string, bool)
 
 // BuildAgentSecrets will build a map of secrets for the given agents based on their authentication type.
-func BuildAgentSecrets(agents []project.AgentConfig) (map[string]string, error) {
-	kv := make(map[string]string)
+func BuildAgentSecrets(agents []project.AgentConfig, lookup EnvLookupFunc) (map[string]cstr.MaskedString, error) {
+	kv := make(map[string]cstr.MaskedString)
+	_lookup := func(val string) (any, bool) {
+		if r, ok := lookup(val); ok {
+			return r, ok
+		}
+		return nil, false
+	}
 	for _, config := range agents {
 		switch config.Authentication.Type {
 		case project.AuthenticationTypeProject:
@@ -50,7 +57,11 @@ func BuildAgentSecrets(agents []project.AgentConfig) (map[string]string, error) 
 				return nil, fmt.Errorf("missing token field for agent %s when using bearer authentication type", config.ID)
 			}
 			secretName := createAgentSecretPrefix(config.ID, "BEARER_TOKEN")
-			kv[secretName] = val
+			rv, err := cstr.Interpolate(val, _lookup)
+			if err == nil {
+				val = rv
+			}
+			kv[secretName] = cstr.NewMaskedString(val)
 		case project.AuthenticationTypeBasic:
 			_, ok := config.Authentication.Fields["username"].(string)
 			if !ok {
@@ -61,7 +72,11 @@ func BuildAgentSecrets(agents []project.AgentConfig) (map[string]string, error) 
 				return nil, fmt.Errorf("missing password field for agent %s when using basic authentication type", config.ID)
 			}
 			secretName := createAgentSecretPrefix(config.ID, "BASIC_TOKEN")
-			kv[secretName] = password
+			rv, err := cstr.Interpolate(password, _lookup)
+			if err == nil {
+				password = rv
+			}
+			kv[secretName] = cstr.NewMaskedString(password)
 		case project.AuthenticationTypeHeader:
 			_, ok := config.Authentication.Fields["name"].(string)
 			if !ok {
@@ -71,8 +86,12 @@ func BuildAgentSecrets(agents []project.AgentConfig) (map[string]string, error) 
 			if !ok {
 				return nil, fmt.Errorf("missing value field for agent %s when using header authentication type", config.ID)
 			}
+			rv, err := cstr.Interpolate(value, _lookup)
+			if err == nil {
+				value = rv
+			}
 			secretName := createAgentSecretPrefix(config.ID, "HEADER_TOKEN")
-			kv[secretName] = value
+			kv[secretName] = cstr.NewMaskedString(value)
 		}
 	}
 	return kv, nil
@@ -131,10 +150,52 @@ var OSEnvLookup = func(key string) (string, bool) {
 	return os.LookupEnv(key)
 }
 
+// InterpolateAgentConfig interpolates environment variables in agent configurations and returns them
+// as non-interpolated values replaced using the provided lookup function.
+func InterpolateAgentConfig(config []project.AgentConfig, lookup EnvLookupFunc) []project.AgentConfig {
+	for i, agent := range config {
+		if agent.Authentication.Type != "" {
+			// go through and replace any environment variables in the fields
+			fields := agent.Authentication.Fields
+			if fields != nil {
+				_lookup := func(key string) (any, bool) {
+					if val, ok := lookup(key); ok {
+						return val, true
+					}
+					return nil, false
+				}
+				for k, v := range fields {
+					switch vv := v.(type) {
+					case string:
+						res, err := cstr.Interpolate(vv, _lookup)
+						if err == nil {
+							fields[k] = res
+						}
+					case []string:
+						res := make([]string, len(vv))
+						for i, e := range vv {
+							rv, err := cstr.Interpolate(e, _lookup)
+							if err == nil {
+								res[i] = rv
+							} else {
+								res[i] = e
+							}
+						}
+						fields[k] = res
+					}
+				}
+				agent.Authentication.Fields = fields
+				config[i] = agent
+			}
+		}
+	}
+	return config
+}
+
 // AgentAuthenticationMiddleware returns HTTP middleware that authenticates agents.
 func AgentAuthenticationMiddleware(config []project.AgentConfig, lookup EnvLookupFunc, next http.HandlerFunc) http.HandlerFunc {
 	agents := make(map[string]project.AgentConfig)
-	for _, agent := range config {
+	for _, agent := range InterpolateAgentConfig(config, lookup) {
 		if agent.Authentication.Type != "" {
 			agents[agent.ID] = agent
 		}

@@ -464,14 +464,21 @@ func (p *Project) IsPython() bool {
 
 // IsJavaScript returns true if the project is a JavaScript project.
 func (p *Project) IsJavaScript() bool {
-	return p.Bundler.Language == "javascript" || p.Bundler.Language == "js"
+	switch p.Bundler.Language {
+	case "javascript", "js":
+		return true
+	case "typescript", "ts":
+		return true
+	default:
+		return false
+	}
 }
 
 // Load will load the project from a file in the given directory.
 func (p *Project) Load(dir string) error {
 	fn := GetProjectFilename(dir)
 	if !sys.Exists(fn) {
-		return nil
+		return ErrProjectNotFound
 	}
 	of, err := os.Open(fn)
 	if err != nil {

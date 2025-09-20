@@ -18,6 +18,95 @@ type Resources struct {
 	DiskQuantity   resource.Quantity `json:"-" yaml:"-"`
 }
 
+func (a *Resources) UnmarshalJSON(data []byte) error {
+	type Alias Resources
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(a),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Parse and validate CPU if provided
+	if a.CPU != "" {
+		val, err := resource.ParseQuantity(a.CPU)
+		if err != nil {
+			return fmt.Errorf("error validating deploy cpu value '%s'. %w", a.CPU, err)
+		}
+		a.CPUQuantity = val
+	}
+
+	// Parse and validate Memory if provided
+	if a.Memory != "" {
+		val, err := resource.ParseQuantity(a.Memory)
+		if err != nil {
+			return fmt.Errorf("error validating deploy memory value '%s'. %w", a.Memory, err)
+		}
+		a.MemoryQuantity = val
+	}
+
+	// Parse and validate Disk if provided
+	if a.Disk != "" {
+		val, err := resource.ParseQuantity(a.Disk)
+		if err != nil {
+			return fmt.Errorf("error validating deploy disk value '%s'. %w", a.Disk, err)
+		}
+		a.DiskQuantity = val
+	}
+
+	return nil
+}
+
+func (a *Resources) UnmarshalYAML(value *yaml.Node) error {
+	// First unmarshal into the struct normally
+	type ResourcesAlias struct {
+		Memory string `yaml:"memory,omitempty"`
+		CPU    string `yaml:"cpu,omitempty"`
+		Disk   string `yaml:"disk,omitempty"`
+	}
+
+	var aux ResourcesAlias
+	if err := value.Decode(&aux); err != nil {
+		return err
+	}
+
+	// Copy the values
+	a.Memory = aux.Memory
+	a.CPU = aux.CPU
+	a.Disk = aux.Disk
+
+	// Parse and validate CPU if provided
+	if a.CPU != "" {
+		val, err := resource.ParseQuantity(a.CPU)
+		if err != nil {
+			return fmt.Errorf("error validating deploy cpu value '%s'. %w", a.CPU, err)
+		}
+		a.CPUQuantity = val
+	}
+
+	// Parse and validate Memory if provided
+	if a.Memory != "" {
+		val, err := resource.ParseQuantity(a.Memory)
+		if err != nil {
+			return fmt.Errorf("error validating deploy memory value '%s'. %w", a.Memory, err)
+		}
+		a.MemoryQuantity = val
+	}
+
+	// Parse and validate Disk if provided
+	if a.Disk != "" {
+		val, err := resource.ParseQuantity(a.Disk)
+		if err != nil {
+			return fmt.Errorf("error validating deploy disk value '%s'. %w", a.Disk, err)
+		}
+		a.DiskQuantity = val
+	}
+
+	return nil
+}
+
 type Mode struct {
 	Type string  `json:"type" yaml:"type" hc:"on-demand or provisioned"`                                       // on-demand or provisioned
 	Idle *string `json:"idle,omitempty" yaml:"idle,omitempty" hc:"duration in seconds if on-demand, optional"` // duration in seconds if on-demand, optional

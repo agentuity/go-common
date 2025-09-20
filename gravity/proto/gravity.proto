@@ -36,6 +36,7 @@ message ProvisionRequest {
   string error_message = 8;     // the error message if the client has an error
                                 // during boot or provisioning
   bool ephemeral = 9;           // if the client is ephemeral
+  ClientCapabilities capabilities = 10; // the client capabilities requested
 }
 
 message ProvisionResponse {

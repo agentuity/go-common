@@ -16,11 +16,15 @@ const CatalystServiceIP = "fd15:d710:25:c500:9dc5:d408::"
 // OtelServiceIP is the IP address for the otel service
 const OtelServiceIP = "fd15:d710:2a:68d0:9dc5:2763::"
 
+// StreamsServiceIP is the IP address for the streams service
+const StreamsServiceIP = "fd15:d710:29:9440:9dc5:96bf::"
+
 // Services maps IP address strings to service names
 var Services = map[string]string{
 	AetherServiceIP:   "aether",
 	CatalystServiceIP: "catalyst",
 	OtelServiceIP:     "otel",
+	StreamsServiceIP:  "streams",
 }
 
 // Addresses is a map of service names to their IP addresses
@@ -28,6 +32,7 @@ var Addresses = map[string]net.IP{
 	"aether":   net.ParseIP(AetherServiceIP),
 	"catalyst": net.ParseIP(CatalystServiceIP),
 	"otel":     net.ParseIP(OtelServiceIP),
+	"streams":  net.ParseIP(StreamsServiceIP),
 }
 
 // InternalServiceSubnet is the subnet for the internal service network

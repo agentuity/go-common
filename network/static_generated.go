@@ -16,6 +16,9 @@ const CatalystServiceIP = "fd15:d710:25:c500:9dc5:d408::"
 // OtelServiceIP is the IP address for the otel service
 const OtelServiceIP = "fd15:d710:2a:68d0:9dc5:2763::"
 
+// RegistryServiceIP is the IP address for the registry service
+const RegistryServiceIP = "fd15:d710:2b:6d30:9dc5:e069::"
+
 // StreamsServiceIP is the IP address for the streams service
 const StreamsServiceIP = "fd15:d710:29:9440:9dc5:96bf::"
 
@@ -24,6 +27,7 @@ var Services = map[string]string{
 	AetherServiceIP:   "aether",
 	CatalystServiceIP: "catalyst",
 	OtelServiceIP:     "otel",
+	RegistryServiceIP: "registry",
 	StreamsServiceIP:  "streams",
 }
 
@@ -32,6 +36,7 @@ var Addresses = map[string]net.IP{
 	"aether":   net.ParseIP(AetherServiceIP),
 	"catalyst": net.ParseIP(CatalystServiceIP),
 	"otel":     net.ParseIP(OtelServiceIP),
+	"registry": net.ParseIP(RegistryServiceIP),
 	"streams":  net.ParseIP(StreamsServiceIP),
 }
 

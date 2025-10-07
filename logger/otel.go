@@ -50,6 +50,7 @@ func (o *otelLogger) clone() *otelLogger {
 		logLevel:   o.logLevel,
 		otelLogger: o.otelLogger,
 		child:      o.child,
+		context:    o.context,
 	}
 }
 
@@ -59,8 +60,14 @@ func toLogValue(unknown interface{}) otelLog.Value {
 		return otelLog.StringValue(v)
 	case int:
 		return otelLog.IntValue(v)
+	case int32:
+		return otelLog.IntValue(int(v))
+	case int64:
+		return otelLog.Int64Value(v)
 	case bool:
 		return otelLog.BoolValue(v)
+	case float32:
+		return otelLog.Float64Value(float64(v))
 	case float64:
 		return otelLog.Float64Value(v)
 	case []byte:

@@ -146,6 +146,29 @@ func TestConsoleLoggerWithMetadata(t *testing.T) {
 	assert.Contains(t, output, `"key2":"value2"`)
 }
 
+func TestConsoleLoggerWithMergesMetadata(t *testing.T) {
+	logger := NewConsoleLogger().(*consoleLogger)
+
+	baseLogger := logger.With(map[string]interface{}{
+		"base_key": "base_value",
+		"shared":   "from_base",
+	}).(*consoleLogger)
+
+	extendedLogger := baseLogger.With(map[string]interface{}{
+		"extra_key": "extra_value",
+		"shared":    "from_extended",
+	}).(*consoleLogger)
+
+	output := captureOutput(func() {
+		extendedLogger.Info("Test message")
+	})
+
+	assert.Contains(t, output, "Test message")
+	assert.Contains(t, output, `"base_key":"base_value"`)
+	assert.Contains(t, output, `"extra_key":"extra_value"`)
+	assert.Contains(t, output, `"shared":"from_extended"`)
+}
+
 func TestConsoleLoggerSinkTraceLevel(t *testing.T) {
 	logger := NewConsoleLogger().(*consoleLogger)
 	logger.SetLogLevel(LevelTrace)

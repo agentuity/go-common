@@ -148,6 +148,32 @@ func TestJSONLoggerWith(t *testing.T) {
 	assert.Equal(t, float64(42), metadata["key2"]) // JSON numbers are float64
 }
 
+func TestJSONLoggerWithMergesMetadata(t *testing.T) {
+	sink := &testSink{}
+	logger := NewJSONLoggerWithSink(sink, LevelTrace)
+
+	baseLogger := logger.With(map[string]interface{}{
+		"base_key": "base_value",
+		"shared":   "from_base",
+	})
+
+	extendedLogger := baseLogger.With(map[string]interface{}{
+		"extra_key": "extra_value",
+		"shared":    "from_extended",
+	})
+
+	extendedLogger.Info("Test message")
+
+	var parsed map[string]interface{}
+	err := json.Unmarshal(sink.buf, &parsed)
+	assert.NoError(t, err)
+
+	metadata := parsed["metadata"].(map[string]interface{})
+	assert.Equal(t, "base_value", metadata["base_key"])
+	assert.Equal(t, "extra_value", metadata["extra_key"])
+	assert.Equal(t, "from_extended", metadata["shared"])
+}
+
 func TestJSONLoggerLog(t *testing.T) {
 	sink := &testSink{}
 

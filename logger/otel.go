@@ -90,9 +90,14 @@ func toLogValue(unknown interface{}) otelLog.Value {
 // With will return a new logger using metadata as the base context
 func (o *otelLogger) With(metadata map[string]interface{}) Logger {
 	clone := o.clone()
-	for k, v := range metadata {
-		clone.metadata[k] = toLogValue(v)
+	merged := make(map[string]otelLog.Value)
+	for k, v := range o.metadata {
+		merged[k] = v
 	}
+	for k, v := range metadata {
+		merged[k] = toLogValue(v)
+	}
+	clone.metadata = merged
 	if clone.child != nil {
 		clone.child = clone.child.With(metadata)
 	}

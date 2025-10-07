@@ -34,6 +34,11 @@ func TestOtelLoggerWithMergesMetadata(t *testing.T) {
 		"shared":    "from_extended",
 	}).(*otelLogger)
 
+	// Verify baseLogger.metadata stayed unchanged (immutability)
+	assert.Equal(t, 2, len(baseLogger.metadata))
+	assert.Equal(t, "base_value", baseLogger.metadata["base_key"].AsString())
+	assert.Equal(t, "from_base", baseLogger.metadata["shared"].AsString())
+
 	assert.Equal(t, 3, len(extendedLogger.metadata))
 	assert.Equal(t, "base_value", extendedLogger.metadata["base_key"].AsString())
 	assert.Equal(t, "extra_value", extendedLogger.metadata["extra_key"].AsString())

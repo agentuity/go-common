@@ -60,8 +60,14 @@ func toLogValue(unknown interface{}) otelLog.Value {
 		return otelLog.StringValue(v)
 	case int:
 		return otelLog.IntValue(v)
+	case int32:
+		return otelLog.IntValue(int(v))
+	case int64:
+		return otelLog.Int64Value(v)
 	case bool:
 		return otelLog.BoolValue(v)
+	case float32:
+		return otelLog.Float64Value(float64(v))
 	case float64:
 		return otelLog.Float64Value(v)
 	case []byte:
@@ -91,14 +97,9 @@ func toLogValue(unknown interface{}) otelLog.Value {
 // With will return a new logger using metadata as the base context
 func (o *otelLogger) With(metadata map[string]interface{}) Logger {
 	clone := o.clone()
-	merged := make(map[string]otelLog.Value)
-	for k, v := range o.metadata {
-		merged[k] = v
-	}
 	for k, v := range metadata {
-		merged[k] = toLogValue(v)
+		clone.metadata[k] = toLogValue(v)
 	}
-	clone.metadata = merged
 	if clone.child != nil {
 		clone.child = clone.child.With(metadata)
 	}

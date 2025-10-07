@@ -104,22 +104,17 @@ func (c *jsonLogger) WithPrefix(prefix string) Logger {
 
 func (c *jsonLogger) With(newFields map[string]interface{}) Logger {
 	clone := c.clone()
-	merged := make(map[string]interface{})
-	for k, v := range c.metadata {
-		merged[k] = v
-	}
 	for k, v := range newFields {
-		merged[k] = v
+		clone.metadata[k] = v
 	}
-	if trace, ok := merged["trace"].(string); ok {
+	if trace, ok := clone.metadata["trace"].(string); ok {
 		clone.traceID = trace
-		delete(merged, "trace")
+		delete(clone.metadata, "trace")
 	}
-	if comp, ok := merged["component"].(string); ok {
+	if comp, ok := clone.metadata["component"].(string); ok {
 		clone.component = comp
-		delete(merged, "component")
+		delete(clone.metadata, "component")
 	}
-	clone.metadata = merged
 	if c.child != nil {
 		clone.child = c.child.With(newFields)
 	}

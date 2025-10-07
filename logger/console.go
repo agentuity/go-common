@@ -142,14 +142,9 @@ func (c *consoleLogger) SetSink(sink Sink, level LogLevel) {
 
 func (c *consoleLogger) With(metadata map[string]interface{}) Logger {
 	clone := c.Clone()
-	merged := make(map[string]interface{})
-	for k, v := range c.metadata {
-		merged[k] = v
-	}
 	for k, v := range metadata {
-		merged[k] = v
+		clone.metadata[k] = v
 	}
-	clone.metadata = merged
 	if clone.child != nil {
 		clone.child = clone.child.With(metadata)
 	}

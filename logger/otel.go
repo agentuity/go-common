@@ -50,6 +50,7 @@ func (o *otelLogger) clone() *otelLogger {
 		logLevel:   o.logLevel,
 		otelLogger: o.otelLogger,
 		child:      o.child,
+		context:    o.context,
 	}
 }
 

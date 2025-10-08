@@ -11,51 +11,40 @@ import (
 )
 
 type testTransport struct {
-	publish   chan *Message
-	subscribe chan *Message
+	lastAction DNSAction
 }
 
-var _ Transport = (*testTransport)(nil)
+var _ transport = (*testTransport)(nil)
 
-func (t *testTransport) Subscribe(ctx context.Context, channel string) Subscriber {
-	t.subscribe = make(chan *Message, 1)
-	t.publish = make(chan *Message, 1)
-	return &testSubscriber{channel: channel, messages: t.subscribe}
-}
-
-func (t *testTransport) Publish(ctx context.Context, channel string, payload []byte) error {
-	t.publish <- &Message{Payload: payload}
-	var cert DNSCert
-	cert.Certificate = []byte("cert")
-	cert.Expires = time.Now().Add(time.Hour * 24 * 365 * 2)
-	cert.PrivateKey = []byte("private")
-	var response DNSResponse[DNSCert]
-	response.Success = true
-	response.Data = &cert
-	response.MsgID = uuid.New().String()
-	response.Error = ""
-	response.Data = &cert
-	responseBytes, err := json.Marshal(response)
-	if err != nil {
-		return err
+func (t *testTransport) Publish(ctx context.Context, action DNSAction) ([]byte, error) {
+	t.lastAction = action
+	
+	// Return different responses based on action type
+	switch action.(type) {
+	case *DNSCertAction:
+		var cert DNSCert
+		cert.Certificate = []byte("cert")
+		cert.Expires = time.Now().Add(time.Hour * 24 * 365 * 2)
+		cert.PrivateKey = []byte("private")
+		var response DNSResponse[DNSCert]
+		response.Success = true
+		response.Data = &cert
+		return json.Marshal(response)
+	case *DNSAddAction:
+		var record DNSRecord
+		record.IDs = []string{uuid.New().String()}
+		var response DNSResponse[DNSRecord]
+		response.Success = true
+		response.Data = &record
+		return json.Marshal(response)
+	default:
+		return nil, nil
 	}
-	t.subscribe <- &Message{Payload: responseBytes}
+}
+
+func (t *testTransport) PublishAsync(ctx context.Context, action DNSAction) error {
+	t.lastAction = action
 	return nil
-}
-
-type testSubscriber struct {
-	channel  string
-	messages chan *Message
-}
-
-var _ Subscriber = (*testSubscriber)(nil)
-
-func (s *testSubscriber) Close() error {
-	return nil
-}
-
-func (s *testSubscriber) Channel() <-chan *Message {
-	return s.messages
 }
 
 func TestDNSAction(t *testing.T) {
@@ -69,7 +58,7 @@ func TestDNSAction(t *testing.T) {
 		Name: "test",
 	}
 
-	reply, err := SendDNSAction(context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
+	reply, err := SendDNSAction(context.Background(), action, withTransport(&transport), WithTimeout(time.Second))
 	if err != nil {
 		t.Fatalf("failed to send dns action: %v", err)
 	}
@@ -89,7 +78,7 @@ func TestDNSCertAction(t *testing.T) {
 		Name: "test",
 	}
 
-	reply, err := SendDNSAction(context.Background(), action, WithTransport(&transport), WithTimeout(time.Second))
+	reply, err := SendDNSAction(context.Background(), action, withTransport(&transport), WithTimeout(time.Second))
 	if err != nil {
 		t.Fatalf("failed to send dns cert action: %v", err)
 	}

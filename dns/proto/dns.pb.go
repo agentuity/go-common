@@ -131,7 +131,7 @@ type AddResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
 	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	Ids           []string               `protobuf:"bytes,3,rep,name=ids,proto3" json:"ids,omitempty"`
+	Id            string                 `protobuf:"bytes,3,opt,name=id,proto3" json:"id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -180,11 +180,11 @@ func (x *AddResponse) GetError() string {
 	return ""
 }
 
-func (x *AddResponse) GetIds() []string {
+func (x *AddResponse) GetId() string {
 	if x != nil {
-		return x.Ids
+		return x.Id
 	}
-	return nil
+	return ""
 }
 
 type DeleteRequest struct {
@@ -434,11 +434,11 @@ const file_dns_proto_rawDesc = "" +
 	"\x0fexpires_seconds\x18\x05 \x01(\x03R\x0eexpiresSeconds\x12\x1a\n" +
 	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12\x16\n" +
 	"\x06weight\x18\a \x01(\x05R\x06weight\x12\x12\n" +
-	"\x04port\x18\b \x01(\x05R\x04port\"O\n" +
+	"\x04port\x18\b \x01(\x05R\x04port\"M\n" +
 	"\vAddResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\x12\x10\n" +
-	"\x03ids\x18\x03 \x03(\tR\x03ids\"5\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x0e\n" +
+	"\x02id\x18\x03 \x01(\tR\x02id\"5\n" +
 	"\rDeleteRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03ids\x18\x02 \x03(\tR\x03ids\"@\n" +

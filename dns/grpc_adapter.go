@@ -35,7 +35,7 @@ func FromProtoAddResponse(resp *pb.AddResponse) (*DNSRecord, error) {
 	if !resp.Success {
 		return nil, &DNSError{Message: resp.Error}
 	}
-	return &DNSRecord{IDs: resp.Ids}, nil
+	return &DNSRecord{IDs: []string{resp.Id}}, nil
 }
 
 func FromProtoDeleteResponse(resp *pb.DeleteResponse) error {
@@ -72,8 +72,8 @@ func ToProtoAddResponse(record *DNSRecord, err error) *pb.AddResponse {
 		resp.Error = err.Error()
 	} else {
 		resp.Success = true
-		if record != nil {
-			resp.Ids = record.IDs
+		if record != nil && len(record.IDs) > 0 {
+			resp.Id = record.IDs[0]
 		}
 	}
 	return resp

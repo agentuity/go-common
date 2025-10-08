@@ -35,7 +35,7 @@ message AddRequest {
 message AddResponse {
   bool success = 1;
   string error = 2;
-  repeated string ids = 3;
+  string id = 3;
 }
 
 message DeleteRequest {

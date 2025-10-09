@@ -1172,6 +1172,7 @@ func (g *GravityClient) Close() error {
 	var err error
 	g.once.Do(func() {
 		err = g.stop()
+		close(g.closed)
 	})
 	return err
 }

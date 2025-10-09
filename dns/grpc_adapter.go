@@ -1,6 +1,8 @@
 package dns
 
 import (
+	"time"
+
 	pb "github.com/agentuity/go-common/dns/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -49,10 +51,14 @@ func FromProtoCertResponse(resp *pb.CertResponse) (*DNSCert, error) {
 	if !resp.Success {
 		return nil, &DNSError{Message: resp.Error}
 	}
+	var expires time.Time
+	if resp.Expires != nil {
+		expires = resp.Expires.AsTime()
+	}
 	return &DNSCert{
 		Certificate: resp.Certificate,
 		PrivateKey:  resp.PrivateKey,
-		Expires:     resp.Expires.AsTime(),
+		Expires:     expires,
 		Domain:      resp.Domain,
 	}, nil
 }

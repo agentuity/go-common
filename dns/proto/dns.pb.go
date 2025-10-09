@@ -36,7 +36,8 @@ type AddRequest struct {
 	// Weight for SRV records
 	Weight int32 `protobuf:"varint,7,opt,name=weight,proto3" json:"weight,omitempty"`
 	// Port for SRV records
-	Port          int32 `protobuf:"varint,8,opt,name=port,proto3" json:"port,omitempty"`
+	Port          int32  `protobuf:"varint,8,opt,name=port,proto3" json:"port,omitempty"`
+	Comment       string `protobuf:"bytes,9,opt,name=comment,proto3" json:"comment,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -125,6 +126,13 @@ func (x *AddRequest) GetPort() int32 {
 		return x.Port
 	}
 	return 0
+}
+
+func (x *AddRequest) GetComment() string {
+	if x != nil {
+		return x.Comment
+	}
+	return ""
 }
 
 type AddResponse struct {
@@ -423,7 +431,7 @@ var File_dns_proto protoreflect.FileDescriptor
 
 const file_dns_proto_rawDesc = "" +
 	"\n" +
-	"\tdns.proto\x12\x03dns\x1a\x1fgoogle/protobuf/timestamp.proto\"\xdc\x01\n" +
+	"\tdns.proto\x12\x03dns\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x01\n" +
 	"\n" +
 	"AddRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
@@ -434,7 +442,8 @@ const file_dns_proto_rawDesc = "" +
 	"\x0fexpires_seconds\x18\x05 \x01(\x03R\x0eexpiresSeconds\x12\x1a\n" +
 	"\bpriority\x18\x06 \x01(\x05R\bpriority\x12\x16\n" +
 	"\x06weight\x18\a \x01(\x05R\x06weight\x12\x12\n" +
-	"\x04port\x18\b \x01(\x05R\x04port\"M\n" +
+	"\x04port\x18\b \x01(\x05R\x04port\x12\x18\n" +
+	"\acomment\x18\t \x01(\tR\acomment\"M\n" +
 	"\vAddResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x0e\n" +

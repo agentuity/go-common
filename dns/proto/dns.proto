@@ -30,6 +30,8 @@ message AddRequest {
   int32 weight = 7;
   // Port for SRV records
   int32 port = 8;
+
+  string comment = 9;
 }
 
 message AddResponse {

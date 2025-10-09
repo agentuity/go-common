@@ -18,7 +18,7 @@ var _ transport = (*testTransport)(nil)
 
 func (t *testTransport) Publish(ctx context.Context, action DNSAction) ([]byte, error) {
 	t.lastAction = action
-	
+
 	// Return different responses based on action type
 	switch action.(type) {
 	case *DNSCertAction:

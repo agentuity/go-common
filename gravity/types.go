@@ -45,4 +45,5 @@ type GravityConfig struct {
 	NetworkInterface     network.NetworkInterface
 	ConnectionPoolConfig *ConnectionPoolConfig
 	ReportStats          bool
+	SkipAutoReconnect    bool
 }

@@ -107,11 +107,13 @@ type GravityClient struct {
 	serverMetrics *ServerMetrics
 
 	// Connection management
-	mu        sync.RWMutex
-	closing   bool
-	ctx       context.Context
-	cancel    context.CancelFunc
-	tlsConfig *tls.Config
+	mu                sync.RWMutex
+	closing           bool
+	ctx               context.Context
+	cancel            context.CancelFunc
+	tlsConfig         *tls.Config
+	skipAutoReconnect bool
+	closed            chan struct{}
 
 	// State management
 	connected        bool
@@ -269,11 +271,13 @@ func New(config GravityConfig) (*GravityClient, error) {
 			streamMetrics:      make(map[string]*StreamMetrics),
 			allocationStrategy: poolConfig.AllocationStrategy,
 		},
-		serverMetrics: NewServerMetrics(),
-		workingDir:    config.WorkingDir,
-		tracePackets:  config.TraceLogPackets,
-		reportStats:   config.ReportStats,
-		tracer:        otel.Tracer("@agentuity/gravity/client"),
+		serverMetrics:     NewServerMetrics(),
+		workingDir:        config.WorkingDir,
+		tracePackets:      config.TraceLogPackets,
+		reportStats:       config.ReportStats,
+		skipAutoReconnect: config.SkipAutoReconnect,
+		closed:            make(chan struct{}, 1),
+		tracer:            otel.Tracer("@agentuity/gravity/client"),
 	}
 
 	if config.TraceLogPackets {
@@ -1168,8 +1172,22 @@ func (g *GravityClient) Close() error {
 	var err error
 	g.once.Do(func() {
 		err = g.stop()
+		close(g.closed)
 	})
 	return err
+}
+
+// Disconnected will wait for the client to be disconnected or the ctx to be cancelled
+func (g *GravityClient) Disconnected(ctx context.Context) {
+	g.logger.Debug("waiting for client to be disconnected")
+	select {
+	case <-ctx.Done():
+		g.logger.Debug("client disconnected from context cancelation")
+		return
+	case _, ok := <-g.closed:
+		g.logger.Debug("client disconnected from disconnection (%v)", ok)
+		return
+	}
 }
 
 // handleServerDisconnection handles server-initiated disconnection for HA
@@ -1187,11 +1205,12 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 		return
 	}
 
+	wasConnected := g.connected
+
 	g.logger.Info("Handling server disconnection: %s", reason)
 
 	// Mark as disconnected but don't close completely
 	g.connected = false
-	g.reconnecting = true
 
 	if g.networkInterface != nil {
 		if err := g.networkInterface.UnrouteTraffic(); err != nil {
@@ -1206,6 +1225,14 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 
 	// Update connection status
 	g.serverMetrics.UpdateConnection(false)
+
+	if wasConnected && g.skipAutoReconnect {
+		g.logger.Debug("Client is configured to skip auto-reconnect")
+		g.closed <- struct{}{}
+		return
+	}
+
+	g.reconnecting = true
 
 	// Start reconnection process in background
 	go g.attemptReconnection(reason)

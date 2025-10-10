@@ -225,10 +225,10 @@ type option struct {
 	reply     bool
 }
 
-type optionHandler func(*option)
+type OptionHandler func(*option)
 
 // WithReply sets whether the DNS action should wait for a reply from the DNS server
-func WithReply(reply bool) optionHandler {
+func WithReply(reply bool) OptionHandler {
 	return func(o *option) {
 		o.reply = reply
 	}
@@ -237,28 +237,28 @@ func WithReply(reply bool) optionHandler {
 // WithTransport sets a custom transport for the DNS action
 //
 // for Testing
-func withTransport(t transport) optionHandler {
+func withTransport(t transport) OptionHandler {
 	return func(o *option) {
 		o.transport = t
 	}
 }
 
 // WithTimeout sets a custom timeout for the DNS action
-func WithTimeout(timeout time.Duration) optionHandler {
+func WithTimeout(timeout time.Duration) OptionHandler {
 	return func(o *option) {
 		o.timeout = timeout
 	}
 }
 
 // WithRedis uses a redis client as the transport for the DNS action
-func WithRedis(redis *redis.Client) optionHandler {
+func WithRedis(redis *redis.Client) OptionHandler {
 	return func(o *option) {
 		o.transport = &redisTransport{redis: redis}
 	}
 }
 
 // WithGRPC uses a gRPC client as the transport for the DNS action
-func WithGRPC(client pb.DNSServiceClient) optionHandler {
+func WithGRPC(client pb.DNSServiceClient) OptionHandler {
 	return func(o *option) {
 		o.transport = &grpcTransport{
 			client: client,
@@ -304,7 +304,7 @@ func NewDNSResponse[R any, T TypedDNSAction[R]](action T, data *R, err error) *D
 }
 
 // SendDNSAction sends a DNS action to the DNS server with a timeout. If the timeout is 0, the default timeout will be used.
-func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, opts ...optionHandler) (*R, error) {
+func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, opts ...OptionHandler) (*R, error) {
 	var o option
 	o.timeout = DefaultDNSTimeout
 	o.reply = true

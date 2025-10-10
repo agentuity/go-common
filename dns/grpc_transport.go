@@ -2,11 +2,14 @@ package dns
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	pb "github.com/agentuity/go-common/dns/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -72,12 +75,25 @@ func (t *grpcTransport) PublishAsync(ctx context.Context, action DNSAction) erro
 
 // NewDNSServiceClient creates a new gRPC DNS service client.
 // The caller is responsible for closing the returned connection.
-func NewDNSServiceClient(ctx context.Context, address string, opts ...grpc.DialOption) (pb.DNSServiceClient, *grpc.ClientConn, error) {
+// If tlsCert is nil, insecure credentials will be used unless opts are provided.
+func NewDNSServiceClient(ctx context.Context, address string, tlsCert *tls.Certificate, opts ...grpc.DialOption) (pb.DNSServiceClient, *grpc.ClientConn, error) {
+	if tlsCert != nil {
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{*tlsCert},
+			MinVersion:   tls.VersionTLS13,
+		}
+		opts = []grpc.DialOption{grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))}
+	}
 	if len(opts) == 0 {
 		opts = []grpc.DialOption{grpc.WithTransportCredentials(insecure.NewCredentials())}
 	}
 
-	conn, err := grpc.NewClient(address, opts...)
+	u, err := url.Parse(address)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to parse address: %w", err)
+	}
+	target := u.Host
+	conn, err := grpc.NewClient(target, opts...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create gRPC client: %w", err)
 	}

@@ -27,6 +27,8 @@ type cloudMetadata struct {
 var (
 	cachedMetadata *cloudMetadata
 	metadataMu     sync.RWMutex
+	cloudDetector  CloudDetector = newDefaultCloudDetector()
+	cloudMu        sync.RWMutex
 )
 
 type CloudDetector interface {
@@ -45,9 +47,9 @@ func newDefaultCloudDetector() CloudDetector {
 	}
 }
 
-var cloudDetector CloudDetector = newDefaultCloudDetector()
-
 func SetCloudDetector(detector CloudDetector) {
+	cloudMu.Lock()
+	defer cloudMu.Unlock()
 	cloudDetector = detector
 }
 
@@ -278,7 +280,11 @@ func GetCloudIdentifier(ctx context.Context) (string, error) {
 		return formatCloudIdentifier(cachedMetadata), nil
 	}
 
-	metadata, err := cloudDetector.Detect(ctx)
+	cloudMu.RLock()
+	detector := cloudDetector
+	cloudMu.RUnlock()
+
+	metadata, err := detector.Detect(ctx)
 	if err != nil {
 		return "", err
 	}

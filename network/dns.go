@@ -51,6 +51,9 @@ func SetCloudDetector(detector CloudDetector) {
 	cloudMu.Lock()
 	defer cloudMu.Unlock()
 	cloudDetector = detector
+	metadataMu.Lock()
+	cachedMetadata = nil
+	metadataMu.Unlock()
 }
 
 func (d *defaultCloudDetector) Detect(ctx context.Context) (*cloudMetadata, error) {

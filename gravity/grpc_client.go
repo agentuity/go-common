@@ -240,7 +240,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 
 	g := &GravityClient{
 		context:                config.Context,
-		logger:                 config.Logger.WithPrefix("[gravity]"),
+		logger:                 config.Logger,
 		provider:               config.Provider,
 		url:                    config.URL,
 		authorizationToken:     config.AuthToken,

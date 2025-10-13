@@ -211,7 +211,8 @@ func extractRegion(zone string) string {
 func shortenRegion(region string) string {
 	parts := strings.Split(region, "-")
 	if len(parts) < 2 {
-		return region
+		// No dashes - likely Azure region, apply intelligent shortening
+		return shortenAzureRegion(region)
 	}
 
 	var allParts []string
@@ -232,6 +233,114 @@ func shortenRegion(region string) string {
 	}
 
 	return result.String()
+}
+
+// Azure region lookup table - maps full region names to short codes (max 5 chars)
+var azureRegionShortCodes = map[string]string{
+	// US regions
+	"eastus":         "eus",
+	"eastus2":        "eus2",
+	"westus":         "wus",
+	"westus2":        "wus2",
+	"westus3":        "wus3",
+	"centralus":      "cus",
+	"northcentralus": "ncus",
+	"southcentralus": "scus",
+	"westcentralus":  "wcus",
+
+	// Europe regions
+	"northeurope":        "neu",
+	"westeurope":         "weu",
+	"francecentral":      "frc",
+	"francesouth":        "frs",
+	"germanywestcentral": "dewc",
+	"germanynorth":       "den",
+	"norwayeast":         "noe",
+	"norwaywest":         "now",
+	"swedencentral":      "sec",
+	"switzerlandnorth":   "chn",
+	"switzerlandwest":    "chw",
+	"uksouth":            "uks",
+	"ukwest":             "ukw",
+
+	// Asia Pacific regions
+	"eastasia":           "eas",
+	"southeastasia":      "seas",
+	"australiaeast":      "aue",
+	"australiacentral":   "auc",
+	"australiacentral2":  "auc2",
+	"australiasoutheast": "ause",
+	"centralindia":       "indc",
+	"southindia":         "inds",
+	"westindia":          "indw",
+	"japaneast":          "jpe",
+	"japanwest":          "jpw",
+	"koreacentral":       "krc",
+	"koreasouth":         "krs",
+
+	// Middle East & Africa
+	"uaenorth":         "aen",
+	"uaecentral":       "aec",
+	"southafricanorth": "zan",
+	"southafricawest":  "zaw",
+	"qatarcentral":     "qac",
+
+	// Americas (non-US)
+	"brazilsouth":     "brs",
+	"brazilsoutheast": "brse",
+	"canadacentral":   "cac",
+	"canadaeast":      "cae",
+
+	// Special regions
+	"jioindiawest":    "jiow",
+	"jioindiacentral": "jioc",
+
+	// Stage/test environments
+	"centralusstage":      "cuss",
+	"eastusstage":         "euss",
+	"eastus2stage":        "eus2s",
+	"northcentralusstage": "ncuss",
+	"southcentralusstage": "scuss",
+	"westusstage":         "wuss",
+	"westus2stage":        "wus2s",
+	"eastusstg":           "eust",
+	"southcentralusstg":   "scust",
+	"eastasiastage":       "eass",
+	"southeastasiastage":  "seass",
+
+	// Geo regions (typically kept as-is or lightly shortened)
+	"asia":             "asia",
+	"asiapacific":      "apac",
+	"australia":        "au",
+	"brazil":           "br",
+	"canada":           "ca",
+	"europe":           "eu",
+	"france":           "fr",
+	"germany":          "de",
+	"global":           "glbl",
+	"india":            "ind",
+	"japan":            "jp",
+	"korea":            "kr",
+	"norway":           "no",
+	"singapore":        "sg",
+	"southafrica":      "za",
+	"switzerland":      "ch",
+	"uae":              "ae",
+	"uk":               "uk",
+	"unitedstates":     "us",
+	"unitedstateseuap": "usea",
+}
+
+func shortenAzureRegion(region string) string {
+	lower := strings.ToLower(region)
+
+	// Check lookup table first
+	if short, ok := azureRegionShortCodes[lower]; ok {
+		return short
+	}
+
+	// If not in table, return as-is
+	return region
 }
 
 func splitAlphaNumeric(s string) []string {

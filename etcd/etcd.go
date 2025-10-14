@@ -1,6 +1,7 @@
 package etcd
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
@@ -13,8 +14,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/agentuity/go-common/logger"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/namespace"
+	"go.uber.org/zap"
 )
 
 // EtcdClient is a simple wrapper around the etcd client
@@ -28,6 +31,8 @@ func (c *EtcdClient) Close() error {
 }
 
 type opt struct {
+	ctx       context.Context
+	logger    logger.Logger
 	endpoints []string
 	caCertPEM []byte
 	caKeyPEM  []byte
@@ -66,6 +71,20 @@ func WithURL(url string) optFun {
 			return
 		}
 		opt.endpoints = []string{url}
+	}
+}
+
+// WithContext allows overriding the default context (which is nil)
+func WithContext(ctx context.Context) optFun {
+	return func(opt *opt) {
+		opt.ctx = ctx
+	}
+}
+
+// WithLogger allows overriding the default logger (which is nil)
+func WithLogger(logger logger.Logger) optFun {
+	return func(opt *opt) {
+		opt.logger = logger
 	}
 }
 
@@ -178,11 +197,19 @@ func New(opts ...optFun) (*EtcdClient, error) {
 		}
 	}
 
+	// create an adapter for zap logger
+	var l *zap.Logger
+	if opt.logger != nil {
+		l = logger.ToZap(opt.logger)
+	}
+
 	// Create etcd client
 	cli, err := clientv3.New(clientv3.Config{
 		Endpoints:   opt.endpoints,
 		TLS:         tlsConfig,
 		DialTimeout: 5 * time.Second,
+		Context:     opt.ctx,
+		Logger:      l,
 	})
 
 	if err != nil {

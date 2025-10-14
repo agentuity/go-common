@@ -15,8 +15,12 @@ func (z *zapBridge) Enabled(level zapcore.Level) bool {
 
 func (z *zapBridge) With(fields []zapcore.Field) zapcore.Core {
 	metadata := make(map[string]interface{})
+	encoder := zapcore.NewMapObjectEncoder()
 	for _, field := range fields {
-		metadata[field.Key] = field.Interface
+		field.AddTo(encoder)
+	}
+	for key, value := range encoder.Fields {
+		metadata[key] = value
 	}
 	return &zapBridge{logger: z.logger.With(metadata)}
 }
@@ -26,22 +30,38 @@ func (z *zapBridge) Check(entry zapcore.Entry, ce *zapcore.CheckedEntry) *zapcor
 }
 
 func (z *zapBridge) Write(entry zapcore.Entry, fields []zapcore.Field) error {
-	args := make([]interface{}, 0, len(fields)*2)
+	metadata := make(map[string]interface{})
+	encoder := zapcore.NewMapObjectEncoder()
 	for _, field := range fields {
-		args = append(args, field.Key, field.Interface)
+		field.AddTo(encoder)
+	}
+	for key, value := range encoder.Fields {
+		metadata[key] = value
+	}
+
+	logger := z.logger
+	if len(metadata) > 0 {
+		logger = logger.With(metadata)
 	}
 
 	switch entry.Level {
 	case zapcore.DebugLevel:
-		z.logger.Debug(entry.Message, args...)
+		logger.Debug(entry.Message)
 	case zapcore.InfoLevel:
-		z.logger.Info(entry.Message, args...)
+		logger.Info(entry.Message)
 	case zapcore.WarnLevel:
-		z.logger.Warn(entry.Message, args...)
-	case zapcore.ErrorLevel, zapcore.DPanicLevel, zapcore.PanicLevel, zapcore.FatalLevel:
-		z.logger.Error(entry.Message, args...)
+		logger.Warn(entry.Message)
+	case zapcore.ErrorLevel:
+		logger.Error(entry.Message)
+	case zapcore.DPanicLevel:
+		logger.Error(entry.Message)
+	case zapcore.PanicLevel:
+		logger.Error(entry.Message)
+		panic(entry.Message)
+	case zapcore.FatalLevel:
+		logger.Fatal(entry.Message)
 	default:
-		z.logger.Trace(entry.Message, args...)
+		logger.Trace(entry.Message)
 	}
 
 	return nil

@@ -20,14 +20,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// EtcdClient is a simple wrapper around the etcd client
-type EtcdClient struct {
-	client *clientv3.Client
-}
-
-// Close the connection to etcd
-func (c *EtcdClient) Close() error {
-	return c.client.Close()
+// Client is a simple wrapper around the etcd client
+type Client struct {
+	*clientv3.Client
 }
 
 type opt struct {
@@ -89,8 +84,7 @@ func WithLogger(logger logger.Logger) optFun {
 }
 
 // New creates a new EtcdClient instance with the provided options
-func New(opts ...optFun) (*EtcdClient, error) {
-	var client EtcdClient
+func New(opts ...optFun) (*Client, error) {
 	var opt opt
 
 	opt.expiry = time.Hour * 24 * 30 * 12 // ~1 year
@@ -109,7 +103,7 @@ func New(opts ...optFun) (*EtcdClient, error) {
 		opt.caCertPEM = buf
 	}
 
-	if val, ok := os.LookupEnv("AGENTUITY_CA_KEY"); ok && val != "" {
+	if val, ok := os.LookupEnv("AGENTUITY_CA_PRIVATE_KEY"); ok && val != "" {
 		buf, err := base64.StdEncoding.DecodeString(val)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode CA key: %w", err)
@@ -156,7 +150,10 @@ func New(opts ...optFun) (*EtcdClient, error) {
 		}
 
 		// Create client certificate template
-		serialNumber, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+		serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate serial number for client certificate: %w", err)
+		}
 		clientCertTemplate := &x509.Certificate{
 			SerialNumber: serialNumber,
 			Subject: pkix.Name{
@@ -222,7 +219,9 @@ func New(opts ...optFun) (*EtcdClient, error) {
 		cli.Lease = namespace.NewLease(cli.Lease, opt.prefix)
 	}
 
-	client.client = cli
+	if opt.logger != nil {
+		opt.logger.Debug("etc configured: %v", opt.endpoints)
+	}
 
-	return &client, nil
+	return &Client{cli}, nil
 }

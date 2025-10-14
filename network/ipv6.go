@@ -45,29 +45,74 @@ const (
 	RegionUSCentral1 Region = 0x01
 	RegionUSWest1    Region = 0x02
 	RegionUSEast1    Region = 0x03
+	RegionUSCentral2 Region = 0x04
+	RegionUSCentral3 Region = 0x05
+	RegionUSWest2    Region = 0x06
+	RegionUSWest3    Region = 0x07
+	RegionUSEast2    Region = 0x08
+	RegionUSEast3    Region = 0x09
+	RegionUSCentral4 Region = 0x0A
+	RegionUSWest4    Region = 0x0B
+	RegionUSEast4    Region = 0x0C
 )
+
+// ProductionRegions returns a map of the production regions for each cloud provider currently supported.
+var ProductionRegions = map[CloudProvider][]Region{
+	CloudProviderAWS: {
+		RegionUSCentral1,
+	},
+	CloudProviderGCP: {
+		RegionUSCentral1,
+	},
+	CloudProviderAzure: {
+		RegionUSCentral1,
+	},
+}
 
 // Regions maps canonical region strings to Region. Treat as read-only; do not mutate at runtime.
 var Regions = map[string]Region{
-	"global":      RegionGlobal,
+	"global": RegionGlobal,
+
+	// GCP regions
 	"us-central1": RegionUSCentral1,
+	"us-central2": RegionUSCentral2,
 	"us-west1":    RegionUSWest1,
+	"us-west2":    RegionUSWest2,
+	"us-west3":    RegionUSWest3,
+	"us-west4":    RegionUSWest4,
 	"us-east1":    RegionUSEast1,
+	"us-east4":    RegionUSEast2,
+	"us-east5":    RegionUSEast3,
+
+	// AWS regions
+	"us-east-1": RegionUSEast1,
+	"us-east-2": RegionUSEast2,
+	"us-west-1": RegionUSWest1,
+	"us-west-2": RegionUSWest2,
+
+	// Azure regions
+	"eastus":         RegionUSEast1,
+	"eastus2":        RegionUSEast2,
+	"westus":         RegionUSWest1,
+	"westus2":        RegionUSWest2,
+	"westus3":        RegionUSWest3,
+	"centralus":      RegionUSCentral1,
+	"northcentralus": RegionUSCentral2,
+	"southcentralus": RegionUSCentral3,
+	"westcentralus":  RegionUSCentral1, // Map to central1 since it's central-focused
 }
 
 // GetRegion returns a Region from a string.
 func GetRegion(region string) Region {
 	region = strings.ToLower(region)
-	switch {
-	case strings.Contains(region, "us-central1"):
-		return RegionUSCentral1
-	case strings.Contains(region, "us-east1"):
-		return RegionUSEast1
-	case strings.Contains(region, "us-west1"):
-		return RegionUSWest1
-	default:
-		return RegionGlobal
+
+	// Try exact match from Regions map
+	if r, ok := Regions[region]; ok {
+		return r
 	}
+
+	// Default to global for unknown regions
+	return RegionGlobal
 }
 
 type Network uint8

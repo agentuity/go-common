@@ -522,3 +522,226 @@ func TestAllServiceConstants(t *testing.T) {
 		})
 	}
 }
+
+func TestGetRegionGCP(t *testing.T) {
+	testCases := []struct {
+		region   string
+		expected Region
+	}{
+		{"us-central1", RegionUSCentral1},
+		{"us-central2", RegionUSCentral2},
+		{"US-CENTRAL1", RegionUSCentral1},
+		{"us-west1", RegionUSWest1},
+		{"us-west2", RegionUSWest2},
+		{"us-west3", RegionUSWest3},
+		{"us-west4", RegionUSWest4},
+		{"US-WEST1", RegionUSWest1},
+		{"us-east1", RegionUSEast1},
+		{"us-east4", RegionUSEast2},
+		{"us-east5", RegionUSEast3},
+		{"US-EAST1", RegionUSEast1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.region, func(t *testing.T) {
+			result := GetRegion(tc.region)
+			assert.Equal(t, tc.expected, result, "GCP region %s should map to %v", tc.region, tc.expected)
+		})
+	}
+}
+
+func TestGetRegionAWS(t *testing.T) {
+	testCases := []struct {
+		region   string
+		expected Region
+	}{
+		{"us-east-1", RegionUSEast1},
+		{"us-east-2", RegionUSEast2},
+		{"US-EAST-1", RegionUSEast1},
+		{"us-west-1", RegionUSWest1},
+		{"us-west-2", RegionUSWest2},
+		{"US-WEST-1", RegionUSWest1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.region, func(t *testing.T) {
+			result := GetRegion(tc.region)
+			assert.Equal(t, tc.expected, result, "AWS region %s should map to %v", tc.region, tc.expected)
+		})
+	}
+}
+
+func TestGetRegionAzure(t *testing.T) {
+	testCases := []struct {
+		region   string
+		expected Region
+	}{
+		{"eastus", RegionUSEast1},
+		{"eastus2", RegionUSEast2},
+		{"EastUS", RegionUSEast1},
+		{"EASTUS2", RegionUSEast2},
+		{"westus", RegionUSWest1},
+		{"westus2", RegionUSWest2},
+		{"westus3", RegionUSWest3},
+		{"WestUS", RegionUSWest1},
+		{"centralus", RegionUSCentral1},
+		{"northcentralus", RegionUSCentral2},
+		{"southcentralus", RegionUSCentral3},
+		{"CentralUS", RegionUSCentral1},
+		{"westcentralus", RegionUSCentral1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.region, func(t *testing.T) {
+			result := GetRegion(tc.region)
+			assert.Equal(t, tc.expected, result, "Azure region %s should map to %v", tc.region, tc.expected)
+		})
+	}
+}
+
+func TestGetRegionFallback(t *testing.T) {
+	testCases := []struct {
+		region   string
+		expected Region
+	}{
+		{"europe-west1", RegionGlobal},
+		{"asia-east1", RegionGlobal},
+		{"australia-southeast1", RegionGlobal},
+		{"unknown-region", RegionGlobal},
+		{"", RegionGlobal},
+		{"global", RegionGlobal},
+		{"GLOBAL", RegionGlobal},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.region, func(t *testing.T) {
+			result := GetRegion(tc.region)
+			assert.Equal(t, tc.expected, result, "Non-US region %s should default to global", tc.region, tc.expected)
+		})
+	}
+}
+
+func TestRegionsMapConsistency(t *testing.T) {
+	for regionStr, expectedRegion := range Regions {
+		t.Run(regionStr, func(t *testing.T) {
+			result := GetRegion(regionStr)
+			assert.Equal(t, expectedRegion, result, "Regions map entry %s should be consistent with GetRegion", regionStr)
+		})
+	}
+}
+
+func TestRegionNormalizationInIPv6(t *testing.T) {
+	tenantID := AgentuityTenantID
+	machineID := "192.168.1.1"
+	hostID := "172.17.0.1"
+
+	testCases := []struct {
+		name            string
+		gcpRegion       string
+		awsRegion       string
+		azureRegion     string
+		expectedRegion  Region
+		shouldMatchAddr bool
+	}{
+		{
+			name:            "US East 1 regions all map to same",
+			gcpRegion:       "us-east1",
+			awsRegion:       "us-east-1",
+			azureRegion:     "eastus",
+			expectedRegion:  RegionUSEast1,
+			shouldMatchAddr: true,
+		},
+		{
+			name:            "US West 1 regions all map to same",
+			gcpRegion:       "us-west1",
+			awsRegion:       "us-west-1",
+			azureRegion:     "westus",
+			expectedRegion:  RegionUSWest1,
+			shouldMatchAddr: true,
+		},
+		{
+			name:            "US Central 1 regions all map to same",
+			gcpRegion:       "us-central1",
+			awsRegion:       "",
+			azureRegion:     "centralus",
+			expectedRegion:  RegionUSCentral1,
+			shouldMatchAddr: true,
+		},
+		{
+			name:            "US East 2 regions all map to same",
+			gcpRegion:       "us-east4",
+			awsRegion:       "us-east-2",
+			azureRegion:     "eastus2",
+			expectedRegion:  RegionUSEast2,
+			shouldMatchAddr: true,
+		},
+		{
+			name:            "US West 2 regions all map to same",
+			gcpRegion:       "us-west2",
+			awsRegion:       "us-west-2",
+			azureRegion:     "westus2",
+			expectedRegion:  RegionUSWest2,
+			shouldMatchAddr: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			gcpAddr := NewIPv6Address(GetRegion(tc.gcpRegion), NetworkPrivateGravity, tenantID, machineID, hostID)
+			gcpRegionResult := GetRegion(tc.gcpRegion)
+			assert.Equal(t, tc.expectedRegion, gcpRegionResult, "GCP region should normalize to %v", tc.expectedRegion)
+
+			if tc.awsRegion != "" {
+				awsAddr := NewIPv6Address(GetRegion(tc.awsRegion), NetworkPrivateGravity, tenantID, machineID, hostID)
+				awsRegionResult := GetRegion(tc.awsRegion)
+				assert.Equal(t, tc.expectedRegion, awsRegionResult, "AWS region should normalize to %v", tc.expectedRegion)
+
+				if tc.shouldMatchAddr {
+					assert.Equal(t, gcpAddr.String(), awsAddr.String(), "GCP and AWS equivalent regions should produce same IPv6")
+					assert.Equal(t, gcpAddr.MachineSubnet(), awsAddr.MachineSubnet(), "GCP and AWS equivalent regions should produce same subnet")
+				}
+			}
+
+			if tc.azureRegion != "" {
+				azureAddr := NewIPv6Address(GetRegion(tc.azureRegion), NetworkPrivateGravity, tenantID, machineID, hostID)
+				azureRegionResult := GetRegion(tc.azureRegion)
+				assert.Equal(t, tc.expectedRegion, azureRegionResult, "Azure region should normalize to %v", tc.expectedRegion)
+
+				if tc.shouldMatchAddr {
+					assert.Equal(t, gcpAddr.String(), azureAddr.String(), "GCP and Azure equivalent regions should produce same IPv6")
+					assert.Equal(t, gcpAddr.MachineSubnet(), azureAddr.MachineSubnet(), "GCP and Azure equivalent regions should produce same subnet")
+				}
+			}
+		})
+	}
+}
+
+func TestRegionCaseInsensitivity(t *testing.T) {
+	testCases := []struct {
+		lowerCase string
+		upperCase string
+		mixedCase string
+		expected  Region
+	}{
+		{"us-central1", "US-CENTRAL1", "Us-CeNtRaL1", RegionUSCentral1},
+		{"us-east1", "US-EAST1", "Us-EaSt1", RegionUSEast1},
+		{"us-west1", "US-WEST1", "Us-WeSt1", RegionUSWest1},
+		{"eastus", "EASTUS", "EaStUs", RegionUSEast1},
+		{"westus", "WESTUS", "WESTus", RegionUSWest1},
+		{"centralus", "CENTRALUS", "CentralUS", RegionUSCentral1},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.lowerCase, func(t *testing.T) {
+			lowerResult := GetRegion(tc.lowerCase)
+			upperResult := GetRegion(tc.upperCase)
+			mixedResult := GetRegion(tc.mixedCase)
+
+			assert.Equal(t, tc.expected, lowerResult)
+			assert.Equal(t, tc.expected, upperResult)
+			assert.Equal(t, tc.expected, mixedResult)
+			assert.Equal(t, lowerResult, upperResult, "Case variations should produce same result")
+			assert.Equal(t, lowerResult, mixedResult, "Case variations should produce same result")
+		})
+	}
+}

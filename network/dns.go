@@ -48,12 +48,13 @@ func newDefaultCloudDetector() CloudDetector {
 }
 
 func SetCloudDetector(detector CloudDetector) {
-	cloudMu.Lock()
-	defer cloudMu.Unlock()
-	cloudDetector = detector
 	metadataMu.Lock()
 	cachedMetadata = nil
 	metadataMu.Unlock()
+
+	cloudMu.Lock()
+	defer cloudMu.Unlock()
+	cloudDetector = detector
 }
 
 func (d *defaultCloudDetector) Detect(ctx context.Context) (*cloudMetadata, error) {
@@ -97,12 +98,12 @@ func (d *defaultCloudDetector) detectGCP(ctx context.Context) (*cloudMetadata, e
 		return nil, err
 	}
 
-	zone := string(body)
+	zone := strings.TrimSpace(string(body))
 	parts := strings.Split(zone, "/")
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("invalid zone format: %s", zone)
-	}
 	fullZone := parts[len(parts)-1]
+	if fullZone == "" {
+		return nil, fmt.Errorf("invalid zone format: %q", zone)
+	}
 	region := extractRegion(fullZone)
 
 	return &cloudMetadata{

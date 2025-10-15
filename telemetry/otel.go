@@ -43,7 +43,7 @@ type config struct {
 	headers     http.Header
 }
 
-// WithDialer sets a custom dialer for HTTP connections
+// WithDialContext sets a custom dialer for HTTP connections
 func WithDialContext(dial func(ctx context.Context, network, addr string) (net.Conn, error)) Option {
 	return func(c *config) {
 		c.dialContext = dial

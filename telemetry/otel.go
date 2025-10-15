@@ -38,15 +38,15 @@ type Option func(*config)
 
 // config holds the configuration options for telemetry
 type config struct {
-	dialer  *net.Dialer
-	timeout time.Duration
-	headers http.Header
+	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
+	timeout     time.Duration
+	headers     http.Header
 }
 
-// WithDialer sets a custom dialer for HTTP connections
-func WithDialer(dialer *net.Dialer) Option {
+// WithDialContext sets a custom dialer for HTTP connections
+func WithDialContext(dial func(ctx context.Context, network, addr string) (net.Conn, error)) Option {
 	return func(c *config) {
-		c.dialer = dialer
+		c.dialContext = dial
 	}
 }
 
@@ -111,9 +111,9 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 
 	// Create HTTP client with custom dialer if provided
 	var httpClient *http.Client
-	if cfg.dialer != nil {
+	if cfg.dialContext != nil {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.DialContext = cfg.dialer.DialContext
+		transport.DialContext = cfg.dialContext
 		transport.ForceAttemptHTTP2 = true
 		httpClient = &http.Client{
 			Transport: transport,

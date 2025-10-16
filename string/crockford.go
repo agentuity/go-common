@@ -9,6 +9,9 @@ var crockfordAlphabet = []rune("0123456789abcdefghjkmnpqrstvwxyz")
 
 // CrockfordHash computes a short Crockford hash of the given value.
 func CrockfordHash(value string, length int) string {
+	if length <= 0 {
+		panic("invalid length")
+	}
 	// Compute SHA1
 	h := sha1.Sum([]byte(strings.ToLower(value)))
 

@@ -2,6 +2,7 @@ package network
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -129,6 +130,10 @@ func (d *defaultCloudDetector) detectGCP(ctx context.Context) (*cloudMetadata, e
 		}
 	}
 
+	if projectID == "" {
+		return nil, fmt.Errorf("error fetching the GCP project id")
+	}
+
 	return &cloudMetadata{
 		provider:  CloudProviderGCP,
 		region:    region,
@@ -193,20 +198,23 @@ func (d *defaultCloudDetector) detectAWS(ctx context.Context) (*cloudMetadata, e
 	}
 	defer resp.Body.Close()
 
+	type instanceIdentity struct {
+		AccountID string `json:"accountId"`
+	}
+
 	var accountID string
 	if resp.StatusCode == http.StatusOK {
 		body, err := io.ReadAll(resp.Body)
 		if err == nil {
-			doc := string(body)
-			if idx := strings.Index(doc, `"accountId"`); idx != -1 {
-				start := strings.Index(doc[idx:], `"`) + idx + 1
-				start = strings.Index(doc[start:], `"`) + start + 1
-				end := strings.Index(doc[start:], `"`) + start
-				if end > start {
-					accountID = doc[start:end]
-				}
+			var doc instanceIdentity
+			if json.Unmarshal(body, &doc) == nil {
+				accountID = doc.AccountID
 			}
 		}
+	}
+
+	if accountID == "" {
+		return nil, fmt.Errorf("error fetching the AWS account id")
 	}
 
 	return &cloudMetadata{
@@ -258,6 +266,10 @@ func (d *defaultCloudDetector) detectAzure(ctx context.Context) (*cloudMetadata,
 		if err == nil {
 			subscriptionID = strings.TrimSpace(string(body))
 		}
+	}
+
+	if subscriptionID == "" {
+		return nil, fmt.Errorf("error fetching the Azure subscription id")
 	}
 
 	return &cloudMetadata{

@@ -434,7 +434,7 @@ func GenerateHostnameWithCloudRegion(ctx context.Context, host string, suffix st
 		region:   region,
 	})
 
-	return fmt.Sprintf("%s.%s.%s", host, cloudID, suffix), nil
+	return fmt.Sprintf("%s-%s.%s", host, cloudID, suffix), nil
 }
 
 // GenerateHostname generates a hostname dynamically based on the cloud provider and region detected at runtime.
@@ -451,7 +451,7 @@ func GenerateHostname(ctx context.Context, host string, suffix string) (string, 
 		return "", fmt.Errorf("failed to get cloud identifier: %w", err)
 	}
 
-	return fmt.Sprintf("%s.%s.%s", host, cloudID, suffix), nil
+	return fmt.Sprintf("%s-%s.%s", host, cloudID, suffix), nil
 }
 
 // findRegionStringForProvider finds a canonical region string for the given Region constant and CloudProvider.

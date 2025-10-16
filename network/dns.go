@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	cstr "github.com/agentuity/go-common/string"
 )
 
 type CloudProvider string
@@ -20,8 +22,9 @@ const (
 )
 
 type cloudMetadata struct {
-	provider CloudProvider
-	region   string
+	provider  CloudProvider
+	region    string
+	accountId string
 }
 
 var (
@@ -106,9 +109,30 @@ func (d *defaultCloudDetector) detectGCP(ctx context.Context) (*cloudMetadata, e
 	}
 	region := extractRegion(fullZone)
 
+	req, err = http.NewRequestWithContext(ctx, "GET", "http://metadata.google.internal/computeMetadata/v1/project/project-id", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Metadata-Flavor", "Google")
+
+	resp, err = d.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var projectID string
+	if resp.StatusCode == http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err == nil {
+			projectID = strings.TrimSpace(string(body))
+		}
+	}
+
 	return &cloudMetadata{
-		provider: CloudProviderGCP,
-		region:   region,
+		provider:  CloudProviderGCP,
+		region:    region,
+		accountId: projectID,
 	}, nil
 }
 
@@ -156,9 +180,39 @@ func (d *defaultCloudDetector) detectAWS(ctx context.Context) (*cloudMetadata, e
 	}
 
 	region := string(body)
+
+	req, err = http.NewRequestWithContext(ctx, "GET", "http://169.254.169.254/latest/dynamic/instance-identity/document", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-aws-ec2-metadata-token", string(token))
+
+	resp, err = d.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var accountID string
+	if resp.StatusCode == http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err == nil {
+			doc := string(body)
+			if idx := strings.Index(doc, `"accountId"`); idx != -1 {
+				start := strings.Index(doc[idx:], `"`) + idx + 1
+				start = strings.Index(doc[start:], `"`) + start + 1
+				end := strings.Index(doc[start:], `"`) + start
+				if end > start {
+					accountID = doc[start:end]
+				}
+			}
+		}
+	}
+
 	return &cloudMetadata{
-		provider: CloudProviderAWS,
-		region:   region,
+		provider:  CloudProviderAWS,
+		region:    region,
+		accountId: accountID,
 	}, nil
 }
 
@@ -185,9 +239,31 @@ func (d *defaultCloudDetector) detectAzure(ctx context.Context) (*cloudMetadata,
 	}
 
 	region := string(body)
+
+	req, err = http.NewRequestWithContext(ctx, "GET", "http://169.254.169.254/metadata/instance/compute/subscriptionId?api-version=2021-02-01&format=text", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Metadata", "true")
+
+	resp, err = d.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var subscriptionID string
+	if resp.StatusCode == http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err == nil {
+			subscriptionID = strings.TrimSpace(string(body))
+		}
+	}
+
 	return &cloudMetadata{
-		provider: CloudProviderAzure,
-		region:   region,
+		provider:  CloudProviderAzure,
+		region:    region,
+		accountId: subscriptionID,
 	}, nil
 }
 
@@ -411,7 +487,8 @@ func formatCloudIdentifier(metadata *cloudMetadata) string {
 		return "local"
 	}
 	shortened := shortenRegion(metadata.region)
-	return fmt.Sprintf("%s-%s", metadata.provider, shortened)
+	account := cstr.CrockfordHash(metadata.accountId, 4)
+	return fmt.Sprintf("%s%s-%s", metadata.provider, shortened, account)
 }
 
 // GenerateHostnameWithCloudRegion generates a hostname with cloud region information if you already have it.

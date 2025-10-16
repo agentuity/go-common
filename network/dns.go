@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -131,7 +132,13 @@ func (d *defaultCloudDetector) detectGCP(ctx context.Context) (*cloudMetadata, e
 	}
 
 	if projectID == "" {
-		return nil, fmt.Errorf("error fetching the GCP project id")
+		if envProject := os.Getenv("GOOGLE_CLOUD_PROJECT"); envProject != "" {
+			projectID = envProject
+		} else if envProject := os.Getenv("GCP_PROJECT_ID"); envProject != "" {
+			projectID = envProject
+		} else {
+			return nil, fmt.Errorf("error fetching the GCP project id")
+		}
 	}
 
 	return &cloudMetadata{
@@ -214,7 +221,11 @@ func (d *defaultCloudDetector) detectAWS(ctx context.Context) (*cloudMetadata, e
 	}
 
 	if accountID == "" {
-		return nil, fmt.Errorf("error fetching the AWS account id")
+		if envAccount := os.Getenv("AWS_ACCOUNT_ID"); envAccount != "" {
+			accountID = envAccount
+		} else {
+			return nil, fmt.Errorf("error fetching the AWS account id")
+		}
 	}
 
 	return &cloudMetadata{
@@ -269,7 +280,11 @@ func (d *defaultCloudDetector) detectAzure(ctx context.Context) (*cloudMetadata,
 	}
 
 	if subscriptionID == "" {
-		return nil, fmt.Errorf("error fetching the Azure subscription id")
+		if envSub := os.Getenv("AZURE_SUBSCRIPTION_ID"); envSub != "" {
+			subscriptionID = envSub
+		} else {
+			return nil, fmt.Errorf("error fetching the Azure subscription id")
+		}
 	}
 
 	return &cloudMetadata{

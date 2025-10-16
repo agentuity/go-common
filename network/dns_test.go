@@ -35,7 +35,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderGCP,
 				region:   "us-central1",
 			},
-			expected: "project-123.gcp-usc1.agentuity.cloud",
+			expected: "project-123-gcp-usc1.agentuity.cloud",
 			wantErr:  false,
 		},
 		{
@@ -46,7 +46,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderGCP,
 				region:   "us-central2",
 			},
-			expected: "project-123.gcp-usc2.agentuity.cloud",
+			expected: "project-123-gcp-usc2.agentuity.cloud",
 			wantErr:  false,
 		},
 		{
@@ -57,7 +57,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderAWS,
 				region:   "us-east-2",
 			},
-			expected: "api-server.aws-use2.example.com",
+			expected: "api-server-aws-use2.example.com",
 			wantErr:  false,
 		},
 		{
@@ -68,7 +68,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderAWS,
 				region:   "us-west-3",
 			},
-			expected: "web-app.aws-usw3.domain.io",
+			expected: "web-app-aws-usw3.domain.io",
 			wantErr:  false,
 		},
 		{
@@ -79,7 +79,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderAzure,
 				region:   "eastus",
 			},
-			expected: "service-01.az-eus.cloud.net",
+			expected: "service-01-az-eus.cloud.net",
 			wantErr:  false,
 		},
 		{
@@ -90,7 +90,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderAzure,
 				region:   "westus2",
 			},
-			expected: "db-primary.az-wus2.internal.net",
+			expected: "db-primary-az-wus2.internal.net",
 			wantErr:  false,
 		},
 		{
@@ -101,7 +101,7 @@ func TestGenerateHostname(t *testing.T) {
 				provider: CloudProviderLocal,
 				region:   "",
 			},
-			expected: "dev-server.local.local.dev",
+			expected: "dev-server-local.local.dev",
 			wantErr:  false,
 		},
 		{
@@ -335,8 +335,8 @@ func TestCachedMetadata(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result1 != "test.gcp-usc1.example.com" {
-		t.Errorf("expected test.gcp-usc1.example.com, got %q", result1)
+	if result1 != "test-gcp-usc1.example.com" {
+		t.Errorf("expected test-gcp-usc1.example.com, got %q", result1)
 	}
 
 	mock.metadata = &cloudMetadata{
@@ -349,8 +349,8 @@ func TestCachedMetadata(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if result2 != "test.gcp-usc1.example.com" {
-		t.Errorf("expected cached result test.gcp-usc1.example.com, got %q", result2)
+	if result2 != "test-gcp-usc1.example.com" {
+		t.Errorf("expected cached result test-gcp-usc1.example.com, got %q", result2)
 	}
 }
 
@@ -370,7 +370,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "example.com",
 			provider: CloudProviderGCP,
 			region:   "us-central1",
-			expected: "api-server.gcp-usc1.example.com",
+			expected: "api-server-gcp-usc1.example.com",
 			wantErr:  false,
 		},
 		{
@@ -379,7 +379,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "domain.io",
 			provider: CloudProviderAWS,
 			region:   "us-east-1",
-			expected: "web-app.aws-use1.domain.io",
+			expected: "web-app-aws-use1.domain.io",
 			wantErr:  false,
 		},
 		{
@@ -388,7 +388,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "cloud.net",
 			provider: CloudProviderAzure,
 			region:   "eastus",
-			expected: "db-primary.az-eus.cloud.net",
+			expected: "db-primary-az-eus.cloud.net",
 			wantErr:  false,
 		},
 		{
@@ -397,7 +397,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "local.dev",
 			provider: CloudProviderLocal,
 			region:   "test",
-			expected: "dev-server.local.local.dev",
+			expected: "dev-server-local.local.dev",
 			wantErr:  false,
 		},
 		{
@@ -406,7 +406,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "internal.net",
 			provider: CloudProviderGCP,
 			region:   "us-west1",
-			expected: "worker-01.gcp-usw1.internal.net",
+			expected: "worker-01-gcp-usw1.internal.net",
 			wantErr:  false,
 		},
 		{
@@ -415,7 +415,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "test.com",
 			provider: CloudProviderAWS,
 			region:   "ap-southeast-2",
-			expected: "api.aws-aps2.test.com",
+			expected: "api-aws-aps2.test.com",
 			wantErr:  false,
 		},
 		{
@@ -456,7 +456,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "prod.io",
 			provider: CloudProviderGCP,
 			region:   "europe-west12",
-			expected: "service.gcp-ew12.prod.io",
+			expected: "service-gcp-ew12.prod.io",
 			wantErr:  false,
 		},
 		{
@@ -465,7 +465,7 @@ func TestGenerateHostnameWithCloudRegion(t *testing.T) {
 			suffix:   "azure.net",
 			provider: CloudProviderAzure,
 			region:   "westus2",
-			expected: "cache.az-wus2.azure.net",
+			expected: "cache-az-wus2.azure.net",
 			wantErr:  false,
 		},
 	}
@@ -518,8 +518,8 @@ func TestGenerateHostnameWithCloudRegionConsistency(t *testing.T) {
 		t.Errorf("results should match: auto=%q, manual=%q", autoResult, manualResult)
 	}
 
-	if autoResult != "test.gcp-usc1.example.com" {
-		t.Errorf("expected test.gcp-usc1.example.com, got %q", autoResult)
+	if autoResult != "test-gcp-usc1.example.com" {
+		t.Errorf("expected test-gcp-usc1.example.com, got %q", autoResult)
 	}
 }
 
@@ -553,8 +553,8 @@ func TestGenerateHostnamesForCloudRegions(t *testing.T) {
 
 				// Verify all hostnames follow the pattern
 				for _, hostname := range hostnames {
-					if !strings.Contains(hostname, "api.") {
-						t.Errorf("hostname %s should contain 'api.'", hostname)
+					if !strings.Contains(hostname, "api-") {
+						t.Errorf("hostname %s should contain 'api-'", hostname)
 					}
 					if !strings.HasSuffix(hostname, ".example.com") {
 						t.Errorf("hostname %s should end with '.example.com'", hostname)
@@ -581,8 +581,8 @@ func TestGenerateHostnamesForCloudRegions(t *testing.T) {
 			wantErr: false,
 			validate: func(t *testing.T, hostnames []string) {
 				for _, hostname := range hostnames {
-					if !strings.Contains(hostname, "db-primary.") {
-						t.Errorf("hostname %s should contain 'db-primary.'", hostname)
+					if !strings.Contains(hostname, "db-primary-") {
+						t.Errorf("hostname %s should contain 'db-primary-'", hostname)
 					}
 					if !strings.HasSuffix(hostname, ".internal.net") {
 						t.Errorf("hostname %s should end with '.internal.net'", hostname)
@@ -627,19 +627,19 @@ func TestGenerateHostnamesForCloudRegionsContent(t *testing.T) {
 	for _, hostname := range hostnames {
 		// Check that hostname contains one of the expected cloud prefixes
 		hasValidPrefix := false
-		if strings.Contains(hostname, ".gcp-") {
+		if strings.Contains(hostname, "-gcp-") {
 			seenProviders[CloudProviderGCP] = true
 			hasValidPrefix = true
-		} else if strings.Contains(hostname, ".aws-") {
+		} else if strings.Contains(hostname, "-aws-") {
 			seenProviders[CloudProviderAWS] = true
 			hasValidPrefix = true
-		} else if strings.Contains(hostname, ".az-") {
+		} else if strings.Contains(hostname, "-az-") {
 			seenProviders[CloudProviderAzure] = true
 			hasValidPrefix = true
 		}
 
 		if !hasValidPrefix {
-			t.Errorf("hostname %s doesn't contain a valid cloud prefix (gcp-, aws-, az-)", hostname)
+			t.Errorf("hostname %s doesn't contain a valid cloud prefix (-gcp-, -aws-, -az-)", hostname)
 		}
 	}
 
@@ -785,7 +785,7 @@ func TestAllAWSRegions(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			expectedHostname := "test.aws-" + expected + ".example.com"
+			expectedHostname := "test-aws-" + expected + ".example.com"
 			if result != expectedHostname {
 				t.Errorf("region %s: expected %s, got %s", region, expectedHostname, result)
 			}
@@ -854,7 +854,7 @@ func TestAllGCPRegions(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			expectedHostname := "test.gcp-" + expected + ".example.com"
+			expectedHostname := "test-gcp-" + expected + ".example.com"
 			if result != expectedHostname {
 				t.Errorf("region %s: expected %s, got %s", region, expectedHostname, result)
 			}
@@ -959,7 +959,7 @@ func TestAllAzureRegions(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 
-			expectedHostname := "test.az-" + expected + ".example.com"
+			expectedHostname := "test-az-" + expected + ".example.com"
 			if result != expectedHostname {
 				t.Errorf("region %s: expected %s, got %s", region, expectedHostname, result)
 			}

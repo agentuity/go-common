@@ -11,6 +11,7 @@ require (
 	github.com/cockroachdb/errors v1.11.3
 	github.com/google/uuid v1.6.0
 	github.com/mattn/go-isatty v0.0.20
+	github.com/miekg/dns v1.1.68
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/savsgio/gotils v0.0.0-20240704082632-aef3928b8a38
 	github.com/shirou/gopsutil/v4 v4.25.8
@@ -95,8 +96,10 @@ require (
 	go.opentelemetry.io/otel/metric v1.38.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
+	golang.org/x/mod v0.26.0 // indirect
 	golang.org/x/sys v0.35.0 // indirect
 	golang.org/x/text v0.28.0 // indirect
+	golang.org/x/tools v0.35.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20250825161204-c5933d9347a5 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20250825161204-c5933d9347a5 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect

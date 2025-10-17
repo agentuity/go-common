@@ -8,21 +8,46 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/agentuity/go-common/cache"
 )
 
+// DefaultInternalDomain is the default internal domain.
+var DefaultInternalDomain = "agentuity.internal"
+
+// DefaultManagedDomains is the default list of managed domains that will use the internal DNS servers otherwise will go to the external DNS servers.
+var DefaultManagedDomains = []string{
+	DefaultInternalDomain,
+	"agentuity.cloud",
+	"agentuity.run",
+	"agentuity.ai",
+	"agentuity.app",
+	"agentuity.dev",
+}
+
+// DefaultDNSServers is the default list of internal DNS servers.
 var DefaultDNSServers = []string{
 	"ns0.agentuity.com:53",
 	"ns1.agentuity.com:53",
 	"ns2.agentuity.com:53",
 }
 
+// DefaultExternalDNSServers is the default list of external DNS servers.
+var DefaultExternalDNSServers = []string{
+	"9.9.9.9:53",
+	"1.1.1.1:53",
+	"8.8.8.8:53",
+}
+
+// ErrInvalidIP is returned when an invalid IP address is resolved for a hostname.
 var ErrInvalidIP = fmt.Errorf("invalid ip address resolved for hostname")
 
-var DefaultDNS = New()
+// DefaultDNS is the default DNS resolver.
+var DefaultDNS = NewResolver()
 
 type DNS interface {
 	// Lookup performs a DNS lookup for the given hostname and returns a valid IP address for the A record.
@@ -95,16 +120,35 @@ var _ DNS = (*Dns)(nil)
 
 var ipv4 = regexp.MustCompile(`^(((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.|$)){4})`)
 var magicIpAddress = "169.254.169.254"
+var googleMetadataHostname = "metadata.google.internal"
+var cloudId = os.Getenv("AGENTUITY_CLOUD_ID")
 
 func isPrivateIP(ip string) bool {
 	ipAddress := net.ParseIP(ip)
 	return ipAddress.IsPrivate() || ipAddress.IsLoopback()
 }
 
+func formatFQDN(hostname string) string {
+	if strings.Contains(hostname, ".") {
+		return hostname
+	}
+	if cloudId != "" && !strings.HasSuffix(hostname, "-"+cloudId) {
+		return fmt.Sprintf("%s-%s.%s", hostname, cloudId, DefaultInternalDomain)
+	}
+	return fmt.Sprintf("%s.%s", hostname, DefaultInternalDomain)
+}
+
 // Lookup performs a DNS lookup for the given hostname and returns a valid IP address for the A record.
 func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error) {
 	if (hostname == "localhost" || hostname == "127.0.0.1") && d.isLocal {
 		return true, &net.IP{127, 0, 0, 1}, nil
+	}
+	if hostname == googleMetadataHostname {
+		val := net.ParseIP(magicIpAddress)
+		if val == nil {
+			return false, nil, ErrInvalidIP
+		}
+		return true, &val, nil
 	}
 	if isPrivateIP(hostname) && !d.isLocal {
 		return false, nil, ErrInvalidIP
@@ -119,6 +163,7 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 		}
 		return true, &ip, nil
 	}
+	hostname = formatFQDN(hostname)
 	var cacheKey string
 	if d.cache != nil {
 		cacheKey = fmt.Sprintf("dns:%s", hostname)
@@ -180,16 +225,14 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 	}
 	if d.cache != nil {
 		expires := time.Duration(minTTL) * time.Second
-		if expires > time.Hour*24 {
-			expires = time.Hour * 24
-		}
+		expires = min(expires, time.Hour*24)
 		d.cache.Set(cacheKey, ips, expires)
 	}
 	return true, &ips[0], nil
 }
 
-// New creates a new DNS caching resolver.
-func New(opts ...WithConfig) *Dns {
+// NewResolver creates a new DNS caching resolver.
+func NewResolver(opts ...WithConfig) *Dns {
 	var config dnsConfig
 	for _, opt := range opts {
 		opt(&config)

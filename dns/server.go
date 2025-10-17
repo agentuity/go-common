@@ -283,7 +283,7 @@ func (s *DNSResolver) selectNameservers(target string) []string {
 func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType uint16, clientAddr *net.UDPAddr, nameservers []string, cacheKey string) {
 	for _, ns := range nameservers {
 		s.logger.Debug("sending DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], ns)
-		response, err := s.queryNameserver(originalData, ns)
+		response, err := s.queryNameserver(s.ctx, originalData, ns)
 		if err != nil {
 			s.logger.Debug("Failed to query %s: %v", ns, err)
 			continue
@@ -339,13 +339,14 @@ func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType
 }
 
 // queryNameserver queries a specific nameserver using TCP over the tunnel
-func (s *DNSResolver) queryNameserver(request []byte, nameserver string) (*dns.Msg, error) {
+func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, nameserver string) (*dns.Msg, error) {
 	// Create TCP connection to nameserver via provided dialer
-	conn, err := s.dialer(s.ctx, s.protocol, nameserver)
+	conn, err := s.dialer(ctx, s.protocol, nameserver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to nameserver: %w", err)
 	}
-	defer conn.Close()
+	co := &dns.Conn{Conn: conn}
+	defer co.Close()
 
 	// Set deadline for the entire operation
 	conn.SetDeadline(time.Now().Add(s.queryTimeout))
@@ -356,14 +357,10 @@ func (s *DNSResolver) queryNameserver(request []byte, nameserver string) (*dns.M
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse DNS message: %w", err)
 	}
-
-	co := &dns.Conn{Conn: conn}
 	if err := co.WriteMsg(msg); err != nil {
-		co.Close()
 		return nil, fmt.Errorf("failed to write DNS message: %w", err)
 	}
 	response, err := co.ReadMsg()
-	co.Close()
 
 	return response, err
 }
@@ -553,7 +550,7 @@ func (s *DNSResolver) resolveCNAMERecursively(ctx context.Context, domain string
 	for _, ns := range nameservers {
 		s.logger.Debug("resolving CNAME %s (%s) via %s (depth: %d)", domain, dns.TypeToString[queryType], ns, depth)
 
-		response, err := s.queryNameserver(packed, ns)
+		response, err := s.queryNameserver(ctx, packed, ns)
 		if err != nil {
 			s.logger.Debug("Failed to query %s: %v", ns, err)
 			continue

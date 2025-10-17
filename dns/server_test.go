@@ -767,7 +767,7 @@ func TestDNSResolver_CustomDialer(t *testing.T) {
 	}
 
 	// Query the nameserver directly (this is where the dialer is used)
-	response, err := resolver.queryNameserver(queryBytes, "ns1.example.com:53")
+	response, err := resolver.queryNameserver(context.Background(), queryBytes, "ns1.example.com:53")
 	if err != nil {
 		t.Fatalf("queryNameserver failed: %v", err)
 	}
@@ -832,7 +832,7 @@ func TestDNSResolver_DefaultDialer(t *testing.T) {
 
 	// Attempt to query (will fail because nameserver doesn't exist, but that's ok)
 	// We just want to verify the default dialer is set and can be called
-	_, err = resolver.queryNameserver(queryBytes, "127.0.0.1:5354")
+	_, err = resolver.queryNameserver(context.Background(), queryBytes, "127.0.0.1:5354")
 
 	// We expect an error because the nameserver doesn't exist,
 	// but it should be a connection error, not a nil pointer error
@@ -1175,7 +1175,7 @@ func TestDNSResolver_ProtocolSupport(t *testing.T) {
 			}
 
 			// Query the nameserver
-			response, err := resolver.queryNameserver(queryBytes, "ns1.example.com:53")
+			response, err := resolver.queryNameserver(context.Background(), queryBytes, "ns1.example.com:53")
 			if err != nil {
 				t.Fatalf("queryNameserver failed: %v", err)
 			}

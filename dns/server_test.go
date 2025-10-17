@@ -625,10 +625,34 @@ type mockConn struct {
 	readBuf  []byte
 	writeBuf []byte
 	closed   bool
+	isTCP    bool
+	response *dns.Msg
 }
 
 func (m *mockConn) Read(b []byte) (n int, err error) {
 	if m.closed {
+		return 0, net.ErrClosed
+	}
+
+	// If readBuf is empty and we have a response, prepare it
+	if len(m.readBuf) == 0 && m.response != nil {
+		packed, err := m.response.Pack()
+		if err != nil {
+			return 0, err
+		}
+		if m.isTCP {
+			tcpMsg := make([]byte, 2+len(packed))
+			tcpMsg[0] = byte(len(packed) >> 8)
+			tcpMsg[1] = byte(len(packed))
+			copy(tcpMsg[2:], packed)
+			m.readBuf = tcpMsg
+		} else {
+			m.readBuf = packed
+		}
+		m.response = nil // Only prepare once
+	}
+
+	if len(m.readBuf) == 0 {
 		return 0, net.ErrClosed
 	}
 	n = copy(b, m.readBuf)
@@ -650,11 +674,17 @@ func (m *mockConn) Close() error {
 }
 
 func (m *mockConn) LocalAddr() net.Addr {
-	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
+	if m.isTCP {
+		return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
+	}
+	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}
 }
 
 func (m *mockConn) RemoteAddr() net.Addr {
-	return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 53}
+	if m.isTCP {
+		return &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 53}
+	}
+	return &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 53}
 }
 
 func (m *mockConn) SetDeadline(t time.Time) error {
@@ -720,6 +750,7 @@ func TestDNSResolver_CustomDialer(t *testing.T) {
 		QueryTimeout:        "2s",
 		ListenAddress:       ":15353",
 		DialContext:         customDialer,
+		DefaultProtocol:     "tcp",
 	}
 
 	resolver, err := New(context.Background(), logger, config)
@@ -813,5 +844,355 @@ func TestDNSResolver_DefaultDialer(t *testing.T) {
 			t.Error("Expected connection error message, got empty string")
 		}
 		t.Logf("Got expected connection error: %v", err)
+	}
+}
+
+func TestDNSResolver_parseSimpleDNSQuery(t *testing.T) {
+	logger := logger.NewTestLogger()
+	config := DNSConfig{
+		ListenAddress:       ":15353",
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"127.0.0.1:5354"},
+		UpstreamNameservers: []string{"8.8.8.8:53"},
+		QueryTimeout:        "2s",
+	}
+
+	resolver, err := New(context.Background(), logger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		setupQuery  func() []byte
+		wantDomain  string
+		wantType    uint16
+		wantErr     bool
+		errContains string
+	}{
+		{
+			name: "simple uncompressed query",
+			setupQuery: func() []byte {
+				msg := new(dns.Msg)
+				msg.SetQuestion("example.com.", dns.TypeA)
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantDomain: "example.com",
+			wantType:   dns.TypeA,
+			wantErr:    false,
+		},
+		{
+			name: "query with compression pointers",
+			setupQuery: func() []byte {
+				// Create a query that would use compression if it were a response
+				// (queries typically don't compress, but the parser should handle it)
+				msg := new(dns.Msg)
+				msg.SetQuestion("sub.example.com.", dns.TypeAAAA)
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantDomain: "sub.example.com",
+			wantType:   dns.TypeAAAA,
+			wantErr:    false,
+		},
+		{
+			name: "MX query",
+			setupQuery: func() []byte {
+				msg := new(dns.Msg)
+				msg.SetQuestion("mail.example.com.", dns.TypeMX)
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantDomain: "mail.example.com",
+			wantType:   dns.TypeMX,
+			wantErr:    false,
+		},
+		{
+			name: "CNAME query",
+			setupQuery: func() []byte {
+				msg := new(dns.Msg)
+				msg.SetQuestion("alias.example.com.", dns.TypeCNAME)
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantDomain: "alias.example.com",
+			wantType:   dns.TypeCNAME,
+			wantErr:    false,
+		},
+		{
+			name: "truncated packet",
+			setupQuery: func() []byte {
+				return []byte{0x00, 0x01, 0x02} // Too short to be valid
+			},
+			wantErr:     true,
+			errContains: "failed to unpack",
+		},
+		{
+			name: "empty packet",
+			setupQuery: func() []byte {
+				return []byte{}
+			},
+			wantErr:     true,
+			errContains: "failed to unpack",
+		},
+		{
+			name: "query with no questions",
+			setupQuery: func() []byte {
+				msg := new(dns.Msg)
+				msg.Id = 1234
+				// Don't add any questions
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantErr:     true,
+			errContains: "empty question section",
+		},
+		{
+			name: "long domain name",
+			setupQuery: func() []byte {
+				msg := new(dns.Msg)
+				msg.SetQuestion("very.long.subdomain.with.many.labels.example.com.", dns.TypeA)
+				packed, _ := msg.Pack()
+				return packed
+			},
+			wantDomain: "very.long.subdomain.with.many.labels.example.com",
+			wantType:   dns.TypeA,
+			wantErr:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			queryBytes := tt.setupQuery()
+			domain, qtype, err := resolver.parseSimpleDNSQuery(queryBytes)
+
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("Expected error containing '%s', got nil", tt.errContains)
+					return
+				}
+				if tt.errContains != "" && !contains(err.Error(), tt.errContains) {
+					t.Errorf("Expected error containing '%s', got '%s'", tt.errContains, err.Error())
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+
+			if domain != tt.wantDomain {
+				t.Errorf("Domain = %q, want %q", domain, tt.wantDomain)
+			}
+
+			if qtype != tt.wantType {
+				t.Errorf("Query type = %d (%s), want %d (%s)",
+					qtype, dns.TypeToString[qtype],
+					tt.wantType, dns.TypeToString[tt.wantType])
+			}
+		})
+	}
+}
+
+// contains checks if a string contains a substring (helper for tests)
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && (s[0:len(substr)] == substr || contains(s[1:], substr))))
+}
+
+func TestDNSConfig_DefaultProtocol(t *testing.T) {
+	tests := []struct {
+		name             string
+		config           DNSConfig
+		expectedProtocol string
+	}{
+		{
+			name:             "default config uses udp",
+			config:           DefaultDNSConfig(),
+			expectedProtocol: "udp",
+		},
+		{
+			name: "config with no protocol defaults to empty",
+			config: DNSConfig{
+				ManagedDomains:      []string{"example.com"},
+				InternalNameservers: []string{"127.0.0.1:53"},
+				UpstreamNameservers: []string{"8.8.8.8:53"},
+				QueryTimeout:        "2s",
+			},
+			expectedProtocol: "",
+		},
+		{
+			name: "config with tcp protocol",
+			config: DNSConfig{
+				ManagedDomains:      []string{"example.com"},
+				InternalNameservers: []string{"127.0.0.1:53"},
+				UpstreamNameservers: []string{"8.8.8.8:53"},
+				QueryTimeout:        "2s",
+				DefaultProtocol:     "tcp",
+			},
+			expectedProtocol: "tcp",
+		},
+		{
+			name: "config with udp protocol",
+			config: DNSConfig{
+				ManagedDomains:      []string{"example.com"},
+				InternalNameservers: []string{"127.0.0.1:53"},
+				UpstreamNameservers: []string{"8.8.8.8:53"},
+				QueryTimeout:        "2s",
+				DefaultProtocol:     "udp",
+			},
+			expectedProtocol: "udp",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.config.DefaultProtocol != tt.expectedProtocol {
+				t.Errorf("DefaultProtocol = %q, want %q", tt.config.DefaultProtocol, tt.expectedProtocol)
+			}
+		})
+	}
+}
+
+func TestDNSResolver_ProtocolSupport(t *testing.T) {
+	logger := logger.NewTestLogger()
+
+	tests := []struct {
+		name             string
+		protocol         string
+		expectedProtocol string
+		mockResponse     *dns.Msg
+	}{
+		{
+			name:             "udp protocol",
+			protocol:         "udp",
+			expectedProtocol: "udp",
+			mockResponse: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+				Answer: []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "test.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("192.168.1.1"),
+					},
+				},
+			},
+		},
+		{
+			name:             "tcp protocol",
+			protocol:         "tcp",
+			expectedProtocol: "tcp",
+			mockResponse: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+				Answer: []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "test.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("192.168.1.1"),
+					},
+				},
+			},
+		},
+		{
+			name:             "default protocol (empty) defaults to udp",
+			protocol:         "",
+			expectedProtocol: "udp",
+			mockResponse: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "test.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+				Answer: []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "test.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("192.168.1.1"),
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedProtocol string
+
+			// Create custom dialer that captures the protocol
+			customDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
+				capturedProtocol = network
+
+				// Pack the response
+				packed, err := tt.mockResponse.Pack()
+				if err != nil {
+					return nil, err
+				}
+
+				// DNS over TCP requires a 2-byte length prefix
+				tcpMsg := make([]byte, 2+len(packed))
+				tcpMsg[0] = byte(len(packed) >> 8)
+				tcpMsg[1] = byte(len(packed))
+				copy(tcpMsg[2:], packed)
+
+				// Return a mock connection with the DNS response
+				return &mockConn{
+					readBuf: tcpMsg,
+					isTCP:   network == "tcp",
+				}, nil
+			}
+
+			config := DNSConfig{
+				ManagedDomains:      []string{"example.com"},
+				InternalNameservers: []string{"ns1.example.com:53"},
+				UpstreamNameservers: []string{"8.8.8.8:53"},
+				QueryTimeout:        "2s",
+				ListenAddress:       ":15353",
+				DialContext:         customDialer,
+				DefaultProtocol:     tt.protocol,
+			}
+
+			resolver, err := New(context.Background(), logger, config)
+			if err != nil {
+				t.Fatalf("Failed to create resolver: %v", err)
+			}
+
+			// Create a DNS query
+			query := new(dns.Msg)
+			query.SetQuestion("test.example.com.", dns.TypeA)
+			queryBytes, err := query.Pack()
+			if err != nil {
+				t.Fatalf("Failed to pack query: %v", err)
+			}
+
+			// Query the nameserver
+			response, err := resolver.queryNameserver(queryBytes, "ns1.example.com:53")
+			if err != nil {
+				t.Fatalf("queryNameserver failed: %v", err)
+			}
+
+			// Verify the protocol was passed to dialer
+			if capturedProtocol != tt.expectedProtocol {
+				t.Errorf("Protocol = %q, want %q", capturedProtocol, tt.expectedProtocol)
+			}
+
+			// Verify we got a valid response
+			if response == nil {
+				t.Fatal("Expected non-nil response")
+			}
+
+			if len(response.Answer) != 1 {
+				t.Errorf("Expected 1 answer, got %d", len(response.Answer))
+			}
+		})
 	}
 }

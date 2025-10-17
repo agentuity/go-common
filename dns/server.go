@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	dnsPacketSize     = 512 // standard DNS packet size
-	maxRecursionDepth = 10  // maximum CNAME chain depth
+	dnsPacketSize     = 1232 // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
+	maxRecursionDepth = 10   // maximum CNAME chain depth
 )
 
 // dnsCacheEntry represents a cached DNS response with metadata
@@ -32,6 +32,7 @@ type DNSResolver struct {
 	logger       logger.Logger
 	config       DNSConfig
 	conn         *net.UDPConn
+	protocol     string
 	dialer       func(ctx context.Context, network, address string) (net.Conn, error)
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -66,6 +67,16 @@ func New(ctx context.Context, logger logger.Logger, config DNSConfig) (*DNSResol
 			},
 		},
 		cache: cache.NewInMemory(ctx, 5*time.Minute), // Clean expired entries every 5 minutes
+	}
+
+	s.protocol = config.DefaultProtocol
+	if s.protocol == "" {
+		s.protocol = "udp"
+	}
+	switch s.protocol {
+	case "tcp", "udp":
+	default:
+		return nil, fmt.Errorf("invalid protocol: %s. must be either tcp or udp", s.protocol)
 	}
 
 	if config.DialContext != nil {
@@ -236,47 +247,16 @@ func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *n
 
 // parseSimpleDNSQuery extracts the domain name from a DNS query
 func (s *DNSResolver) parseSimpleDNSQuery(data []byte) (string, uint16, error) {
-	if len(data) < 12 {
-		return "", 0, fmt.Errorf("packet too short")
+	var m dns.Msg
+	if err := m.Unpack(data); err != nil {
+		return "", 0, fmt.Errorf("failed to unpack DNS query: %w", err)
 	}
-
-	// Skip DNS header (12 bytes)
-	offset := 12
-
-	// Parse domain name
-	var domain strings.Builder
-	for {
-		if offset >= len(data) {
-			return "", 0, fmt.Errorf("invalid domain name")
-		}
-
-		labelLen := int(data[offset])
-		offset++
-
-		if labelLen == 0 {
-			break // End of domain name
-		}
-
-		if labelLen > 63 || offset+labelLen > len(data) {
-			return "", 0, fmt.Errorf("invalid label length")
-		}
-
-		if domain.Len() > 0 {
-			domain.WriteByte('.')
-		}
-
-		domain.Write(data[offset : offset+labelLen])
-		offset += labelLen
+	if len(m.Question) == 0 {
+		return "", 0, fmt.Errorf("empty question section")
 	}
-
-	// Parse query type
-	if offset+4 > len(data) {
-		return "", 0, fmt.Errorf("missing query type/class")
-	}
-
-	queryType := binary.BigEndian.Uint16(data[offset : offset+2])
-
-	return domain.String(), queryType, nil
+	q := m.Question[0]
+	// Return the query name without a trailing dot for consistency in cache keys.
+	return strings.TrimSuffix(q.Name, "."), q.Qtype, nil
 }
 
 func (s *DNSResolver) selectNameservers(target string) []string {
@@ -360,8 +340,8 @@ func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType
 
 // queryNameserver queries a specific nameserver using TCP over the tunnel
 func (s *DNSResolver) queryNameserver(request []byte, nameserver string) (*dns.Msg, error) {
-	// Create TCP connection to nameserver via GravityDialer
-	conn, err := s.dialer(s.ctx, "tcp", nameserver)
+	// Create TCP connection to nameserver via provided dialer
+	conn, err := s.dialer(s.ctx, s.protocol, nameserver)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to nameserver: %w", err)
 	}

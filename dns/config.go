@@ -21,6 +21,8 @@ type DNSConfig struct {
 	QueryTimeout string
 	// DialContext is the function to use for dialing connections
 	DialContext func(ctx context.Context, network, address string) (net.Conn, error)
+	// DefaultProtocol is the default protocol to use for dialing connections which is UDP
+	DefaultProtocol string
 }
 
 // DefaultDNSConfig returns a default DNS configuration
@@ -31,6 +33,7 @@ func DefaultDNSConfig() DNSConfig {
 		InternalNameservers: DefaultDNSServers,
 		UpstreamNameservers: DefaultExternalDNSServers,
 		QueryTimeout:        "5s",
+		DefaultProtocol:     "udp",
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-var isCgroupMatch = regexp.MustCompile("(docker|lxc|rt|libpod|kubepods|containerd)")
+var isCgroupMatch = regexp.MustCompile("(docker|lxc|rkt|libpod|kubepods|containerd)")
 
 // IsRunningInsideContainer returns true if the process is running inside a container environment.
 func IsRunningInsideContainer() bool {

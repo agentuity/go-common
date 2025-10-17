@@ -338,31 +338,63 @@ func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType
 	s.sendErrorResponse(originalData, clientAddr)
 }
 
-// queryNameserver queries a specific nameserver using TCP over the tunnel
+// queryNameserver queries a specific nameserver, first trying UDP with EDNS0, then falling back to TCP if truncated
 func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, nameserver string) (*dns.Msg, error) {
-	// Create TCP connection to nameserver via provided dialer
+	// Parse the DNS message from raw bytes
+	msg := &dns.Msg{}
+	err := msg.Unpack(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse DNS message: %w", err)
+	}
+
+	// Set EDNS0 with 4096 byte UDP payload size to avoid truncation
+	msg.SetEdns0(4096, true)
+
+	// Try the configured protocol first
 	conn, err := s.dialer(ctx, s.protocol, nameserver)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to nameserver: %w", err)
+		return nil, fmt.Errorf("failed to connect to nameserver via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 	co := &dns.Conn{Conn: conn}
 	defer co.Close()
 
-	// Set deadline for the entire operation
+	// Set deadline for operation
 	conn.SetDeadline(time.Now().Add(s.queryTimeout))
 
-	// Parse the DNS message from raw bytes
-	msg := &dns.Msg{}
-	err = msg.Unpack(request)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse DNS message: %w", err)
-	}
 	if err := co.WriteMsg(msg); err != nil {
-		return nil, fmt.Errorf("failed to write DNS message: %w", err)
+		return nil, fmt.Errorf("failed to write DNS message via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 	response, err := co.ReadMsg()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read DNS response via %s: %w", strings.ToUpper(s.protocol), err)
+	}
 
-	return response, err
+	// Check if response was truncated (TC bit set) and we're using UDP
+	if response.Truncated && s.protocol == "udp" {
+		// Close UDP connection
+		co.Close()
+
+		// Retry over TCP
+		tcpConn, err := s.dialer(ctx, "tcp", nameserver)
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to nameserver via TCP: %w", err)
+		}
+		tcpCo := &dns.Conn{Conn: tcpConn}
+		defer tcpCo.Close()
+
+		// Set deadline for TCP operation
+		tcpConn.SetDeadline(time.Now().Add(s.queryTimeout))
+
+		if err := tcpCo.WriteMsg(msg); err != nil {
+			return nil, fmt.Errorf("failed to write DNS message via TCP: %w", err)
+		}
+		response, err = tcpCo.ReadMsg()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read DNS response via TCP: %w", err)
+		}
+	}
+
+	return response, nil
 }
 
 // sendErrorResponse sends a DNS error response

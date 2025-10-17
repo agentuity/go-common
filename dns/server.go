@@ -16,8 +16,9 @@ import (
 )
 
 const (
-	dnsPacketSize     = 1232 // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
-	maxRecursionDepth = 10   // maximum CNAME chain depth
+	dnsPacketSize         = 1232 // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
+	maxRecursionDepth     = 10   // maximum CNAME chain depth
+	maxConcurrentRequests = 1000 // maximum concurrent DNS request handlers
 )
 
 // dnsCacheEntry represents a cached DNS response with metadata
@@ -43,6 +44,7 @@ type DNSResolver struct {
 	once         sync.Once
 	bufferPool   sync.Pool
 	cache        cache.Cache
+	requestSem   chan struct{}
 }
 
 // New creates a new DNS resolver instance
@@ -56,8 +58,12 @@ func New(ctx context.Context, logger logger.Logger, config DNSConfig) (*DNSResol
 		return nil, fmt.Errorf("invalid query timeout: %w", err)
 	}
 
+	// Create resolver-scoped context for proper lifecycle management
+	resolverCtx, resolverCancel := context.WithCancel(ctx)
+
 	s := &DNSResolver{
-		ctx:          ctx,
+		ctx:          resolverCtx,
+		cancel:       resolverCancel,
 		logger:       logger.WithPrefix("[dns]"),
 		config:       config,
 		queryTimeout: timeout,
@@ -66,7 +72,8 @@ func New(ctx context.Context, logger logger.Logger, config DNSConfig) (*DNSResol
 				return make([]byte, dnsPacketSize)
 			},
 		},
-		cache: cache.NewInMemory(ctx, 5*time.Minute), // Clean expired entries every 5 minutes
+		cache:      cache.NewInMemory(resolverCtx, 5*time.Minute), // Use resolver context for cache lifecycle
+		requestSem: make(chan struct{}, maxConcurrentRequests),
 	}
 
 	s.protocol = config.DefaultProtocol
@@ -112,7 +119,6 @@ func (s *DNSResolver) Start() error {
 		return fmt.Errorf("failed to listen on UDP: %w", err)
 	}
 
-	s.ctx, s.cancel = context.WithCancel(s.ctx)
 	s.running = true
 
 	s.wg.Add(1)
@@ -190,14 +196,26 @@ func (s *DNSResolver) handleRequests() {
 			continue
 		}
 
-		// Handle the DNS request in a goroutine, transferring buffer ownership
-		go s.handleDNSRequest(buffer, n, clientAddr)
+		// Acquire semaphore before spawning handler goroutine
+		select {
+		case s.requestSem <- struct{}{}:
+			// Handle the DNS request in a goroutine, transferring buffer ownership
+			go s.handleDNSRequest(buffer, n, clientAddr)
+		case <-s.ctx.Done():
+			s.bufferPool.Put(buffer)
+			return
+		default:
+			// Semaphore full, drop request
+			s.bufferPool.Put(buffer)
+			s.logger.Debug("DNS request dropped: concurrency limit reached")
+		}
 	}
 }
 
 // handleDNSRequest processes a single DNS request
 func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *net.UDPAddr) {
 	defer s.bufferPool.Put(buffer)
+	defer func() { <-s.requestSem }()
 
 	data := buffer[:dataLen]
 	if len(data) < 12 {
@@ -217,23 +235,29 @@ func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *n
 	// Create normalized cache key (case-insensitive domain)
 	cacheKey := fmt.Sprintf("%s:%d", strings.ToLower(domain), queryType)
 
-	// Check cache first (with nil guard)
+	// Check cache first (with nil guard and shutdown check)
 	if s.cache != nil {
-		if found, cachedResponse, err := s.cache.Get(cacheKey); err == nil && found {
-			if cacheEntry, ok := cachedResponse.(*dnsCacheEntry); ok {
-				s.logger.Debug("Cache hit for %s (%s)", domain, dns.TypeToString[queryType])
+		// Check if shutdown is in progress before accessing cache
+		select {
+		case <-s.ctx.Done():
+			// Shutdown in progress, skip cache and fall through to resolution
+		default:
+			if found, cachedResponse, err := s.cache.Get(cacheKey); err == nil && found {
+				if cacheEntry, ok := cachedResponse.(*dnsCacheEntry); ok {
+					s.logger.Debug("Cache hit for %s (%s)", domain, dns.TypeToString[queryType])
 
-				// Update cached response with current transaction ID and remaining TTLs
-				if updatedResponse := s.updateCachedResponse(cacheEntry, data); updatedResponse != nil {
-					_, err := s.conn.WriteToUDP(updatedResponse, clientAddr)
-					if err != nil {
-						s.logger.Error("Failed to send cached DNS response: %v", err)
+					// Update cached response with current transaction ID and remaining TTLs
+					if updatedResponse := s.updateCachedResponse(cacheEntry, data); updatedResponse != nil {
+						_, err := s.conn.WriteToUDP(updatedResponse, clientAddr)
+						if err != nil {
+							s.logger.Error("Failed to send cached DNS response: %v", err)
+						}
+						return
 					}
-					return
-				}
 
-				// If parsing/updating failed, fall back to normal resolution
-				s.logger.Debug("Failed to update cached response for %s, falling back to normal resolution", domain)
+					// If parsing/updating failed, fall back to normal resolution
+					s.logger.Debug("Failed to update cached response for %s, falling back to normal resolution", domain)
+				}
 			}
 		}
 	}
@@ -356,22 +380,23 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 		return nil, fmt.Errorf("failed to connect to nameserver via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 	co := &dns.Conn{Conn: conn}
-	defer co.Close()
 
 	// Set deadline for operation
 	conn.SetDeadline(time.Now().Add(s.queryTimeout))
 
 	if err := co.WriteMsg(msg); err != nil {
+		co.Close()
 		return nil, fmt.Errorf("failed to write DNS message via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 	response, err := co.ReadMsg()
 	if err != nil {
+		co.Close()
 		return nil, fmt.Errorf("failed to read DNS response via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 
 	// Check if response was truncated (TC bit set) and we're using UDP
 	if response.Truncated && s.protocol == "udp" {
-		// Close UDP connection
+		// Close UDP connection before switching to TCP
 		co.Close()
 
 		// Retry over TCP
@@ -392,6 +417,9 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 		if err != nil {
 			return nil, fmt.Errorf("failed to read DNS response via TCP: %w", err)
 		}
+	} else {
+		// Close the connection on successful non-truncated response
+		co.Close()
 	}
 
 	return response, nil
@@ -605,13 +633,8 @@ func (s *DNSResolver) resolveCNAMERecursively(ctx context.Context, domain string
 		if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
 			s.logger.Debug("CNAME %s points to %s, recursing", domain, cnameTarget)
 
-			// Determine nameservers for this CNAME target
-			var nextNameservers []string
-			if s.config.IsManagedDomain(cnameTarget) {
-				nextNameservers = s.config.InternalNameservers
-			} else {
-				nextNameservers = s.config.UpstreamNameservers
-			}
+			// Determine nameservers for this CNAME target using selectNameservers for proper load balancing
+			nextNameservers := s.selectNameservers(cnameTarget)
 
 			// Recurse to resolve the CNAME target
 			finalResponse, err := s.resolveCNAMERecursively(ctx, cnameTarget, queryType, nextNameservers, depth+1)

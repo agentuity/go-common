@@ -14,7 +14,7 @@ import (
 
 // DetectListeningTCPPorts scans the system for TCP ports that are currently bound and listening.
 // It returns a slice of port numbers, excluding any in the exclude list.
-// Works on Linux by reading /proc/net/tcp and /proc/net/tcp6.
+// Works on MacOS by running the lsof command.
 func DetectListeningTCPPorts(exclude ...int) ([]int, error) {
 	excludeSet := make(map[int]struct{})
 	for _, p := range exclude {

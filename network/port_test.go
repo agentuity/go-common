@@ -36,7 +36,7 @@ func TestDetectListeningTCPPortsWithExclusion(t *testing.T) {
 	for _, port := range filteredPorts {
 		assert.NotEqual(t, portToExclude, port, "excluded port should not be in result")
 	}
-	assert.Len(t, filteredPorts, len(allPorts)-1)
+	assert.Equal(t, len(allPorts)-1, len(filteredPorts), "should have one less port after exclusion")
 }
 
 func TestDetectListeningTCPPortsWithMultipleExclusions(t *testing.T) {
@@ -56,7 +56,7 @@ func TestDetectListeningTCPPortsWithMultipleExclusions(t *testing.T) {
 			assert.NotEqual(t, excluded, port, "excluded port should not be in result")
 		}
 	}
-	assert.Len(t, filteredPorts, len(allPorts)-len(excludePorts))
+	assert.Equal(t, len(allPorts)-len(excludePorts), len(filteredPorts), "should have three fewer ports after exclusion")
 }
 
 func TestDetectListeningTCPPortsWithNonExistentExclusion(t *testing.T) {

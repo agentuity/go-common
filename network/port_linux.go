@@ -20,7 +20,7 @@ func DetectListeningTCPPorts(exclude ...int) ([]int, error) {
 	}
 
 	files := []string{"/proc/net/tcp", "/proc/net/tcp6"}
-	var ports []int
+	portSet := make(map[int]struct{})
 
 	for _, path := range files {
 		f, err := os.Open(path)
@@ -58,12 +58,16 @@ func DetectListeningTCPPorts(exclude ...int) ([]int, error) {
 				port := int(portDec)
 
 				if _, excluded := excludeSet[port]; !excluded {
-					ports = append(ports, port)
+					portSet[port] = struct{}{}
 				}
 			}
 		}
 	}
 
+	var ports []int
+	for p := range portSet {
+		ports = append(ports, p)
+	}
 	sort.Ints(ports)
 	return ports, nil
 }

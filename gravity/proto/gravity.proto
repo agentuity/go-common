@@ -5,6 +5,7 @@ package gravity;
 option go_package = "github.com/agentuity/go-common/gravity/proto";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
 
 // GravityControl service handles client provisioning and metadata
 service GravityControl {
@@ -213,12 +214,19 @@ message HostInfo {
 }
 
 message ExistingDeployment {
-  string id = 1;                         // Unique identifier for the deployment
-  DeploymentSpec spec = 2;               // Original deployment specification
-  google.protobuf.Timestamp started = 3; // When the deployment was started
-  string ipv6_address = 4; // Assigned IPv6 address for the deployment
+  string id = 1;                               // Unique identifier for the deployment
+  DeploymentSpec spec = 2 [deprecated = true]; // Original deployment specification
+  google.protobuf.Timestamp started = 3;       // When the deployment was started
+  string ipv6_address = 4;                     // Assigned IPv6 address for the deployment
+  string org_id = 5;
+  ResourceRequirements resources = 6;          // CPU and memory requirements
+  DeploymentCert organization_cert = 7;        // Organization certificates
+  bool skip_private_key = 8;                   // Skip the private key for the deployment
+  bool paused = 9;
+  google.protobuf.Duration pausedDuration = 10;
 }
 
+// Deprecated
 message DeploymentSpec {
   string id = 1; // id of the deployment
   string org_id = 2;

@@ -9,6 +9,7 @@ package proto
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
 	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
@@ -1641,13 +1642,20 @@ func (x *HostInfo) GetInstanceId() string {
 }
 
 type ExistingDeployment struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                      // Unique identifier for the deployment
-	Spec          *DeploymentSpec        `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`                                  // Original deployment specification
-	Started       *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
-	Ipv6Address   string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // Unique identifier for the deployment
+	// Deprecated: Marked as deprecated in gravity.proto.
+	Spec             *DeploymentSpec        `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`                                  // Original deployment specification
+	Started          *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
+	Ipv6Address      string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
+	OrgId            string                 `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	Resources        *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`                                       // CPU and memory requirements
+	OrganizationCert *DeploymentCert        `protobuf:"bytes,7,opt,name=organization_cert,json=organizationCert,proto3" json:"organization_cert,omitempty"` // Organization certificates
+	SkipPrivateKey   bool                   `protobuf:"varint,8,opt,name=skip_private_key,json=skipPrivateKey,proto3" json:"skip_private_key,omitempty"`    // Skip the private key for the deployment
+	Paused           bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
+	PausedDuration   *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *ExistingDeployment) Reset() {
@@ -1687,6 +1695,7 @@ func (x *ExistingDeployment) GetId() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in gravity.proto.
 func (x *ExistingDeployment) GetSpec() *DeploymentSpec {
 	if x != nil {
 		return x.Spec
@@ -1708,6 +1717,49 @@ func (x *ExistingDeployment) GetIpv6Address() string {
 	return ""
 }
 
+func (x *ExistingDeployment) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ExistingDeployment) GetResources() *ResourceRequirements {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetOrganizationCert() *DeploymentCert {
+	if x != nil {
+		return x.OrganizationCert
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetSkipPrivateKey() bool {
+	if x != nil {
+		return x.SkipPrivateKey
+	}
+	return false
+}
+
+func (x *ExistingDeployment) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *ExistingDeployment) GetPausedDuration() *durationpb.Duration {
+	if x != nil {
+		return x.PausedDuration
+	}
+	return nil
+}
+
+// Deprecated
 type DeploymentSpec struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Id               string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // id of the deployment
@@ -3964,7 +4016,7 @@ var File_gravity_proto protoreflect.FileDescriptor
 
 const file_gravity_proto_rawDesc = "" +
 	"\n" +
-	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf6\x02\n" +
+	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\xf6\x02\n" +
 	"\x10ProvisionRequest\x12\x16\n" +
 	"\x06region\x18\x01 \x01(\tR\x06region\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x1a\n" +
@@ -4084,12 +4136,19 @@ const file_gravity_proto_rawDesc = "" +
 	"\fipv6_address\x18\x06 \x01(\tR\vipv6Address\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12\x1f\n" +
 	"\vinstance_id\x18\b \x01(\tR\n" +
-	"instanceId\"\xaa\x01\n" +
+	"instanceId\"\xcd\x03\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
-	"\x04spec\x18\x02 \x01(\v2\x17.gravity.DeploymentSpecR\x04spec\x124\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12/\n" +
+	"\x04spec\x18\x02 \x01(\v2\x17.gravity.DeploymentSpecB\x02\x18\x01R\x04spec\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
-	"\fipv6_address\x18\x04 \x01(\tR\vipv6Address\"\xa6\x02\n" +
+	"\fipv6_address\x18\x04 \x01(\tR\vipv6Address\x12\x15\n" +
+	"\x06org_id\x18\x05 \x01(\tR\x05orgId\x12;\n" +
+	"\tresources\x18\x06 \x01(\v2\x1d.gravity.ResourceRequirementsR\tresources\x12D\n" +
+	"\x11organization_cert\x18\a \x01(\v2\x17.gravity.DeploymentCertR\x10organizationCert\x12(\n" +
+	"\x10skip_private_key\x18\b \x01(\bR\x0eskipPrivateKey\x12\x16\n" +
+	"\x06paused\x18\t \x01(\bR\x06paused\x12A\n" +
+	"\x0epausedDuration\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\"\xa6\x02\n" +
 	"\x0eDeploymentSpec\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x14\n" +
@@ -4382,6 +4441,7 @@ var file_gravity_proto_goTypes = []any{
 	nil,                                 // 41: gravity.PerformanceMetrics.RuntimeStatsEntry
 	nil,                                 // 42: gravity.MessageStatistics.MessagesByTypeEntry
 	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 44: google.protobuf.Duration
 }
 var file_gravity_proto_depIdxs = []int32{
 	4,  // 0: gravity.ProvisionRequest.capabilities:type_name -> gravity.ClientCapabilities
@@ -4411,35 +4471,38 @@ var file_gravity_proto_depIdxs = []int32{
 	38, // 24: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
 	22, // 25: gravity.ExistingDeployment.spec:type_name -> gravity.DeploymentSpec
 	43, // 26: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	23, // 27: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
-	24, // 28: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
-	28, // 29: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
-	29, // 30: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
-	30, // 31: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
-	31, // 32: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
-	32, // 33: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
-	41, // 34: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
-	42, // 35: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
-	33, // 36: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
-	34, // 37: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
-	35, // 38: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
-	36, // 39: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
-	25, // 40: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	24, // 41: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	37, // 42: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
-	0,  // 43: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
-	39, // 44: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	2,  // 45: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
-	3,  // 46: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
-	1,  // 47: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
-	40, // 48: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	2,  // 49: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
-	3,  // 50: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
-	47, // [47:51] is the sub-list for method output_type
-	43, // [43:47] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	23, // 27: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	24, // 28: gravity.ExistingDeployment.organization_cert:type_name -> gravity.DeploymentCert
+	44, // 29: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	23, // 30: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
+	24, // 31: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert
+	28, // 32: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
+	29, // 33: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
+	30, // 34: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
+	31, // 35: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
+	32, // 36: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
+	41, // 37: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
+	42, // 38: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
+	33, // 39: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
+	34, // 40: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
+	35, // 41: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
+	36, // 42: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
+	25, // 43: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	24, // 44: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	37, // 45: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
+	0,  // 46: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
+	39, // 47: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	2,  // 48: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
+	3,  // 49: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
+	1,  // 50: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
+	40, // 51: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	2,  // 52: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
+	3,  // 53: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
+	50, // [50:54] is the sub-list for method output_type
+	46, // [46:50] is the sub-list for method input_type
+	46, // [46:46] is the sub-list for extension type_name
+	46, // [46:46] is the sub-list for extension extendee
+	0,  // [0:46] is the sub-list for field type_name
 }
 
 func init() { file_gravity_proto_init() }

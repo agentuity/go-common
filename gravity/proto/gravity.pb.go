@@ -1649,9 +1649,9 @@ type ExistingDeployment struct {
 	Started        *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
 	Ipv6Address    string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
 	OrgId          string                 `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
-	Resources      *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`                                    // CPU and memory requirements
-	DeploymentCert *DeploymentCert        `protobuf:"bytes,7,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"`    // Cert for this deployment
-	UsedPrivateKey bool                   `protobuf:"varint,8,opt,name=used_private_key,json=usedPrivateKey,proto3" json:"used_private_key,omitempty"` // Skip the private key for the deployment
+	Resources      *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"` // CPU and memory requirements
+	DeploymentCert *DeploymentCert        `protobuf:"bytes,7,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"`
+	UsedPrivateKey bool                   `protobuf:"varint,8,opt,name=used_private_key,json=usedPrivateKey,proto3" json:"used_private_key,omitempty"` // Deployment used private key
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
 	unknownFields  protoimpl.UnknownFields

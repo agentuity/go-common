@@ -2,27 +2,10 @@ package provider
 
 import (
 	"context"
-	"time"
 
 	pb "github.com/agentuity/go-common/gravity/proto"
 	"github.com/agentuity/go-common/logger"
 )
-
-// Resource represents a provisioned resource
-type Resource struct {
-	ID        string `json:"-"`
-	Hostname  string `json:"-"`
-	IPAddress string `json:"-"`
-	// Hostport is the hostname and port of the resource.
-	// Usually it is [ip]:[port]
-	Hostport       string             `json:"hostport"`
-	Paused         bool               `json:"-"`
-	PausedDuration time.Duration      `json:"-"`
-	Errored        bool               `json:"-"`
-	Spec           *pb.DeploymentSpec `json:"-"`
-	IPV6Address    string             `json:"-"`
-	Started        time.Time          `json:"-"`
-}
 
 // Server interface for gravity server communication
 type Server interface {
@@ -98,14 +81,11 @@ type Provider interface {
 	// Configure will be called to configure the provider with the given configuration
 	Configure(config Configuration) error
 
-	// Provision provisions a resource for a given spec
-	Provision(ctx context.Context, request *ProvisionRequest) (*Resource, error)
-
 	// Deprovision deprovisions a provisioned resource
 	Deprovision(ctx context.Context, resourceID string, reason DeprovisionReason) error
 
 	// Resources returns a list of all resources regardless of state
-	Resources() []*Resource
+	Resources() []*pb.ExistingDeployment
 
 	// SetMetricsCollector sets the metrics collector for runtime stats collection
 	SetMetricsCollector(collector ProjectRuntimeStatsCollector)

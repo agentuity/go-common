@@ -561,22 +561,8 @@ func (g *GravityClient) sendConnectMessage() error {
 	g.logger.Debug("Found %d existing deployments to synchronize with server", len(resources))
 
 	for _, res := range resources {
-		g.logger.Debug("Synchronizing deployment: ID=%s, IPv6=%s, Started=%s",
-			res.ID, res.IPV6Address, res.Started.Format("2006-01-02 15:04:05"))
-
-		// Convert provider.Spec to pb.DeploymentSpec
-		deploymentSpec := &pb.DeploymentSpec{
-			Id:               res.Spec.Id, // Use deployment ID as name
-			Resources:        res.Spec.Resources,
-			OrganizationCert: res.Spec.OrganizationCert,
-		}
-
-		existingDeployments = append(existingDeployments, &pb.ExistingDeployment{
-			Id:          res.ID,
-			Spec:        deploymentSpec,
-			Started:     timestamppb.New(res.Started),
-			Ipv6Address: res.IPV6Address,
-		})
+		g.logger.Debug("Synchronizing deployment: ID=%s, IPv6=%s, Started=%s", res.GetId(), res.GetIpv6Address(), res.GetStarted().AsTime().Format("2006-01-02 15:04:05"))
+		existingDeployments = append(existingDeployments, res)
 	}
 
 	if len(existingDeployments) > 0 {
@@ -1645,14 +1631,8 @@ func (g *GravityClient) Unprovision(deploymentID string) error {
 
 // Pause sends a pause event to the gravity server
 func (g *GravityClient) Pause(reason string) error {
-	event := &pb.ProtocolEvent{
-		Id:      generateMessageID(),
-		Event:   "pause",
-		Payload: []byte{}, // Empty payload
-	}
-
 	controlMsg := &pb.ControlMessage{
-		Id: event.Id,
+		Id: generateMessageID(),
 		MessageType: &pb.ControlMessage_Pause{
 			Pause: &pb.PauseRequest{Reason: reason},
 		},
@@ -1663,14 +1643,8 @@ func (g *GravityClient) Pause(reason string) error {
 
 // Resume sends a resume event to the gravity server
 func (g *GravityClient) Resume(reason string) error {
-	event := &pb.ProtocolEvent{
-		Id:      generateMessageID(),
-		Event:   "resume",
-		Payload: []byte{}, // Empty payload
-	}
-
 	controlMsg := &pb.ControlMessage{
-		Id: event.Id,
+		Id: generateMessageID(),
 		MessageType: &pb.ControlMessage_Resume{
 			Resume: &pb.ResumeRequest{
 				Reason: reason,

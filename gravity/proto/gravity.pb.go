@@ -1645,17 +1645,17 @@ type ExistingDeployment struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // Unique identifier for the deployment
 	// Deprecated: Marked as deprecated in gravity.proto.
-	Spec             *DeploymentSpec        `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`                                  // Original deployment specification
-	Started          *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
-	Ipv6Address      string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
-	OrgId            string                 `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
-	Resources        *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`                                       // CPU and memory requirements
-	OrganizationCert *DeploymentCert        `protobuf:"bytes,7,opt,name=organization_cert,json=organizationCert,proto3" json:"organization_cert,omitempty"` // Organization certificates
-	SkipPrivateKey   bool                   `protobuf:"varint,8,opt,name=skip_private_key,json=skipPrivateKey,proto3" json:"skip_private_key,omitempty"`    // Skip the private key for the deployment
-	Paused           bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
-	PausedDuration   *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	Spec           *DeploymentSpec        `protobuf:"bytes,2,opt,name=spec,proto3" json:"spec,omitempty"`                                  // Original deployment specification
+	Started        *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
+	Ipv6Address    string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
+	OrgId          string                 `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	Resources      *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"`                                    // CPU and memory requirements
+	DeploymentCert *DeploymentCert        `protobuf:"bytes,7,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"`    // Cert for this deployment
+	UsedPrivateKey bool                   `protobuf:"varint,8,opt,name=used_private_key,json=usedPrivateKey,proto3" json:"used_private_key,omitempty"` // Skip the private key for the deployment
+	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
+	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ExistingDeployment) Reset() {
@@ -1731,16 +1731,16 @@ func (x *ExistingDeployment) GetResources() *ResourceRequirements {
 	return nil
 }
 
-func (x *ExistingDeployment) GetOrganizationCert() *DeploymentCert {
+func (x *ExistingDeployment) GetDeploymentCert() *DeploymentCert {
 	if x != nil {
-		return x.OrganizationCert
+		return x.DeploymentCert
 	}
 	return nil
 }
 
-func (x *ExistingDeployment) GetSkipPrivateKey() bool {
+func (x *ExistingDeployment) GetUsedPrivateKey() bool {
 	if x != nil {
-		return x.SkipPrivateKey
+		return x.UsedPrivateKey
 	}
 	return false
 }
@@ -4136,16 +4136,16 @@ const file_gravity_proto_rawDesc = "" +
 	"\fipv6_address\x18\x06 \x01(\tR\vipv6Address\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12\x1f\n" +
 	"\vinstance_id\x18\b \x01(\tR\n" +
-	"instanceId\"\xcd\x03\n" +
+	"instanceId\"\xc9\x03\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12/\n" +
 	"\x04spec\x18\x02 \x01(\v2\x17.gravity.DeploymentSpecB\x02\x18\x01R\x04spec\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
 	"\fipv6_address\x18\x04 \x01(\tR\vipv6Address\x12\x15\n" +
 	"\x06org_id\x18\x05 \x01(\tR\x05orgId\x12;\n" +
-	"\tresources\x18\x06 \x01(\v2\x1d.gravity.ResourceRequirementsR\tresources\x12D\n" +
-	"\x11organization_cert\x18\a \x01(\v2\x17.gravity.DeploymentCertR\x10organizationCert\x12(\n" +
-	"\x10skip_private_key\x18\b \x01(\bR\x0eskipPrivateKey\x12\x16\n" +
+	"\tresources\x18\x06 \x01(\v2\x1d.gravity.ResourceRequirementsR\tresources\x12@\n" +
+	"\x0fdeployment_cert\x18\a \x01(\v2\x17.gravity.DeploymentCertR\x0edeploymentCert\x12(\n" +
+	"\x10used_private_key\x18\b \x01(\bR\x0eusedPrivateKey\x12\x16\n" +
 	"\x06paused\x18\t \x01(\bR\x06paused\x12A\n" +
 	"\x0epausedDuration\x18\n" +
 	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\"\xa6\x02\n" +
@@ -4472,7 +4472,7 @@ var file_gravity_proto_depIdxs = []int32{
 	22, // 25: gravity.ExistingDeployment.spec:type_name -> gravity.DeploymentSpec
 	43, // 26: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
 	23, // 27: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
-	24, // 28: gravity.ExistingDeployment.organization_cert:type_name -> gravity.DeploymentCert
+	24, // 28: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
 	44, // 29: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
 	23, // 30: gravity.DeploymentSpec.resources:type_name -> gravity.ResourceRequirements
 	24, // 31: gravity.DeploymentSpec.organization_cert:type_name -> gravity.DeploymentCert

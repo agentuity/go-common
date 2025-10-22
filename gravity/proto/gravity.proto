@@ -220,8 +220,8 @@ message ExistingDeployment {
   string ipv6_address = 4;                     // Assigned IPv6 address for the deployment
   string org_id = 5;
   ResourceRequirements resources = 6;          // CPU and memory requirements
-  DeploymentCert organization_cert = 7;        // Organization certificates
-  bool skip_private_key = 8;                   // Skip the private key for the deployment
+  DeploymentCert deployment_cert = 7;          // Cert for this deployment
+  bool used_private_key = 8;                   // Skip the private key for the deployment
   bool paused = 9;
   google.protobuf.Duration pausedDuration = 10;
 }

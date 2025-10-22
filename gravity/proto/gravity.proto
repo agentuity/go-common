@@ -215,7 +215,6 @@ message HostInfo {
 
 message ExistingDeployment {
   string id = 1;                               // Unique identifier for the deployment
-  DeploymentSpec spec = 2 [deprecated = true]; // Original deployment specification
   google.protobuf.Timestamp started = 3;       // When the deployment was started
   string ipv6_address = 4;                     // Assigned IPv6 address for the deployment
   string org_id = 5;
@@ -226,16 +225,9 @@ message ExistingDeployment {
   google.protobuf.Duration pausedDuration = 10;
 }
 
-// Deprecated
 message DeploymentSpec {
-  string id = 1; // id of the deployment
-  string org_id = 2;
-  string image = 3;                     // Container image to deploy
-  repeated string env = 4;              // Environment variables
-  repeated string secrets = 5;          // Secret names to inject
-  ResourceRequirements resources = 6;   // CPU and memory requirements
-  DeploymentCert organization_cert = 7; // Organization certificates
-  bool skip_private_key = 8; // Skip the private key for the deployment
+  // Deprecated but removing DeploymentSpec breaks wire compat
+  option deprecated = true;
 }
 
 message ResourceRequirements {

@@ -49,14 +49,6 @@ type Configuration struct {
 	OrgID string
 }
 
-// ProvisionRequest for new deployment
-type ProvisionRequest struct {
-	DeploymentId string             `json:"deployment_id,omitempty"` // Unique identifier for the deployment
-	Spec         *pb.DeploymentSpec `json:"spec,omitempty"`          // Container and runtime specification
-	AuthToken    string             `json:"auth_token,omitempty"`    // Authentication token for this deployment
-	OtlpToken    string             `json:"otlp_token,omitempty"`    // OpenTelemetry token for metrics
-}
-
 // DeprovisionReason specifies why a resource is being deprovisioned
 type DeprovisionReason string
 

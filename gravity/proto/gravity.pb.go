@@ -1792,6 +1792,8 @@ type ResourceRequirements struct {
 	CpuLimit      int64                  `protobuf:"varint,2,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`                // Maximum CPU in millicores (1000 = 1 core)
 	MemoryRequest int64                  `protobuf:"varint,3,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"` // Requested memory in bytes
 	CpuRequest    int64                  `protobuf:"varint,4,opt,name=cpu_request,json=cpuRequest,proto3" json:"cpu_request,omitempty"`          // Requested CPU in millicores
+	DiskLimit     int64                  `protobuf:"varint,5,opt,name=disk_limit,json=diskLimit,proto3" json:"disk_limit,omitempty"`             // Maximum storage in bytes
+	DiskRequest   int64                  `protobuf:"varint,6,opt,name=disk_request,json=diskRequest,proto3" json:"disk_request,omitempty"`       // Requested storage in bytes
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1850,6 +1852,20 @@ func (x *ResourceRequirements) GetMemoryRequest() int64 {
 func (x *ResourceRequirements) GetCpuRequest() int64 {
 	if x != nil {
 		return x.CpuRequest
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetDiskLimit() int64 {
+	if x != nil {
+		return x.DiskLimit
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetDiskRequest() int64 {
+	if x != nil {
+		return x.DiskRequest
 	}
 	return 0
 }
@@ -4074,13 +4090,16 @@ const file_gravity_proto_rawDesc = "" +
 	"\x06paused\x18\t \x01(\bR\x06paused\x12A\n" +
 	"\x0epausedDuration\x18\n" +
 	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\"\x14\n" +
-	"\x0eDeploymentSpec:\x02\x18\x01\"\x9e\x01\n" +
+	"\x0eDeploymentSpec:\x02\x18\x01\"\xe0\x01\n" +
 	"\x14ResourceRequirements\x12!\n" +
 	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +
 	"\tcpu_limit\x18\x02 \x01(\x03R\bcpuLimit\x12%\n" +
 	"\x0ememory_request\x18\x03 \x01(\x03R\rmemoryRequest\x12\x1f\n" +
 	"\vcpu_request\x18\x04 \x01(\x03R\n" +
-	"cpuRequest\"`\n" +
+	"cpuRequest\x12\x1d\n" +
+	"\n" +
+	"disk_limit\x18\x05 \x01(\x03R\tdiskLimit\x12!\n" +
+	"\fdisk_request\x18\x06 \x01(\x03R\vdiskRequest\"`\n" +
 	"\x0eDeploymentCert\x12\x12\n" +
 	"\x04cert\x18\x01 \x01(\tR\x04cert\x12\x10\n" +
 	"\x03key\x18\x02 \x01(\tR\x03key\x12\x0e\n" +

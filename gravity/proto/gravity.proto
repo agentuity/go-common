@@ -235,6 +235,8 @@ message ResourceRequirements {
   int64 cpu_limit = 2;      // Maximum CPU in millicores (1000 = 1 core)
   int64 memory_request = 3; // Requested memory in bytes
   int64 cpu_request = 4;    // Requested CPU in millicores
+  int64 disk_limit = 5;     // Maximum storage in bytes
+  int64 disk_request = 6;   // Requested storage in bytes
 }
 
 message DeploymentCert {

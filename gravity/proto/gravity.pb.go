@@ -1652,6 +1652,7 @@ type ExistingDeployment struct {
 	UsedPrivateKey bool                   `protobuf:"varint,8,opt,name=used_private_key,json=usedPrivateKey,proto3" json:"used_private_key,omitempty"` // Deployment used private key
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
+	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1747,6 +1748,13 @@ func (x *ExistingDeployment) GetPausedDuration() *durationpb.Duration {
 		return x.PausedDuration
 	}
 	return nil
+}
+
+func (x *ExistingDeployment) GetOnDemand() bool {
+	if x != nil {
+		return x.OnDemand
+	}
+	return false
 }
 
 // Deprecated: Marked as deprecated in gravity.proto.
@@ -4078,7 +4086,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\fipv6_address\x18\x06 \x01(\tR\vipv6Address\x12\x1a\n" +
 	"\bhostname\x18\a \x01(\tR\bhostname\x12\x1f\n" +
 	"\vinstance_id\x18\b \x01(\tR\n" +
-	"instanceId\"\x98\x03\n" +
+	"instanceId\"\xb5\x03\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
@@ -4089,7 +4097,8 @@ const file_gravity_proto_rawDesc = "" +
 	"\x10used_private_key\x18\b \x01(\bR\x0eusedPrivateKey\x12\x16\n" +
 	"\x06paused\x18\t \x01(\bR\x06paused\x12A\n" +
 	"\x0epausedDuration\x18\n" +
-	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\"\x14\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\x12\x1b\n" +
+	"\ton_demand\x18\v \x01(\bR\bonDemand\"\x14\n" +
 	"\x0eDeploymentSpec:\x02\x18\x01\"\xe0\x01\n" +
 	"\x14ResourceRequirements\x12!\n" +
 	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +

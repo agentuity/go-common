@@ -223,6 +223,7 @@ message ExistingDeployment {
   bool used_private_key = 8;                   // Deployment used private key
   bool paused = 9;
   google.protobuf.Duration pausedDuration = 10;
+  bool on_demand = 11;
 }
 
 message DeploymentSpec {

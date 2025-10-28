@@ -329,7 +329,7 @@ func (g *GravityClient) Start() error {
 		MinVersion:   tls.VersionTLS13,
 	}
 	creds := credentials.NewTLS(tlsConfig)
-	g.logger.Debug("tLS credentials created successfully")
+	g.logger.Debug("TLS credentials created successfully")
 
 	// Create connection pool using configuration
 	connectionCount := g.poolConfig.PoolSize

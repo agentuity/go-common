@@ -294,7 +294,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 
 // Start establishes gRPC connections and starts the client
 func (g *GravityClient) Start() error {
-	g.logger.Debug("Starting gRPC Gravity client...")
+	g.logger.Debug("starting gRPC Gravity client...")
 	g.mu.Lock()
 
 	if g.connected {
@@ -302,25 +302,25 @@ func (g *GravityClient) Start() error {
 		return fmt.Errorf("already connected")
 	}
 
-	g.logger.Debug("Parsing gRPC URL: %s", g.url)
+	g.logger.Debug("parsing gRPC URL: %s", g.url)
 	// Parse gRPC URL
 	grpcURL, err := g.parseGRPCURL(g.url)
 	if err != nil {
-		g.logger.Error("Failed to parse gRPC URL: %v", err)
+		g.logger.Error("failed to parse gRPC URL: %v", err)
 		return fmt.Errorf("invalid URL: %w", err)
 	}
-	g.logger.Debug("Parsed gRPC URL successfully: %s", grpcURL)
+	g.logger.Debug("parsed gRPC URL successfully: %s", grpcURL)
 
 	// Extract hostname for TLS ServerName
 	hostname, err := g.extractHostnameFromURL(g.url)
 	if err != nil {
-		g.logger.Error("Failed to extract hostname from URL: %v", err)
+		g.logger.Error("failed to extract hostname from URL: %v", err)
 		return fmt.Errorf("failed to extract hostname: %w", err)
 	}
 
-	g.logger.Debug("Loading CA certificate for TLS...")
+	g.logger.Debug("loading CA certificate for TLS...")
 
-	g.logger.Debug("Creating TLS configuration...")
+	g.logger.Debug("creating TLS configuration...")
 	// Create TLS config that includes both client certificates (mTLS) and server verification
 	tlsConfig := &tls.Config{
 		Certificates: g.tlsConfig.Certificates,    // Client certificates for mTLS
@@ -333,7 +333,7 @@ func (g *GravityClient) Start() error {
 
 	// Create connection pool using configuration
 	connectionCount := g.poolConfig.PoolSize
-	g.logger.Debug("Creating connection pool with %d connections", connectionCount)
+	g.logger.Debug("creating connection pool with %d connections", connectionCount)
 	g.connections = make([]*grpc.ClientConn, connectionCount)
 	g.controlClients = make([]pb.GravityControlClient, connectionCount)
 	g.tunnelClients = make([]pb.GravityTunnelClient, connectionCount)
@@ -345,18 +345,18 @@ func (g *GravityClient) Start() error {
 		g.streamManager.connectionHealth[i] = true // Start assuming healthy
 	}
 
-	g.logger.Debug("Establishing %d gRPC connections to %s", connectionCount, grpcURL)
+	g.logger.Debug("establishing %d gRPC connections to %s", connectionCount, grpcURL)
 	// Establish connections using modern gRPC client API
 	for i := range connectionCount {
-		g.logger.Debug("Establishing connection %d/%d...", i+1, connectionCount)
+		g.logger.Debug("establishing connection %d/%d...", i+1, connectionCount)
 
-		g.logger.Debug("Creating gRPC client %d to %s with TLS", i+1, grpcURL)
+		g.logger.Debug("creating gRPC client %d to %s with TLS", i+1, grpcURL)
 		conn, err := grpc.NewClient(grpcURL,
 			grpc.WithTransportCredentials(creds),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		)
 		if err != nil {
-			g.logger.Error("Failed to create gRPC client %d: %v", i+1, err)
+			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
 			// Cleanup partial connections
 			g.cleanup()
 			return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)
@@ -368,46 +368,46 @@ func (g *GravityClient) Start() error {
 		g.tunnelClients[i] = pb.NewGravityTunnelClient(conn)
 		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
 	}
-	g.logger.Debug("All %d gRPC clients created successfully", connectionCount)
+	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
 
 	// Release mutex before blocking operations (control streams, connect, tunnel streams)
 	g.mu.Unlock()
 
-	g.logger.Debug("Establishing control streams...")
+	g.logger.Debug("establishing control streams...")
 	// Establish control streams (one per connection)
 	err = g.establishControlStreams()
 	if err != nil {
-		g.logger.Error("Failed to establish control streams: %v", err)
+		g.logger.Error("failed to establish control streams: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to establish control streams: %w", err)
 	}
-	g.logger.Debug("Control streams established successfully")
+	g.logger.Debug("control streams established successfully")
 
-	g.logger.Debug("Sending initial connect message...")
+	g.logger.Debug("sending initial connect message...")
 	// Send initial connect message first to get connection IDs
 	err = g.sendConnectMessage()
 	if err != nil {
-		g.logger.Error("Failed to send connect message: %v", err)
+		g.logger.Error("failed to send connect message: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to send connect message: %w", err)
 	}
-	g.logger.Debug("Connect message sent successfully")
+	g.logger.Debug("connect message sent successfully")
 
-	g.logger.Debug("Establishing tunnel streams...")
+	g.logger.Debug("establishing tunnel streams...")
 	// Establish tunnel streams (multiple per connection) - after connect message
 	err = g.establishTunnelStreams()
 	if err != nil {
-		g.logger.Error("Failed to establish tunnel streams: %v", err)
+		g.logger.Error("failed to establish tunnel streams: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to establish tunnel streams: %w", err)
 	}
-	g.logger.Debug("Tunnel streams established successfully")
+	g.logger.Debug("tunnel streams established successfully")
 
 	// Metrics collector is now hadron-specific and handled externally
 
 	// Set up stats collection if provider supports it
 	// All providers should have these methods based on the Provider interface
-	g.logger.Debug("Configuring stats collection for provider")
+	g.logger.Debug("configuring stats collection for provider")
 	// Note: SetMetricsCollector will be called externally by hadron
 
 	// Re-acquire mutex for final state updates
@@ -416,9 +416,9 @@ func (g *GravityClient) Start() error {
 	g.mu.Unlock()
 
 	g.serverMetrics.UpdateConnection(true)
-	g.logger.Debug("Connected to Gravity server via gRPC: %s", grpcURL)
+	g.logger.Debug("connected to Gravity server via gRPC: %s", grpcURL)
 
-	g.logger.Debug("Starting background goroutines...")
+	g.logger.Debug("starting background goroutines...")
 	// Start background goroutines
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()
@@ -430,7 +430,7 @@ func (g *GravityClient) Start() error {
 	if g.reportStats {
 		go g.handleReportDelivery()
 	}
-	g.logger.Debug("All background goroutines started successfully")
+	g.logger.Debug("all background goroutines started successfully")
 
 	g.logger.Debug("gRPC Gravity client startup completed successfully")
 	return nil
@@ -438,13 +438,13 @@ func (g *GravityClient) Start() error {
 
 // establishControlStreams creates control streams for each connection
 func (g *GravityClient) establishControlStreams() error {
-	g.logger.Debug("Creating control streams for %d connections", len(g.connections))
+	g.logger.Debug("creating control streams for %d connections", len(g.connections))
 	g.streamManager.controlStreams = make([]pb.GravityTunnel_EstablishTunnelClient, len(g.connections))
 	g.streamManager.contexts = make([]context.Context, len(g.connections))
 	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
 
 	for i, client := range g.tunnelClients {
-		g.logger.Debug("Establishing control stream %d/%d", i+1, len(g.connections))
+		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx
 		g.streamManager.cancels[i] = cancel
@@ -457,17 +457,17 @@ func (g *GravityClient) establishControlStreams() error {
 		// Use the grpc.UseCompressor call option for selective compression
 		stream, err := client.EstablishTunnel(ctx, grpc.UseCompressor(grpcgzip.Name))
 		if err != nil {
-			g.logger.Error("Failed to establish control stream %d: %v", i+1, err)
+			g.logger.Error("failed to establish control stream %d: %v", i+1, err)
 			return fmt.Errorf("failed to establish control stream %d: %w", i, err)
 		}
-		g.logger.Debug("Control stream %d established successfully", i+1)
+		g.logger.Debug("control stream %d established successfully", i+1)
 
 		g.streamManager.controlStreams[i] = stream
 
 		// Start listening on this control stream
 		go g.handleControlStream(i, stream)
 	}
-	g.logger.Debug("All %d control streams established successfully", len(g.connections))
+	g.logger.Debug("all %d control streams established successfully", len(g.connections))
 
 	return nil
 }
@@ -475,18 +475,18 @@ func (g *GravityClient) establishControlStreams() error {
 // establishTunnelStreams creates tunnel streams for packet forwarding
 func (g *GravityClient) establishTunnelStreams() error {
 	// Wait for connection ID from primary control stream using channel
-	g.logger.Debug("Waiting for connection ID from server...")
+	g.logger.Debug("waiting for connection ID from server...")
 
 	var connectionID string
 	select {
 	case connectionID = <-g.connectionIDChan:
 		if connectionID == "" {
-			g.logger.Error("Connection failed - authentication rejected by server")
+			g.logger.Error("connection failed - authentication rejected by server")
 			return fmt.Errorf("connection failed - authentication rejected by server")
 		}
-		g.logger.Debug("Connection ID received: %s, proceeding with tunnel streams", connectionID)
-	case <-time.After(5 * time.Second):
-		g.logger.Error("Timeout waiting for connection ID from server - possible server issue or network problem")
+		g.logger.Debug("connection ID received: %s, proceeding with tunnel streams", connectionID)
+	case <-time.After(time.Minute):
+		g.logger.Error("timeout waiting for connection ID from server - possible server issue or network problem")
 		return fmt.Errorf("timeout waiting for connection ID from server")
 	}
 
@@ -557,18 +557,18 @@ func (g *GravityClient) sendConnectMessage() error {
 	var existingDeployments []*pb.ExistingDeployment
 	resources := g.provider.Resources() // Use Resources() method from Provider interface
 
-	g.logger.Debug("Gathering current deployment state for server synchronization...")
-	g.logger.Debug("Found %d existing deployments to synchronize with server", len(resources))
+	g.logger.Debug("gathering current deployment state for server synchronization...")
+	g.logger.Debug("found %d existing deployments to synchronize with server", len(resources))
 
 	for _, res := range resources {
-		g.logger.Debug("Synchronizing deployment: ID=%s, IPv6=%s, Started=%s", res.GetId(), res.GetIpv6Address(), res.GetStarted().AsTime().Format("2006-01-02 15:04:05"))
+		g.logger.Debug("synchronizing deployment: ID=%s, IPv6=%s, Started=%s", res.GetId(), res.GetIpv6Address(), res.GetStarted().AsTime().Format("2006-01-02 15:04:05"))
 		existingDeployments = append(existingDeployments, res)
 	}
 
 	if len(existingDeployments) > 0 {
-		g.logger.Debug("Sending %d existing deployments to gravity server for state synchronization", len(existingDeployments))
+		g.logger.Debug("sending %d existing deployments to gravity server for state synchronization", len(existingDeployments))
 	} else {
-		g.logger.Debug("No existing deployments to synchronize - this is a fresh connection")
+		g.logger.Debug("no existing deployments to synchronize - this is a fresh connection")
 	}
 
 	// Create connect request
@@ -591,8 +591,8 @@ func (g *GravityClient) sendConnectMessage() error {
 	}
 
 	// Send connect message on FIRST control stream only to establish client identity
-	g.logger.Debug("Sending connect message on primary control stream")
-	g.logger.Debug("Connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v, ProjectRouting:%s, DynamicHostname:%v]",
+	g.logger.Debug("sending connect message on primary control stream")
+	g.logger.Debug("connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v, ProjectRouting:%s, DynamicHostname:%v]",
 		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion,
 		connectReq.Capabilities.GetProvisionDeployments(), connectReq.Capabilities.GetUnprovisionDeployments(), connectReq.Capabilities.GetDynamicProjectRouting(), connectReq.Capabilities.GetDynamicHostname())
 
@@ -600,7 +600,7 @@ func (g *GravityClient) sendConnectMessage() error {
 	circuitBreaker := g.circuitBreakers[0]
 
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
-		g.logger.Debug("Actually sending connect message on primary control stream")
+		g.logger.Debug("actually sending connect message on primary control stream")
 		return stream.Send(msg)
 	})
 
@@ -615,35 +615,35 @@ func (g *GravityClient) sendConnectMessage() error {
 func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTunnel_EstablishTunnelClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			g.logger.Error("Control stream %d panic: %v", streamIndex, r)
+			g.logger.Error("control stream %d panic: %v", streamIndex, r)
 		}
-		g.logger.Debug("Control stream %d handler exiting", streamIndex)
+		g.logger.Debug("control stream %d handler exiting", streamIndex)
 	}()
 
-	g.logger.Debug("Control stream %d handler started", streamIndex)
+	g.logger.Debug("control stream %d handler started", streamIndex)
 	for {
-		g.logger.Debug("Control stream %d waiting for message", streamIndex)
+		g.logger.Debug("control stream %d waiting for message", streamIndex)
 		msg, err := stream.Recv()
 		if err != nil {
 			// Check if this is a context cancellation (graceful shutdown)
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
-				g.logger.Debug("Control stream %d closed due to context cancellation", streamIndex)
+				g.logger.Debug("control stream %d closed due to context cancellation", streamIndex)
 			} else {
-				g.logger.Error("Control stream %d receive error: %v", streamIndex, err)
+				g.logger.Error("control stream %d receive error: %v", streamIndex, err)
 				// Check if this is a connection error that requires reconnection
 				if errors.Is(err, io.EOF) {
-					g.logger.Warn("Control stream %d connection lost, triggering reconnection", streamIndex)
+					g.logger.Warn("control stream %d connection lost, triggering reconnection", streamIndex)
 					go g.handleServerDisconnection(fmt.Sprintf("control_stream_%d_error", streamIndex))
 				} else if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-					g.logger.Warn("Control stream %d connection lost, triggering reconnection", streamIndex)
+					g.logger.Warn("control stream %d connection lost, triggering reconnection", streamIndex)
 					go g.handleServerDisconnection(fmt.Sprintf("control_stream_%d_error", streamIndex))
 				}
 			}
 			return
 		}
 
-		g.logger.Debug("Control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
-		g.logger.Debug("Processing control message: ID=%s, Type=%T", msg.Id, msg.MessageType)
+		g.logger.Debug("control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
+		g.logger.Debug("processing control message: ID=%s, Type=%T", msg.Id, msg.MessageType)
 		// Process control message
 		g.processControlMessage(msg)
 	}
@@ -653,28 +653,28 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTu
 func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravityTunnel_StreamPacketsClient) {
 	defer func() {
 		if r := recover(); r != nil {
-			g.logger.Error("Tunnel stream %d panic: %v", streamIndex, r)
+			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
 		}
 	}()
 
-	g.logger.Debug("handleTunnelStream: Starting receive loop for stream %d", streamIndex)
+	g.logger.Debug("handleTunnelStream: starting receive loop for stream %d", streamIndex)
 	for {
 		if g.tracePackets {
-			g.tracePacketLogger.Debug("handleTunnelStream: Calling stream.Recv() for stream %d", streamIndex)
+			g.tracePacketLogger.Debug("handleTunnelStream: calling stream.Recv() for stream %d", streamIndex)
 		}
 		packet, err := stream.Recv()
 		if err != nil {
 			// Check if this is a context cancellation (graceful shutdown)
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
-				g.logger.Debug("Tunnel stream %d closed due to context cancellation", streamIndex)
+				g.logger.Debug("tunnel stream %d closed due to context cancellation", streamIndex)
 			} else {
-				g.logger.Error("Tunnel stream %d receive error: %v", streamIndex, err)
+				g.logger.Error("tunnel stream %d receive error: %v", streamIndex, err)
 				// Check if this is a connection error that requires reconnection
 				if errors.Is(err, io.EOF) {
-					g.logger.Info("Tunnel stream %d connection lost, triggering reconnection", streamIndex)
+					g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
 					go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
 				} else if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-					g.logger.Info("Tunnel stream %d connection lost, triggering reconnection", streamIndex)
+					g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
 					go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
 				}
 			}
@@ -682,7 +682,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravityTun
 		}
 
 		if g.tracePackets {
-			g.tracePacketLogger.Debug("handleTunnelStream: Received packet with %d bytes on stream %d", len(packet.Data), streamIndex)
+			g.tracePacketLogger.Debug("handleTunnelStream: received packet with %d bytes on stream %d", len(packet.Data), streamIndex)
 		}
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)
@@ -699,7 +699,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravityTun
 func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
 	switch m := msg.MessageType.(type) {
 	case *pb.ControlMessage_ConnectResponse:
-		g.logger.Debug("Received ConnectResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
+		g.logger.Debug("received ConnectResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
 		g.handleConnectResponse(msg.Id, msg.StreamId, m.ConnectResponse)
 	case *pb.ControlMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
@@ -722,7 +722,7 @@ func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
 	case *pb.ControlMessage_Pong:
 		g.handlePong(msg.Id, m.Pong)
 	default:
-		g.logger.Debug("Unhandled control message type: %T", m)
+		g.logger.Debug("unhandled control message type: %T", m)
 	}
 }
 
@@ -730,38 +730,38 @@ func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
 func (g *GravityClient) handleConnectResponse(msgID string, connectionID string, response *pb.ConnectResponse) {
 	g.logger.Debug("handleConnectResponse called: msgID=%s, connectionID=%s, gravityServer=%s response=%v", msgID, connectionID, response.GravityServer, response)
 
-	g.logger.Debug("About to acquire mutex...")
+	g.logger.Debug("about to acquire mutex...")
 	g.mu.Lock()
-	g.logger.Debug("Mutex acquired, storing connection ID...")
+	g.logger.Debug("mutex acquired, storing connection ID...")
 
 	// Store the connection ID for tunnel streams
 	g.connectionIDs = append(g.connectionIDs, connectionID)
 	numConnIDs := len(g.connectionIDs)
-	g.logger.Debug("Stored connection ID, now have %d connection IDs", numConnIDs)
+	g.logger.Debug("stored connection ID, now have %d connection IDs", numConnIDs)
 
-	g.logger.Debug("Setting response fields...")
+	g.logger.Debug("setting response fields...")
 	g.otlpURL = response.OtlpUrl
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
 
-	g.logger.Debug("Storing host mappings...")
+	g.logger.Debug("storing host mappings...")
 	// Store host mappings directly (already protobuf)
 	g.hostMapping = response.HostMapping
-	g.logger.Debug("About to release mutex...")
+	g.logger.Debug("about to release mutex...")
 	g.mu.Unlock()
-	g.logger.Debug("Mutex released")
+	g.logger.Debug("mutex released")
 
 	// IMPORTANT: Send connection ID to channel FIRST before any blocking operations
-	g.logger.Debug("About to send connection ID %s to channel...", connectionID)
+	g.logger.Debug("about to send connection ID %s to channel...", connectionID)
 	select {
 	case g.connectionIDChan <- connectionID:
-		g.logger.Debug("Connection ID sent to channel successfully")
+		g.logger.Debug("connection ID sent to channel successfully")
 	default:
-		g.logger.Error("Connection ID channel full - this should not happen!")
+		g.logger.Error("connection ID channel full - this should not happen!")
 		return // Early return if channel send fails
 	}
 
-	g.logger.Debug("Configuring provider with gRPC server...")
+	g.logger.Debug("configuring provider with gRPC server...")
 	// Configure provider with the gRPC server as provider.Server interface
 	if err := g.provider.Configure(provider.Configuration{
 		Server:          g, // Critical: pass the gRPC server as provider.Server
@@ -781,32 +781,32 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		g.logger.Error("error configuring provider after connect: %v", err)
 		return
 	}
-	g.logger.Debug("Provider configured successfully")
+	g.logger.Debug("provider configured successfully")
 
-	g.logger.Debug("Configuring subnet routing for routes %v", response.SubnetRoutes)
+	g.logger.Debug("configuring subnet routing for routes %v", response.SubnetRoutes)
 	if err := g.networkInterface.RouteTraffic(response.SubnetRoutes); err != nil {
-		g.logger.Error("Failed to route traffic for gravity subnet: %v", err)
+		g.logger.Error("failed to route traffic for gravity subnet: %v", err)
 		return
 	}
 
-	g.logger.Debug("Connected successfully to Gravity with connection ID: %s (total: %d)", connectionID, numConnIDs)
+	g.logger.Debug("connected successfully to Gravity with connection ID: %s (total: %d)", connectionID, numConnIDs)
 
 	// Log successful deployment synchronization
 	deploymentCount := len(g.provider.Resources())
 	if deploymentCount > 0 {
-		g.logger.Debug("Deployment state synchronization completed - server is now aware of %d existing deployments", deploymentCount)
+		g.logger.Debug("deployment state synchronization completed - server is now aware of %d existing deployments", deploymentCount)
 	} else {
-		g.logger.Debug("No existing deployments to synchronize - fresh connection established")
+		g.logger.Debug("no existing deployments to synchronize - fresh connection established")
 	}
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
-	g.logger.Debug("Received generic response: msgID=%s, success=%v, error=%s, event=%s",
+	g.logger.Debug("received generic response: msgID=%s, success=%v, error=%s, event=%s",
 		msgID, response.Success, response.Error, response.Event)
 
 	// Check if this is an error response for a connect message
 	if msgID == "connect" && !response.Success {
-		g.logger.Error("Connect request failed: %s", response.Error)
+		g.logger.Error("connect request failed: %s", response.Error)
 		// Signal error by closing the connection ID channel without sending a value
 		select {
 		case g.connectionIDChan <- "":
@@ -826,7 +826,7 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 		default:
 		}
 	} else {
-		g.logger.Debug("No pending request found for msgID: %s", msgID)
+		g.logger.Debug("no pending request found for msgID: %s", msgID)
 	}
 }
 
@@ -849,28 +849,28 @@ func (g *GravityClient) handleRouteDeploymentResponse(msgID string, response *pb
 }
 
 func (g *GravityClient) handleEvent(msgID string, event *pb.ProtocolEvent) {
-	g.logger.Debug("Received event: id=%s, event=%s", msgID, event.Event)
+	g.logger.Debug("received event: id=%s, event=%s", msgID, event.Event)
 
 	switch event.Event {
 	case "close":
-		g.logger.Info("Received close event from server")
+		g.logger.Info("received close event from server")
 		// For HA: disconnect and attempt reconnection instead of full shutdown
 		g.handleServerDisconnection("close_event")
 	case "provision":
-		g.logger.Debug("Received provision event from server")
+		g.logger.Debug("received provision event from server")
 		// Handle new deployment provisioning
 		g.handleProvisionEvent(event)
 	case "unprovision":
-		g.logger.Debug("Received unprovision event from server")
+		g.logger.Debug("received unprovision event from server")
 		// Handle deployment cleanup
 		g.handleUnprovisionEvent(event)
 	default:
-		g.logger.Debug("Unhandled event type: %s", event.Event)
+		g.logger.Debug("unhandled event type: %s", event.Event)
 	}
 }
 
 func (g *GravityClient) handleProvisionEvent(event *pb.ProtocolEvent) {
-	g.logger.Debug("Handling provision event: %s", string(event.Payload))
+	g.logger.Debug("handling provision event: %s", string(event.Payload))
 
 	// For now, just acknowledge the event
 	// In a real implementation, this would trigger container/service provisioning
@@ -889,15 +889,15 @@ func (g *GravityClient) handleProvisionEvent(event *pb.ProtocolEvent) {
 
 	if len(g.streamManager.controlStreams) > 0 {
 		if err := g.streamManager.controlStreams[0].Send(responseMsg); err != nil {
-			g.logger.Error("Failed to send provision response: %v", err)
+			g.logger.Error("failed to send provision response: %v", err)
 		}
 	} else {
-		g.logger.Error("No control streams available for provision response")
+		g.logger.Error("no control streams available for provision response")
 	}
 }
 
 func (g *GravityClient) handleUnprovisionEvent(event *pb.ProtocolEvent) {
-	g.logger.Debug("Handling unprovision event: %s", string(event.Payload))
+	g.logger.Debug("handling unprovision event: %s", string(event.Payload))
 
 	// For now, just acknowledge the event
 	// In a real implementation, this would trigger container/service cleanup
@@ -916,15 +916,15 @@ func (g *GravityClient) handleUnprovisionEvent(event *pb.ProtocolEvent) {
 
 	if len(g.streamManager.controlStreams) > 0 {
 		if err := g.streamManager.controlStreams[0].Send(responseMsg); err != nil {
-			g.logger.Error("Failed to send unprovision response: %v", err)
+			g.logger.Error("failed to send unprovision response: %v", err)
 		}
 	} else {
-		g.logger.Error("No control streams available for unprovision response")
+		g.logger.Error("no control streams available for unprovision response")
 	}
 }
 
 func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
-	g.logger.Debug("Received pong response: id=%s", msgID)
+	g.logger.Debug("received pong response: id=%s", msgID)
 	_ = pong
 
 	// Find pending ping request and respond
@@ -954,7 +954,7 @@ func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
 }
 
 func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.UnprovisionRequest) {
-	g.logger.Debug("Received unprovision request: deployment_id=%s", request.DeploymentId)
+	g.logger.Debug("received unprovision request: deployment_id=%s", request.DeploymentId)
 
 	// Call provider to deprovision the deployment
 	ctx := context.WithoutCancel(g.context)
@@ -963,7 +963,7 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 	// Create generic response since there's no UnprovisionResponse message type
 	var response *pb.ProtocolResponse
 	if err != nil {
-		g.logger.Error("Unprovision failed for deployment %s: %v", request.DeploymentId, err)
+		g.logger.Error("unprovision failed for deployment %s: %v", request.DeploymentId, err)
 		response = &pb.ProtocolResponse{
 			Id:      msgID,
 			Event:   "unprovision",
@@ -971,7 +971,7 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 			Error:   err.Error(),
 		}
 	} else {
-		g.logger.Debug("Unprovision successful for deployment %s", request.DeploymentId)
+		g.logger.Debug("unprovision successful for deployment %s", request.DeploymentId)
 		response = &pb.ProtocolResponse{
 			Id:      msgID,
 			Event:   "unprovision",
@@ -990,15 +990,15 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 	if len(g.streamManager.controlStreams) > 0 && g.streamManager.controlStreams[0] != nil {
 		err := g.streamManager.controlStreams[0].Send(responseMsg)
 		if err != nil {
-			g.logger.Error("Failed to send unprovision response: %v", err)
+			g.logger.Error("failed to send unprovision response: %v", err)
 		} else {
-			g.logger.Debug("Sent unprovision response for deployment %s: success=%v", request.DeploymentId, response.Success)
+			g.logger.Debug("sent unprovision response for deployment %s: success=%v", request.DeploymentId, response.Success)
 		}
 	}
 }
 
 func (g *GravityClient) handlePingRequest(msgID string, request *pb.PingRequest) {
-	g.logger.Debug("Received ping request: id=%s", msgID)
+	g.logger.Debug("received ping request: id=%s", msgID)
 
 	// Send pong response
 	pongMsg := &pb.ControlMessage{
@@ -1013,15 +1013,15 @@ func (g *GravityClient) handlePingRequest(msgID string, request *pb.PingRequest)
 	if len(g.streamManager.controlStreams) > 0 && g.streamManager.controlStreams[0] != nil {
 		err := g.streamManager.controlStreams[0].Send(pongMsg)
 		if err != nil {
-			g.logger.Error("Failed to send pong response: %v", err)
+			g.logger.Error("failed to send pong response: %v", err)
 		} else {
-			g.logger.Debug("Sent pong response for ping %s", msgID)
+			g.logger.Debug("sent pong response for ping %s", msgID)
 		}
 	}
 }
 
 func (g *GravityClient) handleCloseRequest(msgID string, request *pb.CloseRequest) {
-	g.logger.Debug("Received close request: reason=%s", request.Reason)
+	g.logger.Debug("received close request: reason=%s", request.Reason)
 
 	// Acknowledge the close request
 	response := &pb.ProtocolResponse{
@@ -1042,16 +1042,16 @@ func (g *GravityClient) handleCloseRequest(msgID string, request *pb.CloseReques
 	}
 
 	// For HA: disconnect and attempt reconnection instead of full shutdown
-	g.logger.Info("Server requested close, attempting reconnection for HA")
+	g.logger.Info("server requested close, attempting reconnection for HA")
 	go g.handleServerDisconnection("close_request")
 }
 
 func (g *GravityClient) handlePauseRequest(msgID string, request *pb.PauseRequest) {
-	g.logger.Debug("Received pause request: reason=%s", request.Reason)
+	g.logger.Debug("received pause request: reason=%s", request.Reason)
 
 	// TODO: we need to implement pause from gravity
 
-	g.logger.Debug("Pausing hadron client operations: %s", request.Reason)
+	g.logger.Debug("pausing hadron client operations: %s", request.Reason)
 
 	// For now, just acknowledge the pause
 	response := &pb.ProtocolResponse{
@@ -1070,19 +1070,19 @@ func (g *GravityClient) handlePauseRequest(msgID string, request *pb.PauseReques
 	if len(g.streamManager.controlStreams) > 0 && g.streamManager.controlStreams[0] != nil {
 		err := g.streamManager.controlStreams[0].Send(responseMsg)
 		if err != nil {
-			g.logger.Error("Failed to send pause response: %v", err)
+			g.logger.Error("failed to send pause response: %v", err)
 		} else {
-			g.logger.Debug("Sent pause response, operations paused")
+			g.logger.Debug("sent pause response, operations paused")
 		}
 	}
 }
 
 func (g *GravityClient) handleResumeRequest(msgID string, request *pb.ResumeRequest) {
-	g.logger.Debug("Received resume request: reason=%s", request.Reason)
+	g.logger.Debug("received resume request: reason=%s", request.Reason)
 
 	// Resume the hadron client operations
 	// TODO: we need to implement pause from gravity
-	g.logger.Debug("Resuming hadron client operations: %s", request.Reason)
+	g.logger.Debug("resuming hadron client operations: %s", request.Reason)
 
 	// For now, just acknowledge the resume
 	response := &pb.ProtocolResponse{
@@ -1101,9 +1101,9 @@ func (g *GravityClient) handleResumeRequest(msgID string, request *pb.ResumeRequ
 	if len(g.streamManager.controlStreams) > 0 && g.streamManager.controlStreams[0] != nil {
 		err := g.streamManager.controlStreams[0].Send(responseMsg)
 		if err != nil {
-			g.logger.Error("Failed to send resume response: %v", err)
+			g.logger.Error("failed to send resume response: %v", err)
 		} else {
-			g.logger.Debug("Sent resume response, operations resumed")
+			g.logger.Debug("sent resume response, operations resumed")
 		}
 	}
 }
@@ -1182,28 +1182,28 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 	defer g.mu.Unlock()
 
 	if g.closing {
-		g.logger.Debug("Already closing, ignoring disconnection event")
+		g.logger.Debug("already closing, ignoring disconnection event")
 		return
 	}
 
 	if g.reconnecting {
-		g.logger.Debug("Reconnection already in progress, ignoring additional disconnection event: %s", reason)
+		g.logger.Debug("reconnection already in progress, ignoring additional disconnection event: %s", reason)
 		return
 	}
 
 	wasConnected := g.connected
 
-	g.logger.Info("Handling server disconnection: %s", reason)
+	g.logger.Info("handling server disconnection: %s", reason)
 
 	// Mark as disconnected but don't close completely
 	g.connected = false
 
 	if g.networkInterface != nil {
 		if err := g.networkInterface.UnrouteTraffic(); err != nil {
-			g.logger.Error("Failed to unroute traffic: %v", err)
+			g.logger.Error("failed to unroute traffic: %v", err)
 		}
 	} else {
-		g.logger.Debug("No tunInterface present, skipping traffic unrouting")
+		g.logger.Debug("no tunInterface present, skipping traffic unrouting")
 	}
 
 	// Clean up current connections without full shutdown
@@ -1213,7 +1213,7 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 	g.serverMetrics.UpdateConnection(false)
 
 	if wasConnected && g.skipAutoReconnect {
-		g.logger.Debug("Client is configured to skip auto-reconnect")
+		g.logger.Debug("client is configured to skip auto-reconnect")
 		g.closed <- struct{}{}
 		return
 	}
@@ -1249,7 +1249,7 @@ func (g *GravityClient) attemptReconnection(reason string) {
 		g.mu.Unlock()
 	}()
 
-	g.logger.Info("Starting reconnection attempts due to: %s", reason)
+	g.logger.Info("starting reconnection attempts due to: %s", reason)
 
 	// Use exponential backoff for reconnection attempts
 	backoff := time.Second
@@ -1258,11 +1258,11 @@ func (g *GravityClient) attemptReconnection(reason string) {
 
 	for !g.closing {
 		attempts++
-		g.logger.Info("Reconnection attempt %d (backoff: %v)", attempts, backoff)
+		g.logger.Info("reconnection attempt %d (backoff: %v)", attempts, backoff)
 
 		// Try to reconnect
 		if err := g.reconnect(); err != nil {
-			g.logger.Error("Reconnection attempt %d failed: %v", attempts, err)
+			g.logger.Error("reconnection attempt %d failed: %v", attempts, err)
 
 			// Wait before next attempt
 			select {
@@ -1270,16 +1270,16 @@ func (g *GravityClient) attemptReconnection(reason string) {
 				// Increase backoff exponentially, capped at maxBackoff
 				backoff = min(backoff*2, maxBackoff)
 			case <-g.ctx.Done():
-				g.logger.Info("Reconnection cancelled due to context cancellation")
+				g.logger.Info("reconnection cancelled due to context cancellation")
 				return
 			}
 		} else {
-			g.logger.Info("Successfully reconnected after %d attempts", attempts)
+			g.logger.Info("successfully reconnected after %d attempts", attempts)
 			return
 		}
 	}
 
-	g.logger.Info("Reconnection stopped due to client shutdown")
+	g.logger.Info("reconnection stopped due to client shutdown")
 }
 
 // reconnect resets connection state and attempts to start a new connection
@@ -1304,7 +1304,7 @@ func (g *GravityClient) reconnect() error {
 	// Drain the connection ID channel to avoid stale data
 	select {
 	case <-g.connectionIDChan:
-		g.logger.Debug("Drained stale connection ID from channel during reconnect")
+		g.logger.Debug("drained stale connection ID from channel during reconnect")
 	default:
 		// Channel already empty
 	}
@@ -1313,9 +1313,9 @@ func (g *GravityClient) reconnect() error {
 	// Log deployment synchronization intent
 	deploymentCount := len(g.provider.Resources())
 	if deploymentCount > 0 {
-		g.logger.Info("Connection state reset, attempting to start new connection and synchronize %d existing deployments", deploymentCount)
+		g.logger.Info("connection state reset, attempting to start new connection and synchronize %d existing deployments", deploymentCount)
 	} else {
-		g.logger.Info("Connection state reset, attempting to start new connection")
+		g.logger.Info("connection state reset, attempting to start new connection")
 	}
 
 	// Start new connection
@@ -1462,7 +1462,7 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 		u.Host = u.Host + ":443"
 	}
 
-	g.logger.Debug("Parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
+	g.logger.Debug("parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
 	return u.Host, nil
 }
 
@@ -1472,7 +1472,7 @@ func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	g.logger.Debug("Extracted hostname for TLS ServerName: %s", hostname)
+	g.logger.Debug("extracted hostname for TLS ServerName: %s", hostname)
 	return hostname, nil
 }
 
@@ -1658,13 +1658,13 @@ func (g *GravityClient) Resume(reason string) error {
 // WritePacket sends a tunnel packet via gRPC tunnel stream using load balancing
 func (g *GravityClient) WritePacket(payload []byte) error {
 	if g.tracePackets {
-		g.tracePacketLogger.Debug("WritePacket called with %d bytes", len(payload))
+		g.tracePacketLogger.Debug("writePacket called with %d bytes", len(payload))
 	}
 	g.mu.RLock()
 	if !g.connected || g.closing {
 		g.mu.RUnlock()
 		if g.logger != nil {
-			g.logger.Error("WritePacket failed: connection closed or closing")
+			g.logger.Error("writePacket failed: connection closed or closing")
 		}
 		return ErrConnectionClosed
 	}
@@ -1673,11 +1673,11 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	// Select optimal stream using load balancing
 	stream := g.streamManager.selectOptimalTunnelStream()
 	if stream == nil {
-		g.logger.Error("WritePacket failed: no healthy tunnel streams available")
+		g.logger.Error("writePacket failed: no healthy tunnel streams available")
 		return fmt.Errorf("no healthy tunnel streams available")
 	}
 	if g.tracePackets {
-		g.tracePacketLogger.Debug("WritePacket selected stream: %s", stream.streamID)
+		g.tracePacketLogger.Debug("writePacket selected stream: %s", stream.streamID)
 	}
 
 	// Ensure load count is decremented in all exit paths
@@ -1694,10 +1694,10 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 			g.logger.Debug("gravity server closed, exiting")
 			return nil
 		}
-		g.logger.Error("WritePacket stream.Send failed: %v", err)
+		g.logger.Error("writePacket stream.Send failed: %v", err)
 	} else {
 		if g.tracePackets {
-			g.tracePacketLogger.Debug("WritePacket stream.Send succeeded for stream %s", stream.streamID)
+			g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
 		}
 	}
 
@@ -1730,7 +1730,7 @@ func (g *GravityClient) handleOutboundPackets() {
 			// Send packet through tunnel stream (round-robin selection)
 			err := g.sendTunnelPacket(data)
 			if err != nil {
-				g.logger.Error("Error sending outbound packet: %v", err)
+				g.logger.Error("error sending outbound packet: %v", err)
 			}
 		}
 	}
@@ -1930,7 +1930,7 @@ func (g *GravityClient) performHealthCheck() {
 			g.streamManager.connectionHealth[i] = isHealthy
 
 			if !isHealthy {
-				g.logger.Debug("Connection %d is unhealthy, state: %s", i, state.String())
+				g.logger.Debug("connection %d is unhealthy, state: %s", i, state.String())
 			}
 		} else {
 			g.streamManager.connectionHealth[i] = false
@@ -1946,7 +1946,7 @@ func (g *GravityClient) performHealthCheck() {
 		if streamInfo != nil {
 			// Reset streams that have been unhealthy for too long
 			if !streamInfo.isHealthy && now.Sub(streamInfo.lastUsed) > g.poolConfig.FailoverTimeout {
-				g.logger.Debug("Attempting to recover stream %s", streamInfo.streamID)
+				g.logger.Debug("attempting to recover stream %s", streamInfo.streamID)
 				streamInfo.isHealthy = true // Try again
 				streamInfo.loadCount = 0    // Reset load
 
@@ -1960,7 +1960,7 @@ func (g *GravityClient) performHealthCheck() {
 
 			// Log unhealthy streams
 			if !streamInfo.isHealthy {
-				g.logger.Debug("Stream %s (index %d) is unhealthy", streamInfo.streamID, i)
+				g.logger.Debug("stream %s (index %d) is unhealthy", streamInfo.streamID, i)
 			}
 		}
 	}
@@ -2123,7 +2123,7 @@ func (g *GravityClient) handleReportDelivery() {
 		case <-g.ctx.Done():
 			return
 		case <-ticker.C:
-			g.logger.Debug("Sending report to gravity server")
+			g.logger.Debug("sending report to gravity server")
 			g.sendReport()
 		}
 	}
@@ -2134,7 +2134,7 @@ func (g *GravityClient) sendReport() {
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
 		g.streamManager.controlMu.RUnlock()
-		g.logger.Debug("No control streams available for ping")
+		g.logger.Debug("no control streams available for ping")
 		return
 	}
 	controlStream := g.streamManager.controlStreams[0]
@@ -2154,29 +2154,29 @@ func (g *GravityClient) sendReport() {
 
 	err := controlStream.Send(reportMsg)
 	if err != nil {
-		g.logger.Error("Failed to send report: %v", err)
+		g.logger.Error("failed to send report: %v", err)
 		return
 	}
 
-	g.logger.Debug("Sent report message: id=%s, took=%v", reportID, time.Since(started))
+	g.logger.Debug("sent report message: id=%s, took=%v", reportID, time.Since(started))
 }
 
 // handlePingHeartbeat sends periodic ping messages to maintain connection health
 func (g *GravityClient) handlePingHeartbeat() {
 	if g.pingInterval <= 0 {
-		g.logger.Debug("Ping interval is disabled (zero or negative), skipping heartbeat")
+		g.logger.Debug("ping interval is disabled (zero or negative), skipping heartbeat")
 		return
 	}
 
 	ticker := time.NewTicker(g.pingInterval)
 	defer ticker.Stop()
 
-	g.logger.Debug("Starting heartbeat ping ticker with interval: %v", g.pingInterval)
+	g.logger.Debug("starting heartbeat ping ticker with interval: %v", g.pingInterval)
 
 	for {
 		select {
 		case <-g.ctx.Done():
-			g.logger.Debug("Ping heartbeat goroutine stopped")
+			g.logger.Debug("ping heartbeat goroutine stopped")
 			return
 		case <-ticker.C:
 			g.sendPing()
@@ -2189,7 +2189,7 @@ func (g *GravityClient) sendPing() {
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
 		g.streamManager.controlMu.RUnlock()
-		g.logger.Debug("No control streams available for ping")
+		g.logger.Debug("no control streams available for ping")
 		return
 	}
 	controlStream := g.streamManager.controlStreams[0]
@@ -2209,11 +2209,11 @@ func (g *GravityClient) sendPing() {
 
 	err := controlStream.Send(pingMsg)
 	if err != nil {
-		g.logger.Error("Failed to send ping: %v", err)
+		g.logger.Error("failed to send ping: %v", err)
 		return
 	}
 
-	g.logger.Debug("Sent ping message: id=%s, took=%v", pingID, time.Since(started))
+	g.logger.Debug("sent ping message: id=%s, took=%v", pingID, time.Since(started))
 }
 
 // Buffer management

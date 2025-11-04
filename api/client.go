@@ -114,7 +114,7 @@ func shouldRetry(resp *http.Response, err error) bool {
 	return false
 }
 
-func (c *Client) Do(method, pathParam string, payload interface{}, response interface{}) error {
+func (c *Client) Do(method, pathParam string, payload any, response any) error {
 	var traceID string
 
 	u, err := url.Parse(c.baseURL)
@@ -157,12 +157,22 @@ func (c *Client) Do(method, pathParam string, payload interface{}, response inte
 	}
 
 	var resp *http.Response
-	for i := 0; i < retry; i++ {
+	for i := range retry {
 		isLast := i == retry-1
 		var err error
 		resp, err = c.client.Do(req)
 		if shouldRetry(resp, err) && !isLast {
 			c.logger.Trace("client returned retryable error, retrying...")
+			if resp != nil {
+				io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+			if payload != nil {
+				req.Body = io.NopCloser(bytes.NewReader(body))
+				req.GetBody = func() (io.ReadCloser, error) {
+					return io.NopCloser(bytes.NewReader(body)), nil
+				}
+			}
 			// exponential backoff
 			v := 150 * math.Pow(2, float64(i))
 			time.Sleep(time.Duration(v) * time.Millisecond)

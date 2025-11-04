@@ -311,7 +311,10 @@ func TransformUrl(urlString string) string {
 	if strings.Contains(urlString, "api.agentuity.dev") || strings.Contains(urlString, "localhost:") || strings.Contains(urlString, "127.0.0.1:") {
 		if sys.IsRunningInsideDocker() || testInside {
 			if strings.HasPrefix(urlString, "https://api.agentuity.dev") {
-				u, _ := url.Parse(urlString)
+				u, err := url.Parse(urlString)
+				if err != nil {
+					return urlString
+				}
 				u.Scheme = "http"
 				u.Host = "host.docker.agentuity.io:3012"
 				return u.String()
@@ -321,7 +324,10 @@ func TransformUrl(urlString string) string {
 			if port.MatchString(urlString) {
 				host = "host.docker.agentuity.io:" + port.FindStringSubmatch(urlString)[1]
 			}
-			u, _ := url.Parse(urlString)
+			u, err := url.Parse(urlString)
+			if err != nil {
+				return urlString
+			}
 			u.Scheme = "http"
 			u.Host = host
 			return u.String()

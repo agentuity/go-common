@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -114,6 +116,68 @@ func shouldRetry(resp *http.Response, err error) bool {
 	return false
 }
 
+// safeBodyPreview returns a safe preview of the response body for logging,
+// preventing PII exposure by checking content-type and truncating or redacting sensitive data.
+func safeBodyPreview(body []byte, contentType string, maxChars int) string {
+	if maxChars == 0 {
+		maxChars = 200
+	}
+
+	// Check if the content is binary by examining content-type
+	isBinary := false
+	lowerContentType := strings.ToLower(contentType)
+
+	// Binary types that should not be logged as text
+	binaryTypes := []string{
+		"image/", "video/", "audio/", "application/octet-stream",
+		"application/pdf", "application/zip", "application/gzip",
+		"application/x-tar", "application/x-rar", "font/",
+	}
+
+	for _, binaryType := range binaryTypes {
+		if strings.Contains(lowerContentType, binaryType) {
+			isBinary = true
+			break
+		}
+	}
+
+	// For binary content, return hash and size instead
+	if isBinary {
+		hash := sha256.Sum256(body)
+		return fmt.Sprintf("<binary: %d bytes, sha256=%s>", len(body), hex.EncodeToString(hash[:8]))
+	}
+
+	// Safe text types that can be logged (with truncation)
+	safeTextTypes := []string{
+		"text/", "application/json", "application/xml",
+		"application/javascript", "application/x-www-form-urlencoded",
+	}
+
+	isSafeText := false
+	for _, safeType := range safeTextTypes {
+		if strings.Contains(lowerContentType, safeType) {
+			isSafeText = true
+			break
+		}
+	}
+
+	// If content-type is unknown or unsafe, treat cautiously
+	if !isSafeText && contentType != "" {
+		hash := sha256.Sum256(body)
+		return fmt.Sprintf("<unknown type: %d bytes, sha256=%s>", len(body), hex.EncodeToString(hash[:8]))
+	}
+
+	// Convert body to string
+	bodyStr := string(body)
+
+	// Truncate if necessary
+	if len(bodyStr) > maxChars {
+		return bodyStr[:maxChars] + "[truncated, total: " + fmt.Sprintf("%d", len(bodyStr)) + " chars]"
+	}
+
+	return bodyStr
+}
+
 func (c *Client) Do(method, pathParam string, payload any, response any) error {
 	var traceID string
 
@@ -198,7 +262,10 @@ func (c *Client) Do(method, pathParam string, payload any, response any) error {
 		return NewError(u.String(), method, 0, "", fmt.Errorf("error reading response body: %w", err), traceID)
 	}
 
-	c.logger.Debug("response body: %s, content-type: %s, user-agent: %s", string(respBody), resp.Header.Get("content-type"), UserAgent())
+	// Log safe preview of response body to avoid PII exposure
+	contentType := resp.Header.Get("content-type")
+	safePreview := safeBodyPreview(respBody, contentType, 200)
+	c.logger.Debug("response body: %s, content-type: %s, user-agent: %s", safePreview, contentType, UserAgent())
 	if resp.StatusCode > 299 && strings.Contains(resp.Header.Get("content-type"), "application/json") {
 		var apiResponse Response
 		if err := json.Unmarshal(respBody, &apiResponse); err != nil {

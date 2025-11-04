@@ -26,7 +26,7 @@ import (
 var (
 	Version = "dev"
 	Commit  = "unknown"
-	Project = "Client"
+	Project = "API Client"
 	retry   = 5
 )
 
@@ -97,7 +97,7 @@ func UserAgent() string {
 			}
 		}
 	}
-	return "Agentuity API " + Project + "/" + Version + " (" + gitSHA + ")"
+	return "Agentuity " + Project + "/" + Version + " (" + gitSHA + ")"
 }
 
 func shouldRetry(resp *http.Response, err error) bool {

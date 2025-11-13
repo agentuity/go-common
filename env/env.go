@@ -445,7 +445,11 @@ func NewTelemetry(ctx context.Context, cmd *cobra.Command, serviceName string) (
 	if noTelemetry, err := cmd.Flags().GetBool("no-telemetry"); err == nil && noTelemetry {
 		return ctx, NewLogger(cmd), func() {}, nil
 	}
-	otlpURL := FlagOrEnv(cmd, "otlp-url", "AGENTUITY_OTLP_URL", "https://otel.agentuity.cloud")
+	defaultOtlpURL := "https://otel.agentuity.cloud"
+	if cloudID := os.Getenv("AGENTUITY_CLOUD_ID"); cloudID != "" {
+		defaultOtlpURL = fmt.Sprintf("https://otel-%s.agentuity.cloud", cloudID)
+	}
+	otlpURL := FlagOrEnv(cmd, "otlp-url", "AGENTUITY_OTLP_URL", defaultOtlpURL)
 	otlpSharedSecret := FlagOrEnv(cmd, "otlp-shared-secret", "AGENTUITY_OTLP_SHARED_SECRET", "")
 
 	if otlpURL == "" {

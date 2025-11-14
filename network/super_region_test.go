@@ -12,13 +12,13 @@ func TestGetSuperRegion(t *testing.T) {
 		expectedSuper SuperRegion
 		shouldError   bool
 	}{
-		{"USCentral1", RegionUSCentral1, SuperRegionUSCentral, false},
-		{"USCentral2", RegionUSCentral2, SuperRegionUSCentral, false},
-		{"USWest1", RegionUSWest1, SuperRegionUSWest, false},
-		{"USWest2", RegionUSWest2, SuperRegionUSWest, false},
-		{"USEast1", RegionUSEast1, SuperRegionUSEast, false},
-		{"USEast2", RegionUSEast2, SuperRegionUSEast, false},
-		{"GlobalShouldError", RegionGlobal, 0, true},
+		{"USCentral1", RegionUSCentral1, "usc", false},
+		{"USCentral2", RegionUSCentral2, "usc", false},
+		{"USWest1", RegionUSWest1, "usw", false},
+		{"USWest2", RegionUSWest2, "usw", false},
+		{"USEast1", RegionUSEast1, "use", false},
+		{"USEast2", RegionUSEast2, "use", false},
+		{"GlobalShouldError", RegionGlobal, "", true},
 	}
 
 	for _, tt := range tests {
@@ -40,73 +40,7 @@ func TestGetSuperRegion(t *testing.T) {
 	}
 }
 
-func TestGetSuperRegionShortCode(t *testing.T) {
-	tests := []struct {
-		name         string
-		superRegion  SuperRegion
-		expectedCode string
-		shouldError  bool
-	}{
-		{"USCentral", SuperRegionUSCentral, "usc", false},
-		{"USWest", SuperRegionUSWest, "usw", false},
-		{"USEast", SuperRegionUSEast, "use", false},
-		{"InvalidSuperRegion", SuperRegion(99), "", true},
-	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := GetSuperRegionShortCode(tt.superRegion)
-			if tt.shouldError {
-				if err == nil {
-					t.Errorf("GetSuperRegionShortCode(%v) expected error, got nil", tt.superRegion)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("GetSuperRegionShortCode(%v) unexpected error: %v", tt.superRegion, err)
-				}
-				if result != tt.expectedCode {
-					t.Errorf("GetSuperRegionShortCode(%v) = %v, want %v", tt.superRegion, result, tt.expectedCode)
-				}
-			}
-		})
-	}
-}
-
-func TestGetSuperRegionShortCodeFromRegion(t *testing.T) {
-	tests := []struct {
-		name         string
-		region       Region
-		expectedCode string
-		shouldError  bool
-	}{
-		{"USCentral1", RegionUSCentral1, "usc", false},
-		{"USCentral2", RegionUSCentral2, "usc", false},
-		{"USCentral3", RegionUSCentral3, "usc", false},
-		{"USWest1", RegionUSWest1, "usw", false},
-		{"USWest2", RegionUSWest2, "usw", false},
-		{"USEast1", RegionUSEast1, "use", false},
-		{"USEast2", RegionUSEast2, "use", false},
-		{"GlobalShouldError", RegionGlobal, "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := GetSuperRegionShortCodeFromRegion(tt.region)
-			if tt.shouldError {
-				if err == nil {
-					t.Errorf("GetSuperRegionShortCodeFromRegion(%v) expected error, got nil", tt.region)
-				}
-			} else {
-				if err != nil {
-					t.Errorf("GetSuperRegionShortCodeFromRegion(%v) unexpected error: %v", tt.region, err)
-				}
-				if result != tt.expectedCode {
-					t.Errorf("GetSuperRegionShortCodeFromRegion(%v) = %v, want %v", tt.region, result, tt.expectedCode)
-				}
-			}
-		})
-	}
-}
 
 func TestGenerateSuperRegionHostname(t *testing.T) {
 	tests := []struct {

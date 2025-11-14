@@ -79,7 +79,7 @@ func (d *defaultCloudDetector) Detect(ctx context.Context) (*cloudMetadata, erro
 	return &cloudMetadata{
 		provider:    CloudProviderLocal,
 		region:      "",
-		superRegion: 0, // No super-region for local
+		superRegion: "", // No super-region for local
 	}, nil
 }
 
@@ -579,10 +579,10 @@ func GetCloudSuperRegion(ctx context.Context) (SuperRegion, error) {
 	if cachedMetadata != nil {
 		metadata := cachedMetadata
 		metadataMu.RUnlock()
-		if metadata.superRegion != 0 {
+		if metadata.superRegion != "" {
 			return metadata.superRegion, nil
 		}
-		return 0, fmt.Errorf("no super-region for provider %s in region %s", metadata.provider, metadata.region)
+		return "", fmt.Errorf("no super-region for provider %s in region %s", metadata.provider, metadata.region)
 	}
 	metadataMu.RUnlock()
 
@@ -590,10 +590,10 @@ func GetCloudSuperRegion(ctx context.Context) (SuperRegion, error) {
 	defer metadataMu.Unlock()
 
 	if cachedMetadata != nil {
-		if cachedMetadata.superRegion != 0 {
+		if cachedMetadata.superRegion != "" {
 			return cachedMetadata.superRegion, nil
 		}
-		return 0, fmt.Errorf("no super-region for provider %s in region %s", cachedMetadata.provider, cachedMetadata.region)
+		return "", fmt.Errorf("no super-region for provider %s in region %s", cachedMetadata.provider, cachedMetadata.region)
 	}
 
 	cloudMu.RLock()
@@ -602,14 +602,14 @@ func GetCloudSuperRegion(ctx context.Context) (SuperRegion, error) {
 
 	metadata, err := detector.Detect(ctx)
 	if err != nil {
-		return 0, err
+		return "", err
 	}
 
 	cachedMetadata = metadata
-	if metadata.superRegion != 0 {
+	if metadata.superRegion != "" {
 		return metadata.superRegion, nil
 	}
-	return 0, fmt.Errorf("no super-region for provider %s in region %s", metadata.provider, metadata.region)
+	return "", fmt.Errorf("no super-region for provider %s in region %s", metadata.provider, metadata.region)
 }
 
 // GenerateSuperRegionHostnameFromCurrentCloud generates a super-region hostname using the current cloud environment.
@@ -627,12 +627,7 @@ func GenerateSuperRegionHostnameFromCurrentCloud(ctx context.Context, host strin
 		return "", fmt.Errorf("failed to get cloud super-region: %w", err)
 	}
 
-	superRegionCode, err := GetSuperRegionShortCode(superRegion)
-	if err != nil {
-		return "", fmt.Errorf("failed to get super-region code: %w", err)
-	}
-
-	return fmt.Sprintf("%s-%s.%s", host, superRegionCode, suffix), nil
+	return fmt.Sprintf("%s-%s.%s", host, superRegion, suffix), nil
 }
 
 // findRegionStringForProvider finds a canonical region string for the given Region constant and CloudProvider.
@@ -715,11 +710,11 @@ func GenerateSuperRegionHostname(ctx context.Context, host string, suffix string
 		return "", fmt.Errorf("suffix cannot be empty")
 	}
 
-	superRegionCode, err := GetSuperRegionShortCodeFromRegion(region)
+	superRegion, err := GetSuperRegion(region)
 	if err != nil {
-		return "", fmt.Errorf("failed to get super-region code: %w", err)
+		return "", fmt.Errorf("failed to get super-region: %w", err)
 	}
-	return fmt.Sprintf("%s-%s.%s", host, superRegionCode, suffix), nil
+	return fmt.Sprintf("%s-%s.%s", host, superRegion, suffix), nil
 }
 
 // GenerateSuperRegionHostnamesForAllRegions generates super-region hostnames for all defined super-regions.

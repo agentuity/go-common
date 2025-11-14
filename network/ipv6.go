@@ -56,6 +56,14 @@ const (
 	RegionUSEast4    Region = 0x0C
 )
 
+type SuperRegion uint8
+
+const (
+	SuperRegionUSCentral SuperRegion = 0x01
+	SuperRegionUSWest    SuperRegion = 0x02
+	SuperRegionUSEast    SuperRegion = 0x03
+)
+
 // ProductionRegions returns a map of the production regions for each cloud provider currently supported.
 var ProductionRegions = map[CloudProvider][]Region{
 	CloudProviderAWS: {
@@ -102,6 +110,29 @@ var Regions = map[string]Region{
 	"westcentralus":  RegionUSCentral1, // Map to central1 since it's central-focused
 }
 
+// RegionToSuperRegion maps each Region to its SuperRegion (excludes RegionGlobal)
+var RegionToSuperRegion = map[Region]SuperRegion{
+	RegionUSCentral1: SuperRegionUSCentral,
+	RegionUSCentral2: SuperRegionUSCentral,
+	RegionUSCentral3: SuperRegionUSCentral,
+	RegionUSCentral4: SuperRegionUSCentral,
+	RegionUSWest1:    SuperRegionUSWest,
+	RegionUSWest2:    SuperRegionUSWest,
+	RegionUSWest3:    SuperRegionUSWest,
+	RegionUSWest4:    SuperRegionUSWest,
+	RegionUSEast1:    SuperRegionUSEast,
+	RegionUSEast2:    SuperRegionUSEast,
+	RegionUSEast3:    SuperRegionUSEast,
+	RegionUSEast4:    SuperRegionUSEast,
+}
+
+// SuperRegionShortCodes maps each SuperRegion to its short identifier
+var SuperRegionShortCodes = map[SuperRegion]string{
+	SuperRegionUSCentral: "usc",
+	SuperRegionUSWest:    "usw",
+	SuperRegionUSEast:    "use",
+}
+
 // GetRegion returns a Region from a string.
 func GetRegion(region string) Region {
 	region = strings.ToLower(region)
@@ -113,6 +144,34 @@ func GetRegion(region string) Region {
 
 	// Default to global for unknown regions
 	return RegionGlobal
+}
+
+// GetSuperRegion returns the SuperRegion for a given Region.
+// Returns an error if the region does not have a super-region mapping (e.g., RegionGlobal).
+func GetSuperRegion(region Region) (SuperRegion, error) {
+	if sr, ok := RegionToSuperRegion[region]; ok {
+		return sr, nil
+	}
+	return 0, fmt.Errorf("no super-region mapping for region %d", region)
+}
+
+// GetSuperRegionShortCode returns the short identifier for a SuperRegion (e.g., "usc" for USCentral).
+// Returns an error if the super-region is not recognized.
+func GetSuperRegionShortCode(sr SuperRegion) (string, error) {
+	if code, ok := SuperRegionShortCodes[sr]; ok {
+		return code, nil
+	}
+	return "", fmt.Errorf("unknown super-region %d", sr)
+}
+
+// GetSuperRegionShortCodeFromRegion returns the short identifier for the SuperRegion of a given Region.
+// Returns an error if the region does not have a super-region mapping or the super-region is unknown.
+func GetSuperRegionShortCodeFromRegion(region Region) (string, error) {
+	sr, err := GetSuperRegion(region)
+	if err != nil {
+		return "", err
+	}
+	return GetSuperRegionShortCode(sr)
 }
 
 type Network uint8

@@ -56,6 +56,14 @@ const (
 	RegionUSEast4    Region = 0x0C
 )
 
+type SuperRegion string
+
+const (
+	SuperRegionUSCentral SuperRegion = "usc"
+	SuperRegionUSWest    SuperRegion = "usw"
+	SuperRegionUSEast    SuperRegion = "use"
+)
+
 // ProductionRegions returns a map of the production regions for each cloud provider currently supported.
 var ProductionRegions = map[CloudProvider][]Region{
 	CloudProviderAWS: {
@@ -102,6 +110,22 @@ var Regions = map[string]Region{
 	"westcentralus":  RegionUSCentral1, // Map to central1 since it's central-focused
 }
 
+// RegionToSuperRegion maps each Region to its SuperRegion (excludes RegionGlobal)
+var RegionToSuperRegion = map[Region]SuperRegion{
+	RegionUSCentral1: SuperRegionUSCentral,
+	RegionUSCentral2: SuperRegionUSCentral,
+	RegionUSCentral3: SuperRegionUSCentral,
+	RegionUSCentral4: SuperRegionUSCentral,
+	RegionUSWest1:    SuperRegionUSWest,
+	RegionUSWest2:    SuperRegionUSWest,
+	RegionUSWest3:    SuperRegionUSWest,
+	RegionUSWest4:    SuperRegionUSWest,
+	RegionUSEast1:    SuperRegionUSEast,
+	RegionUSEast2:    SuperRegionUSEast,
+	RegionUSEast3:    SuperRegionUSEast,
+	RegionUSEast4:    SuperRegionUSEast,
+}
+
 // GetRegion returns a Region from a string.
 func GetRegion(region string) Region {
 	region = strings.ToLower(region)
@@ -113,6 +137,15 @@ func GetRegion(region string) Region {
 
 	// Default to global for unknown regions
 	return RegionGlobal
+}
+
+// GetSuperRegion returns the SuperRegion for a given Region.
+// Returns an error if the region does not have a super-region mapping (e.g., RegionGlobal).
+func GetSuperRegion(region Region) (SuperRegion, error) {
+	if sr, ok := RegionToSuperRegion[region]; ok {
+		return sr, nil
+	}
+	return "", fmt.Errorf("no super-region mapping for region %d", region)
 }
 
 type Network uint8

@@ -1,4 +1,4 @@
-package gravity
+package resilience
 
 import (
 	"context"

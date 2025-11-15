@@ -130,6 +130,7 @@ message ConnectResponse {
   string hostname = 8;       // this hostname if dynamic hostname is requested
   string otlp_key = 9; // OpenTelemetry API key for authentication (if needed)
   string org_id = 10;  // Organization ID for authentication
+  bytes ssh_public_key = 11; // SSH public key for internal trusted connections (SSH wire format)
 }
 
 message RouteDeploymentRequest {

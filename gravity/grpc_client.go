@@ -744,6 +744,11 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
 
+	// Store SSH public key if provided
+	if len(response.SshPublicKey) > 0 {
+		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
+	}
+
 	g.logger.Debug("storing host mappings...")
 	// Store host mappings directly (already protobuf)
 	g.hostMapping = response.HostMapping
@@ -768,6 +773,7 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		Context:         g.context,
 		Logger:          g.logger,
 		APIURL:          g.apiURL,
+		SSHPublicKey:    response.SshPublicKey,
 		TelemetryURL:    g.otlpURL,
 		TelemetryAPIKey: response.OtlpKey,
 		GravityURL:      g.url,

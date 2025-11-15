@@ -47,6 +47,8 @@ type Configuration struct {
 	Hostname string
 	// OrgID is the organization ID for authentication
 	OrgID string
+	// SSHPublicKey is the public key for internal SSH authentication (SSH wire format)
+	SSHPublicKey []byte
 }
 
 // DeprovisionReason specifies why a resource is being deprovisioned

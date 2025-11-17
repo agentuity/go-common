@@ -40,8 +40,6 @@ func TestGetSuperRegion(t *testing.T) {
 	}
 }
 
-
-
 func TestGenerateSuperRegionHostname(t *testing.T) {
 	tests := []struct {
 		name             string

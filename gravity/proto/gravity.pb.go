@@ -3894,6 +3894,7 @@ type DeploymentMetadataResponse struct {
 	DeploymentCert *DeploymentCert        `protobuf:"bytes,4,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"` // Generated deployment certificate
 	OtlpToken      string                 `protobuf:"bytes,5,opt,name=otlp_token,json=otlpToken,proto3" json:"otlp_token,omitempty"`                // OpenTelemetry token for metrics
 	AuthToken      string                 `protobuf:"bytes,6,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`                // Authentication token
+	ExtraHosts     []string               `protobuf:"bytes,7,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"`             // Extra /etc/hosts entries for the deployment
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3968,6 +3969,13 @@ func (x *DeploymentMetadataResponse) GetAuthToken() string {
 		return x.AuthToken
 	}
 	return ""
+}
+
+func (x *DeploymentMetadataResponse) GetExtraHosts() []string {
+	if x != nil {
+		return x.ExtraHosts
+	}
+	return nil
 }
 
 var File_gravity_proto protoreflect.FileDescriptor
@@ -4320,7 +4328,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"W\n" +
 	"\x19DeploymentMetadataRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
-	"\x06org_id\x18\x02 \x01(\tR\x05orgId\"\x88\x02\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\"\xa9\x02\n" +
 	"\x1aDeploymentMetadataResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12:\n" +
@@ -4329,7 +4337,9 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"otlp_token\x18\x05 \x01(\tR\totlpToken\x12\x1d\n" +
 	"\n" +
-	"auth_token\x18\x06 \x01(\tR\tauthToken2\xb6\x01\n" +
+	"auth_token\x18\x06 \x01(\tR\tauthToken\x12\x1f\n" +
+	"\vextra_hosts\x18\a \x03(\tR\n" +
+	"extraHosts2\xb6\x01\n" +
 	"\x0eGravityControl\x12B\n" +
 	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse2\x9b\x01\n" +

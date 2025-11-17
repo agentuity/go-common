@@ -559,4 +559,5 @@ message DeploymentMetadataResponse {
   DeploymentCert deployment_cert = 4; // Generated deployment certificate
   string otlp_token = 5;              // OpenTelemetry token for metrics
   string auth_token = 6;              // Authentication token
+  repeated string extra_hosts = 7;    // Extra /etc/hosts entries for the deployment
 }

@@ -1,0 +1,64 @@
+syntax = "proto3";
+
+package dns;
+
+option go_package = "github.com/agentuity/go-common/dns/proto";
+
+import "google/protobuf/timestamp.proto";
+
+// DNSService handles DNS record management and certificate requests
+service DNSService {
+  // Add a DNS record
+  rpc Add(AddRequest) returns (AddResponse);
+  // Delete DNS records
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  // Request a certificate for a domain
+  rpc RequestCert(CertRequest) returns (CertResponse);
+}
+
+message AddRequest {
+  string name = 1;
+  string type = 2;
+  string value = 3;
+  // TTL in seconds (converted from time.Duration)
+  int64 ttl_seconds = 4;
+  // Expires in seconds (converted from time.Duration)
+  int64 expires_seconds = 5;
+  // Priority for MX and SRV records
+  int32 priority = 6;
+  // Weight for SRV records
+  int32 weight = 7;
+  // Port for SRV records
+  int32 port = 8;
+
+  string comment = 9;
+}
+
+message AddResponse {
+  bool success = 1;
+  string error = 2;
+  string id = 3;
+}
+
+message DeleteRequest {
+  string name = 1;
+  repeated string ids = 2;
+}
+
+message DeleteResponse {
+  bool success = 1;
+  string error = 2;
+}
+
+message CertRequest {
+  string name = 1;
+}
+
+message CertResponse {
+  bool success = 1;
+  string error = 2;
+  bytes certificate = 3;
+  bytes private_key = 4;
+  google.protobuf.Timestamp expires = 5;
+  string domain = 6;
+}

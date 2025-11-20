@@ -532,6 +532,17 @@ func formatCloudIdentifier(metadata *cloudMetadata) string {
 	return fmt.Sprintf("%s%s-%s", metadata.provider, shortened, account)
 }
 
+// FormatCloudIdentifier constructs a cloud identifier from cloud provider, region, and project/cloudstack
+// This is useful when you already know the cloud/region/project without needing metadata detection
+func FormatCloudIdentifier(cloudProvider CloudProvider, region, project string) string {
+	if cloudProvider == CloudProviderLocal || region == "" || project == "" {
+		return "local"
+	}
+	shortened := shortenRegion(region)
+	account := cstr.CrockfordHash(project, 4)
+	return fmt.Sprintf("%s%s-%s", cloudProvider, shortened, account)
+}
+
 // GenerateHostnameWithCloudRegion generates a hostname with cloud region information if you already have it.
 func GenerateHostnameWithCloudRegion(ctx context.Context, host string, suffix string, provider CloudProvider, region string) (string, error) {
 	if host == "" {

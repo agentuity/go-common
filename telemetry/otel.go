@@ -7,12 +7,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/agentuity/go-common/authentication"
 	"github.com/agentuity/go-common/logger"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
@@ -85,6 +87,22 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	// oltpURL.Path = "/v1/metrics"
 	// metricsURL := oltpURL.String()
 
+	var kvs []attribute.KeyValue
+	if val, ok := os.LookupEnv("AGENTUITY_REGION"); ok {
+		kvs = append(kvs, attribute.KeyValue{Key: "@agentuity/region", Value: attribute.StringValue(val)})
+	}
+	if val, ok := os.LookupEnv("AGENTUITY_CLOUD_ID"); ok {
+		kvs = append(kvs, attribute.KeyValue{Key: "@agentuity/cloudId", Value: attribute.StringValue(val)})
+	}
+	if val, ok := os.LookupEnv("AGENTUITY_CLOUDSTACK"); ok {
+		kvs = append(kvs, attribute.KeyValue{Key: "@agentuity/cloudStack", Value: attribute.StringValue(val)})
+	}
+	if val, ok := os.LookupEnv("AGENTUITY_MACHINE_ID"); ok {
+		kvs = append(kvs, attribute.KeyValue{Key: "@agentuity/machineId", Value: attribute.StringValue(val)})
+	}
+
+	kvs = append(kvs, semconv.ServiceName(serviceName))
+
 	res, err := resource.New(
 		ctx,
 		resource.WithFromEnv(),      // Discover and provide attributes from OTEL_RESOURCE_ATTRIBUTES and OTEL_SERVICE_NAME environment variables.
@@ -93,7 +111,7 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 		resource.WithOS(),           // Discover and provide OS information.
 		resource.WithContainer(),    // Discover and provide container information.
 		resource.WithHost(),         // Discover and provide host information.
-		resource.WithAttributes(semconv.ServiceName(serviceName)),
+		resource.WithAttributes(kvs...),
 	)
 	if errors.Is(err, resource.ErrPartialResource) || errors.Is(err, resource.ErrSchemaURLConflict) {
 		fmt.Println(err)

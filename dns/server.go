@@ -32,7 +32,8 @@ type dnsCacheEntry struct {
 type DNSResolver struct {
 	logger       logger.Logger
 	config       DNSConfig
-	conn         *net.UDPConn
+	conn4        *net.UDPConn // IPv4 listener
+	conn6        *net.UDPConn // IPv6 listener
 	protocol     string
 	dialer       func(ctx context.Context, network, address string) (net.Conn, error)
 	ctx          context.Context
@@ -107,24 +108,43 @@ func (s *DNSResolver) Start() error {
 		return fmt.Errorf("DNS server is already running")
 	}
 
-	// Parse listen address
-	addr, err := net.ResolveUDPAddr("udp", s.config.ListenAddress)
+	// Extract port from listen address (e.g., ":53" -> "53")
+	_, port, err := net.SplitHostPort(s.config.ListenAddress)
 	if err != nil {
-		return fmt.Errorf("failed to resolve listen address: %w", err)
+		// If no port specified, assume default DNS port
+		port = "53"
 	}
 
-	// Create UDP listener
-	s.conn, err = net.ListenUDP("udp", addr)
+	// Create IPv4 UDP listener
+	addr4, err := net.ResolveUDPAddr("udp4", "0.0.0.0:"+port)
 	if err != nil {
-		return fmt.Errorf("failed to listen on UDP: %w", err)
+		return fmt.Errorf("failed to resolve IPv4 listen address: %w", err)
+	}
+	s.conn4, err = net.ListenUDP("udp4", addr4)
+	if err != nil {
+		return fmt.Errorf("failed to listen on IPv4 UDP: %w", err)
+	}
+
+	// Create IPv6 UDP listener
+	addr6, err := net.ResolveUDPAddr("udp6", "[::]:"+port)
+	if err != nil {
+		s.conn4.Close() // Clean up IPv4 listener
+		return fmt.Errorf("failed to resolve IPv6 listen address: %w", err)
+	}
+	s.conn6, err = net.ListenUDP("udp6", addr6)
+	if err != nil {
+		s.conn4.Close() // Clean up IPv4 listener
+		return fmt.Errorf("failed to listen on IPv6 UDP: %w", err)
 	}
 
 	s.running = true
 
-	s.wg.Add(1)
-	go s.handleRequests()
+	// Start handlers for both IPv4 and IPv6
+	s.wg.Add(2)
+	go s.handleRequests(s.conn4, "IPv4")
+	go s.handleRequests(s.conn6, "IPv6")
 
-	s.logger.Info("DNS server started on %s", s.config.ListenAddress)
+	s.logger.Info("DNS server started on %s (IPv4: %s, IPv6: %s)", s.config.ListenAddress, addr4, addr6)
 	s.logger.Info("Managed domains: %v", s.config.ManagedDomains)
 	s.logger.Info("Internal nameservers: %v", s.config.InternalNameservers)
 	s.logger.Info("Upstream nameservers: %v", s.config.UpstreamNameservers)
@@ -149,8 +169,12 @@ func (s *DNSResolver) Stop() error {
 			s.cancel()
 		}
 
-		if s.conn != nil {
-			s.conn.Close()
+		if s.conn4 != nil {
+			s.conn4.Close()
+		}
+
+		if s.conn6 != nil {
+			s.conn6.Close()
 		}
 
 		if s.cache != nil {
@@ -165,7 +189,7 @@ func (s *DNSResolver) Stop() error {
 }
 
 // handleRequests handles incoming DNS requests
-func (s *DNSResolver) handleRequests() {
+func (s *DNSResolver) handleRequests(conn *net.UDPConn, proto string) {
 	defer s.wg.Done()
 
 	for {
@@ -179,9 +203,9 @@ func (s *DNSResolver) handleRequests() {
 		buffer := s.bufferPool.Get().([]byte)
 
 		// Set read deadline to prevent blocking indefinitely
-		s.conn.SetReadDeadline(time.Now().Add(time.Second))
+		conn.SetReadDeadline(time.Now().Add(time.Second))
 
-		n, clientAddr, err := s.conn.ReadFromUDP(buffer)
+		n, clientAddr, err := conn.ReadFromUDP(buffer)
 		if err != nil {
 			// Return buffer to pool on error
 			s.bufferPool.Put(buffer)
@@ -192,7 +216,7 @@ func (s *DNSResolver) handleRequests() {
 			if strings.Contains(err.Error(), "use of closed network connection") {
 				return
 			}
-			s.logger.Error("Failed to read UDP packet: %v from %s", err, clientAddr)
+			s.logger.Error("Failed to read %s UDP packet: %v from %s", proto, err, clientAddr)
 			continue
 		}
 
@@ -200,7 +224,7 @@ func (s *DNSResolver) handleRequests() {
 		select {
 		case s.requestSem <- struct{}{}:
 			// Handle the DNS request in a goroutine, transferring buffer ownership
-			go s.handleDNSRequest(buffer, n, clientAddr)
+			go s.handleDNSRequest(conn, buffer, n, clientAddr)
 		case <-s.ctx.Done():
 			s.bufferPool.Put(buffer)
 			return
@@ -213,7 +237,7 @@ func (s *DNSResolver) handleRequests() {
 }
 
 // handleDNSRequest processes a single DNS request
-func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *net.UDPAddr) {
+func (s *DNSResolver) handleDNSRequest(conn *net.UDPConn, buffer []byte, dataLen int, clientAddr *net.UDPAddr) {
 	defer s.bufferPool.Put(buffer)
 	defer func() { <-s.requestSem }()
 
@@ -248,7 +272,7 @@ func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *n
 
 					// Update cached response with current transaction ID and remaining TTLs
 					if updatedResponse := s.updateCachedResponse(cacheEntry, data); updatedResponse != nil {
-						_, err := s.conn.WriteToUDP(updatedResponse, clientAddr)
+						_, err := conn.WriteToUDP(updatedResponse, clientAddr)
 						if err != nil {
 							s.logger.Error("Failed to send cached DNS response: %v", err)
 						}
@@ -266,7 +290,7 @@ func (s *DNSResolver) handleDNSRequest(buffer []byte, dataLen int, clientAddr *n
 	nameservers := s.selectNameservers(domain)
 
 	// Forward the query to appropriate nameservers
-	s.forwardQuery(data, domain, queryType, clientAddr, nameservers, cacheKey)
+	s.forwardQuery(conn, data, domain, queryType, clientAddr, nameservers, cacheKey)
 }
 
 // parseSimpleDNSQuery extracts the domain name from a DNS query
@@ -304,7 +328,7 @@ func (s *DNSResolver) selectNameservers(target string) []string {
 }
 
 // forwardQuery forwards a DNS query to nameservers
-func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType uint16, clientAddr *net.UDPAddr, nameservers []string, cacheKey string) {
+func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domain string, queryType uint16, clientAddr *net.UDPAddr, nameservers []string, cacheKey string) {
 	for _, ns := range nameservers {
 		s.logger.Debug("sending DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], ns)
 		response, err := s.queryNameserver(s.ctx, originalData, ns)
@@ -348,7 +372,7 @@ func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType
 			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
 
 			// Send response back to client
-			_, err = s.conn.WriteToUDP(responseBytes, clientAddr)
+			_, err = conn.WriteToUDP(responseBytes, clientAddr)
 			if err != nil {
 				s.logger.Error("Failed to send DNS response: %v", err)
 			}
@@ -359,7 +383,7 @@ func (s *DNSResolver) forwardQuery(originalData []byte, domain string, queryType
 	s.logger.Debug("DNS returned error for %s (%s) to %s", domain, dns.TypeToString[queryType], clientAddr)
 
 	// If we get here, all nameservers failed - send error response
-	s.sendErrorResponse(originalData, clientAddr)
+	s.sendErrorResponse(conn, originalData, clientAddr)
 }
 
 // queryNameserver queries a specific nameserver, first trying UDP with EDNS0, then falling back to TCP if truncated
@@ -426,7 +450,7 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 }
 
 // sendErrorResponse sends a DNS error response
-func (s *DNSResolver) sendErrorResponse(originalData []byte, clientAddr *net.UDPAddr) {
+func (s *DNSResolver) sendErrorResponse(conn *net.UDPConn, originalData []byte, clientAddr *net.UDPAddr) {
 	if len(originalData) < 12 {
 		return
 	}
@@ -449,7 +473,7 @@ func (s *DNSResolver) sendErrorResponse(originalData []byte, clientAddr *net.UDP
 	response[2] |= 0x80                       // Set QR bit (response)
 	response[3] = (response[3] & 0xF0) | 0x02 // Set RCODE to SERVFAIL
 
-	_, err := s.conn.WriteToUDP(response, clientAddr)
+	_, err := conn.WriteToUDP(response, clientAddr)
 	if err != nil {
 		s.logger.Error("Failed to send error response: %v to %s", err, clientAddr)
 	}

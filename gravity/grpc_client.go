@@ -622,7 +622,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTu
 
 	g.logger.Debug("control stream %d handler started", streamIndex)
 	for {
-		g.logger.Debug("control stream %d waiting for message", streamIndex)
+		g.logger.Trace("control stream %d waiting for message", streamIndex)
 		msg, err := stream.Recv()
 		if err != nil {
 			// Check if this is a context cancellation (graceful shutdown)
@@ -642,8 +642,8 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTu
 			return
 		}
 
-		g.logger.Debug("control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
-		g.logger.Debug("processing control message: ID=%s, Type=%T", msg.Id, msg.MessageType)
+		g.logger.Trace("control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
+		g.logger.Trace("processing control message: ID=%s, Type=%T", msg.Id, msg.MessageType)
 		// Process control message
 		g.processControlMessage(msg)
 	}
@@ -807,7 +807,7 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
-	g.logger.Debug("received generic response: msgID=%s, success=%v, error=%s, event=%s",
+	g.logger.Trace("received generic response: msgID=%s, success=%v, error=%s, event=%s",
 		msgID, response.Success, response.Error, response.Event)
 
 	// Check if this is an error response for a connect message
@@ -832,7 +832,7 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 		default:
 		}
 	} else {
-		g.logger.Debug("no pending request found for msgID: %s", msgID)
+		g.logger.Trace("no pending request found for msgID: %s", msgID)
 	}
 }
 
@@ -2164,7 +2164,7 @@ func (g *GravityClient) sendReport() {
 		return
 	}
 
-	g.logger.Debug("sent report message: id=%s, took=%v", reportID, time.Since(started))
+	g.logger.Trace("sent report message: id=%s, took=%v", reportID, time.Since(started))
 }
 
 // handlePingHeartbeat sends periodic ping messages to maintain connection health

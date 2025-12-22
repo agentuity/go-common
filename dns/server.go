@@ -32,8 +32,10 @@ type dnsCacheEntry struct {
 type DNSResolver struct {
 	logger       logger.Logger
 	config       DNSConfig
-	conn4        *net.UDPConn // IPv4 listener
-	conn6        *net.UDPConn // IPv6 listener
+	conn4        *net.UDPConn // IPv4 UDP listener
+	conn6        *net.UDPConn // IPv6 UDP listener
+	tcpListener4 net.Listener // IPv4 TCP listener
+	tcpListener6 net.Listener // IPv6 TCP listener
 	protocol     string
 	dialer       func(ctx context.Context, network, address string) (net.Conn, error)
 	ctx          context.Context
@@ -137,19 +139,89 @@ func (s *DNSResolver) Start() error {
 		return fmt.Errorf("failed to listen on IPv6 UDP: %w", err)
 	}
 
+	// Create IPv4 TCP listener
+	s.tcpListener4, err = net.Listen("tcp4", "0.0.0.0:"+port)
+	if err != nil {
+		s.conn4.Close()
+		s.conn6.Close()
+		return fmt.Errorf("failed to listen on IPv4 TCP: %w", err)
+	}
+
+	// Create IPv6 TCP listener
+	s.tcpListener6, err = net.Listen("tcp6", "[::]:"+port)
+	if err != nil {
+		s.conn4.Close()
+		s.conn6.Close()
+		s.tcpListener4.Close()
+		return fmt.Errorf("failed to listen on IPv6 TCP: %w", err)
+	}
+
 	s.running = true
 
-	// Start handlers for both IPv4 and IPv6
-	s.wg.Add(2)
-	go s.handleRequests(s.conn4, "IPv4")
-	go s.handleRequests(s.conn6, "IPv6")
+	// Start handlers for both IPv4 and IPv6 (UDP and TCP)
+	s.wg.Add(4)
+	go s.handleUDPRequests(s.conn4, "IPv4")
+	go s.handleUDPRequests(s.conn6, "IPv6")
+	go s.handleTCPRequests(s.tcpListener4, "IPv4")
+	go s.handleTCPRequests(s.tcpListener6, "IPv6")
 
-	s.logger.Info("DNS server started on %s (IPv4: %s, IPv6: %s)", s.config.ListenAddress, addr4, addr6)
+	s.logger.Info("DNS server started on %s (IPv4: %s, IPv6: %s) with TCP support", s.config.ListenAddress, addr4, addr6)
 	s.logger.Info("Managed domains: %v", s.config.ManagedDomains)
 	s.logger.Info("Internal nameservers: %v", s.config.InternalNameservers)
 	s.logger.Info("Upstream nameservers: %v", s.config.UpstreamNameservers)
 
 	return nil
+}
+
+// ValidateUpstream tests that the DNS server can reach upstream nameservers
+// by resolving a known domain. Returns an error if resolution fails.
+// The testDomain parameter specifies which domain to test (e.g., "agentuity.com").
+func (s *DNSResolver) ValidateUpstream(testDomain string) error {
+	if testDomain == "" {
+		testDomain = "agentuity.com"
+	}
+
+	s.logger.Debug("validating upstream DNS connectivity by resolving %s", testDomain)
+
+	// Build a DNS query for the test domain
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(testDomain), dns.TypeA)
+	msg.RecursionDesired = true
+
+	packed, err := msg.Pack()
+	if err != nil {
+		return fmt.Errorf("failed to pack DNS query: %w", err)
+	}
+
+	// Try each upstream nameserver
+	var lastErr error
+	for _, ns := range s.config.UpstreamNameservers {
+		s.logger.Debug("testing upstream nameserver %s", ns)
+
+		ctx, cancel := context.WithTimeout(s.ctx, s.queryTimeout)
+		response, err := s.queryNameserver(ctx, packed, ns)
+		cancel()
+
+		if err != nil {
+			s.logger.Debug("upstream nameserver %s failed: %v", ns, err)
+			lastErr = err
+			continue
+		}
+
+		if response != nil && response.Rcode == dns.RcodeSuccess && len(response.Answer) > 0 {
+			s.logger.Info("upstream DNS validation successful: resolved %s via %s", testDomain, ns)
+			return nil
+		}
+
+		if response != nil {
+			lastErr = fmt.Errorf("nameserver %s returned rcode %s with %d answers", ns, dns.RcodeToString[response.Rcode], len(response.Answer))
+		}
+	}
+
+	if lastErr != nil {
+		return fmt.Errorf("all upstream nameservers failed, last error: %w", lastErr)
+	}
+	return fmt.Errorf("no upstream nameservers configured")
 }
 
 // Stop stops the DNS server
@@ -177,6 +249,14 @@ func (s *DNSResolver) Stop() error {
 			s.conn6.Close()
 		}
 
+		if s.tcpListener4 != nil {
+			s.tcpListener4.Close()
+		}
+
+		if s.tcpListener6 != nil {
+			s.tcpListener6.Close()
+		}
+
 		if s.cache != nil {
 			s.cache.Close()
 		}
@@ -188,8 +268,8 @@ func (s *DNSResolver) Stop() error {
 	return nil
 }
 
-// handleRequests handles incoming DNS requests
-func (s *DNSResolver) handleRequests(conn *net.UDPConn, proto string) {
+// handleUDPRequests handles incoming UDP DNS requests
+func (s *DNSResolver) handleUDPRequests(conn *net.UDPConn, proto string) {
 	defer s.wg.Done()
 
 	for {
@@ -224,7 +304,7 @@ func (s *DNSResolver) handleRequests(conn *net.UDPConn, proto string) {
 		select {
 		case s.requestSem <- struct{}{}:
 			// Handle the DNS request in a goroutine, transferring buffer ownership
-			go s.handleDNSRequest(conn, buffer, n, clientAddr)
+			go s.handleUDPDNSRequest(conn, buffer, n, clientAddr)
 		case <-s.ctx.Done():
 			s.bufferPool.Put(buffer)
 			return
@@ -236,8 +316,190 @@ func (s *DNSResolver) handleRequests(conn *net.UDPConn, proto string) {
 	}
 }
 
-// handleDNSRequest processes a single DNS request
-func (s *DNSResolver) handleDNSRequest(conn *net.UDPConn, buffer []byte, dataLen int, clientAddr *net.UDPAddr) {
+// handleTCPRequests handles incoming TCP DNS connections
+func (s *DNSResolver) handleTCPRequests(listener net.Listener, proto string) {
+	defer s.wg.Done()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		default:
+		}
+
+		// Set accept deadline to prevent blocking indefinitely
+		if tcpListener, ok := listener.(*net.TCPListener); ok {
+			tcpListener.SetDeadline(time.Now().Add(time.Second))
+		}
+
+		conn, err := listener.Accept()
+		if err != nil {
+			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+				continue // Timeout is expected, continue listening
+			}
+			if strings.Contains(err.Error(), "use of closed network connection") {
+				return
+			}
+			s.logger.Error("Failed to accept %s TCP connection: %v", proto, err)
+			continue
+		}
+
+		// Acquire semaphore before spawning handler goroutine
+		select {
+		case s.requestSem <- struct{}{}:
+			go s.handleTCPConnection(conn)
+		case <-s.ctx.Done():
+			conn.Close()
+			return
+		default:
+			// Semaphore full, drop connection
+			conn.Close()
+			s.logger.Debug("TCP DNS connection dropped: concurrency limit reached")
+		}
+	}
+}
+
+// handleTCPConnection handles a single TCP DNS connection
+func (s *DNSResolver) handleTCPConnection(conn net.Conn) {
+	defer conn.Close()
+	defer func() { <-s.requestSem }()
+
+	// Set connection deadline
+	conn.SetDeadline(time.Now().Add(s.queryTimeout))
+
+	// TCP DNS messages are prefixed with a 2-byte length field
+	dnsConn := &dns.Conn{Conn: conn}
+
+	for {
+		msg, err := dnsConn.ReadMsg()
+		if err != nil {
+			if err.Error() != "EOF" && !strings.Contains(err.Error(), "use of closed network connection") {
+				s.logger.Debug("Failed to read TCP DNS message: %v", err)
+			}
+			return
+		}
+
+		if len(msg.Question) == 0 {
+			s.logger.Debug("TCP DNS query has no questions")
+			continue
+		}
+
+		domain := strings.TrimSuffix(msg.Question[0].Name, ".")
+		queryType := msg.Question[0].Qtype
+
+		s.logger.Debug("TCP DNS query for %s (%s) from %s", domain, dns.TypeToString[queryType], conn.RemoteAddr())
+
+		// Create normalized cache key
+		cacheKey := fmt.Sprintf("%s:%d", strings.ToLower(domain), queryType)
+
+		// Pack the original message for forwarding
+		originalData, err := msg.Pack()
+		if err != nil {
+			s.logger.Error("Failed to pack DNS message: %v", err)
+			continue
+		}
+
+		// Check cache first
+		if s.cache != nil {
+			select {
+			case <-s.ctx.Done():
+			default:
+				if found, cachedResponse, err := s.cache.Get(cacheKey); err == nil && found {
+					if cacheEntry, ok := cachedResponse.(*dnsCacheEntry); ok {
+						s.logger.Debug("Cache hit for %s (%s)", domain, dns.TypeToString[queryType])
+						if updatedResponse := s.updateCachedResponse(cacheEntry, originalData); updatedResponse != nil {
+							if err := dnsConn.WriteMsg(s.bytesToMsg(updatedResponse)); err != nil {
+								s.logger.Error("Failed to send cached TCP DNS response: %v", err)
+							}
+							continue
+						}
+					}
+				}
+			}
+		}
+
+		// Determine which nameservers to use
+		nameservers := s.selectNameservers(domain)
+
+		// Forward the query
+		response := s.forwardQueryTCP(originalData, domain, queryType, nameservers, cacheKey)
+		if response != nil {
+			if err := dnsConn.WriteMsg(response); err != nil {
+				s.logger.Error("Failed to send TCP DNS response: %v", err)
+			}
+		} else {
+			// Send error response
+			errMsg := new(dns.Msg)
+			errMsg.SetRcode(msg, dns.RcodeServerFailure)
+			if err := dnsConn.WriteMsg(errMsg); err != nil {
+				s.logger.Error("Failed to send TCP DNS error response: %v", err)
+			}
+		}
+	}
+}
+
+// bytesToMsg converts raw bytes to a dns.Msg
+func (s *DNSResolver) bytesToMsg(data []byte) *dns.Msg {
+	msg := new(dns.Msg)
+	if err := msg.Unpack(data); err != nil {
+		return nil
+	}
+	return msg
+}
+
+// forwardQueryTCP forwards a DNS query and returns the response (for TCP)
+func (s *DNSResolver) forwardQueryTCP(originalData []byte, domain string, queryType uint16, nameservers []string, cacheKey string) *dns.Msg {
+	for _, ns := range nameservers {
+		s.logger.Debug("sending TCP DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], ns)
+		response, err := s.queryNameserver(s.ctx, originalData, ns)
+		if err != nil {
+			s.logger.Debug("Failed to query %s: %v", ns, err)
+			continue
+		}
+		if response == nil {
+			continue
+		}
+
+		s.debugDNSResponse(response, domain, queryType)
+
+		// If the server returned SERVFAIL or REFUSED, try the next nameserver
+		// NXDOMAIN is authoritative and should not be retried
+		if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
+			s.logger.Debug("Nameserver %s returned %s, trying next", ns, dns.RcodeToString[response.Rcode])
+			continue
+		}
+
+		// Check if we need to recursively resolve CNAME
+		if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
+			s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
+			cnameNameservers := s.selectNameservers(cnameTarget)
+			finalResponse, err := s.resolveCNAMERecursively(s.ctx, cnameTarget, queryType, cnameNameservers, 1)
+			if err != nil {
+				s.logger.Error("Failed to resolve CNAME chain: %v", err)
+			} else if finalResponse != nil {
+				finalResponse.MsgHdr = response.MsgHdr
+				finalResponse.Question = response.Question
+				finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
+				response = finalResponse
+				s.debugDNSResponse(response, domain, queryType)
+			}
+		}
+
+		// Cache the response
+		responseBytes, err := response.Pack()
+		if err == nil {
+			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+		}
+
+		return response
+	}
+
+	s.logger.Debug("TCP DNS returned error for %s (%s)", domain, dns.TypeToString[queryType])
+	return nil
+}
+
+// handleUDPDNSRequest processes a single UDP DNS request
+func (s *DNSResolver) handleUDPDNSRequest(conn *net.UDPConn, buffer []byte, dataLen int, clientAddr *net.UDPAddr) {
 	defer s.bufferPool.Put(buffer)
 	defer func() { <-s.requestSem }()
 
@@ -336,48 +598,57 @@ func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domai
 			s.logger.Debug("Failed to query %s: %v", ns, err)
 			continue
 		}
-		if response != nil {
-			s.debugDNSResponse(response, domain, queryType)
+		if response == nil {
+			continue
+		}
 
-			// Check if we need to recursively resolve CNAME
-			if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
-				s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
+		s.debugDNSResponse(response, domain, queryType)
 
-				// Determine nameservers for CNAME target
-				cnameNameservers := s.selectNameservers(cnameTarget)
+		// If the server returned SERVFAIL or REFUSED, try the next nameserver
+		// NXDOMAIN is authoritative and should not be retried
+		if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
+			s.logger.Debug("Nameserver %s returned %s, trying next", ns, dns.RcodeToString[response.Rcode])
+			continue
+		}
 
-				// Recursively resolve the CNAME
-				finalResponse, err := s.resolveCNAMERecursively(s.ctx, cnameTarget, queryType, cnameNameservers, 1)
-				if err != nil {
-					s.logger.Error("Failed to resolve CNAME chain: %v", err)
-					// Fall back to sending the partial CNAME response
-				} else if finalResponse != nil {
-					// Merge CNAME records with final response
-					finalResponse.MsgHdr = response.MsgHdr     // Preserve original header fields and transaction ID
-					finalResponse.Question = response.Question // Preserve original question
-					finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
-					response = finalResponse
-					s.debugDNSResponse(response, domain, queryType)
-				}
-			}
+		// Check if we need to recursively resolve CNAME
+		if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
+			s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
 
-			// Pack the response back to raw bytes
-			responseBytes, err := response.Pack()
+			// Determine nameservers for CNAME target
+			cnameNameservers := s.selectNameservers(cnameTarget)
+
+			// Recursively resolve the CNAME
+			finalResponse, err := s.resolveCNAMERecursively(s.ctx, cnameTarget, queryType, cnameNameservers, 1)
 			if err != nil {
-				s.logger.Error("failed to pack DNS response: %s", err)
-				return
+				s.logger.Error("Failed to resolve CNAME chain: %v", err)
+				// Fall back to sending the partial CNAME response
+			} else if finalResponse != nil {
+				// Merge CNAME records with final response
+				finalResponse.MsgHdr = response.MsgHdr     // Preserve original header fields and transaction ID
+				finalResponse.Question = response.Question // Preserve original question
+				finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
+				response = finalResponse
+				s.debugDNSResponse(response, domain, queryType)
 			}
+		}
 
-			// Cache the response using the minimum TTL from all answers
-			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
-
-			// Send response back to client
-			_, err = conn.WriteToUDP(responseBytes, clientAddr)
-			if err != nil {
-				s.logger.Error("Failed to send DNS response: %v", err)
-			}
+		// Pack the response back to raw bytes
+		responseBytes, err := response.Pack()
+		if err != nil {
+			s.logger.Error("failed to pack DNS response: %s", err)
 			return
 		}
+
+		// Cache the response using the minimum TTL from all answers
+		s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+
+		// Send response back to client
+		_, err = conn.WriteToUDP(responseBytes, clientAddr)
+		if err != nil {
+			s.logger.Error("Failed to send DNS response: %v", err)
+		}
+		return
 	}
 
 	s.logger.Debug("DNS returned error for %s (%s) to %s", domain, dns.TypeToString[queryType], clientAddr)
@@ -386,7 +657,7 @@ func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domai
 	s.sendErrorResponse(conn, originalData, clientAddr)
 }
 
-// queryNameserver queries a specific nameserver, first trying UDP with EDNS0, then falling back to TCP if truncated
+// queryNameserver queries a specific nameserver, first trying the configured protocol, then falling back to TCP if truncated
 func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, nameserver string) (*dns.Msg, error) {
 	// Parse the DNS message from raw bytes
 	msg := &dns.Msg{}
@@ -395,55 +666,74 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 		return nil, fmt.Errorf("failed to parse DNS message: %w", err)
 	}
 
-	// Set EDNS0 with 4096 byte UDP payload size to avoid truncation
-	msg.SetEdns0(4096, true)
-
-	// Try the configured protocol first
-	conn, err := s.dialer(ctx, s.protocol, nameserver)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to nameserver via %s: %w", strings.ToUpper(s.protocol), err)
+	// Only add EDNS0 if not already present in the original query
+	// Use false for DO (DNSSEC OK) to avoid requesting large DNSSEC responses
+	if msg.IsEdns0() == nil {
+		msg.SetEdns0(1232, false) // 1232 is IPv6-safe size that avoids fragmentation
 	}
-	co := &dns.Conn{Conn: conn}
 
-	// Set deadline for operation
-	conn.SetDeadline(time.Now().Add(s.queryTimeout))
-
-	if err := co.WriteMsg(msg); err != nil {
-		co.Close()
-		return nil, fmt.Errorf("failed to write DNS message via %s: %w", strings.ToUpper(s.protocol), err)
-	}
-	response, err := co.ReadMsg()
+	response, err := s.doQuery(ctx, msg, nameserver, s.protocol)
 	if err != nil {
-		co.Close()
-		return nil, fmt.Errorf("failed to read DNS response via %s: %w", strings.ToUpper(s.protocol), err)
+		return nil, fmt.Errorf("failed to query nameserver via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 
 	// Check if response was truncated (TC bit set) and we're using UDP
 	if response.Truncated && s.protocol == "udp" {
-		// Close UDP connection before switching to TCP
-		co.Close()
-
 		// Retry over TCP
-		tcpConn, err := s.dialer(ctx, "tcp", nameserver)
+		response, err = s.doQuery(ctx, msg, nameserver, "tcp")
 		if err != nil {
-			return nil, fmt.Errorf("failed to connect to nameserver via TCP: %w", err)
+			return nil, fmt.Errorf("failed to query nameserver via TCP: %w", err)
 		}
-		tcpCo := &dns.Conn{Conn: tcpConn}
-		defer tcpCo.Close()
+	}
 
-		// Set deadline for TCP operation
-		tcpConn.SetDeadline(time.Now().Add(s.queryTimeout))
+	return response, nil
+}
 
-		if err := tcpCo.WriteMsg(msg); err != nil {
-			return nil, fmt.Errorf("failed to write DNS message via TCP: %w", err)
+// doQuery performs a DNS query using the specified protocol
+func (s *DNSResolver) doQuery(ctx context.Context, msg *dns.Msg, nameserver, protocol string) (*dns.Msg, error) {
+	// Dial the connection
+	conn, err := s.dialer(ctx, protocol, nameserver)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	// Set deadline for operation
+	conn.SetDeadline(time.Now().Add(s.queryTimeout))
+
+	// Create dns.Conn wrapper
+	dnsConn := &dns.Conn{Conn: conn}
+
+	// For UDP, we need to ensure the connection is treated as a PacketConn
+	// The miekg/dns library checks for net.PacketConn to determine read behavior
+	if protocol == "udp" {
+		// Write the query
+		if err := dnsConn.WriteMsg(msg); err != nil {
+			return nil, fmt.Errorf("failed to write: %w", err)
 		}
-		response, err = tcpCo.ReadMsg()
+
+		// For UDP, read the response manually to avoid the PacketConn detection issue
+		buf := make([]byte, 65535)
+		n, err := conn.Read(buf)
 		if err != nil {
-			return nil, fmt.Errorf("failed to read DNS response via TCP: %w", err)
+			return nil, fmt.Errorf("failed to read: %w", err)
 		}
-	} else {
-		// Close the connection on successful non-truncated response
-		co.Close()
+
+		response := &dns.Msg{}
+		if err := response.Unpack(buf[:n]); err != nil {
+			return nil, fmt.Errorf("failed to unpack response: %w", err)
+		}
+		return response, nil
+	}
+
+	// For TCP, use the standard dns.Conn methods which handle length prefix
+	if err := dnsConn.WriteMsg(msg); err != nil {
+		return nil, fmt.Errorf("failed to write: %w", err)
+	}
+
+	response, err := dnsConn.ReadMsg()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read: %w", err)
 	}
 
 	return response, nil
@@ -537,22 +827,43 @@ func (s *DNSResolver) updateCachedResponse(cacheEntry *dnsCacheEntry, originalRe
 	return updatedBytes
 }
 
-// cacheResponse caches a DNS response using the minimum TTL from Answer records only
+// cacheResponse caches a DNS response using the minimum TTL from Answer records,
+// or for negative responses (NODATA/NXDOMAIN), from the SOA record in Authority section
 func (s *DNSResolver) cacheResponse(cacheKey string, responseBytes []byte, response *dns.Msg, domain string, queryType uint16) {
-	// Only cache positive successful answers
-	if response.Rcode != dns.RcodeSuccess || len(response.Answer) == 0 {
-		s.logger.Debug("Not caching DNS response for %s (%s): Rcode=%d, Answers=%d",
-			domain, dns.TypeToString[queryType], response.Rcode, len(response.Answer))
-		return
-	}
-
-	// Find minimum TTL from Answer records only
 	var minTTL uint32
-	for i, answer := range response.Answer {
-		ttl := answer.Header().Ttl
-		if i == 0 || ttl < minTTL {
-			minTTL = ttl
+	var cacheType string
+
+	if response.Rcode == dns.RcodeSuccess && len(response.Answer) > 0 {
+		// Positive response: use TTL from Answer records
+		cacheType = "positive"
+		for i, answer := range response.Answer {
+			ttl := answer.Header().Ttl
+			if i == 0 || ttl < minTTL {
+				minTTL = ttl
+			}
 		}
+	} else if response.Rcode == dns.RcodeSuccess || response.Rcode == dns.RcodeNameError {
+		// Negative response (NODATA or NXDOMAIN): use SOA from Authority section per RFC 2308
+		// NODATA: Rcode=Success but no answers
+		// NXDOMAIN: Rcode=NameError
+		cacheType = "negative"
+		minTTL = s.getNegativeCacheTTL(response)
+		if minTTL == 0 {
+			// No SOA record found, use configured default
+			minTTL = s.config.DefaultNegativeTTL
+			if minTTL == 0 {
+				s.logger.Debug("Not caching negative DNS response for %s (%s): no SOA record and DefaultNegativeTTL is 0",
+					domain, dns.TypeToString[queryType])
+				return
+			}
+			s.logger.Debug("No SOA record for %s (%s), using DefaultNegativeTTL of %d seconds",
+				domain, dns.TypeToString[queryType], minTTL)
+		}
+	} else {
+		// Other error responses (SERVFAIL, REFUSED, etc.) should not be cached
+		s.logger.Debug("Not caching DNS response for %s (%s): Rcode=%s",
+			domain, dns.TypeToString[queryType], dns.RcodeToString[response.Rcode])
+		return
 	}
 
 	// Only cache if we have a valid TTL and cache is available
@@ -571,9 +882,27 @@ func (s *DNSResolver) cacheResponse(cacheKey string, responseBytes []byte, respo
 		if err := s.cache.Set(cacheKey, cacheEntry, cacheDuration); err != nil {
 			s.logger.Error("Failed to cache DNS response for %s: %v", domain, err)
 		} else {
-			s.logger.Debug("Cached DNS response for %s (%s) with TTL %d seconds", domain, dns.TypeToString[queryType], minTTL)
+			s.logger.Debug("Cached %s DNS response for %s (%s) with TTL %d seconds", cacheType, domain, dns.TypeToString[queryType], minTTL)
 		}
 	}
+}
+
+// getNegativeCacheTTL extracts the TTL for negative caching from the SOA record per RFC 2308.
+// Returns the minimum of the SOA record's TTL and its MINIMUM field.
+func (s *DNSResolver) getNegativeCacheTTL(response *dns.Msg) uint32 {
+	for _, rr := range response.Ns {
+		if soa, ok := rr.(*dns.SOA); ok {
+			soaTTL := soa.Header().Ttl
+			soaMinimum := soa.Minttl
+
+			// Per RFC 2308, use the minimum of SOA TTL and SOA MINIMUM field
+			if soaMinimum < soaTTL {
+				return soaMinimum
+			}
+			return soaTTL
+		}
+	}
+	return 0
 }
 
 func (s *DNSResolver) debugDNSResponse(msg *dns.Msg, domain string, queryType uint16) {

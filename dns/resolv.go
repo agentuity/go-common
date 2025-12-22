@@ -1,12 +1,126 @@
 package dns
 
 import (
+	"bufio"
 	"fmt"
+	"net"
 	"os"
+	"strings"
 )
 
 // DefaultResolveConfFilename is the default filename for the resolv.conf file.
 var DefaultResolveConfFilename = "/etc/resolv.conf"
+
+// ParsedResolvConf represents the parsed contents of a resolv.conf file
+type ParsedResolvConf struct {
+	Nameservers []string
+	Search      []string
+}
+
+// ParseResolvConf parses a resolv.conf file and returns the nameservers and search domains.
+// It skips nameservers pointing to 127.0.0.1 (any port) to avoid circular references.
+// If filename is empty, it defaults to /etc/resolv.conf
+func ParseResolvConf(filename string) (*ParsedResolvConf, error) {
+	if filename == "" {
+		filename = DefaultResolveConfFilename
+	}
+
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open %s: %w", filename, err)
+	}
+	defer file.Close()
+
+	result := &ParsedResolvConf{}
+	scanner := bufio.NewScanner(file)
+
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		// Skip empty lines and comments
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		switch fields[0] {
+		case "nameserver":
+			ns := fields[1]
+			// Skip localhost/loopback addresses to avoid circular references
+			if isLoopbackAddress(ns) {
+				continue
+			}
+			// Add port 53 if not specified
+			if !strings.Contains(ns, ":") {
+				ns = ns + ":53"
+			}
+			result.Nameservers = append(result.Nameservers, ns)
+		case "search":
+			result.Search = append(result.Search, fields[1:]...)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read %s: %w", filename, err)
+	}
+
+	return result, nil
+}
+
+// isLoopbackAddress checks if an address is a loopback address (127.0.0.0/8 or ::1)
+func isLoopbackAddress(addr string) bool {
+	// Remove port if present
+	host := addr
+	if strings.Contains(addr, ":") {
+		var err error
+		host, _, err = net.SplitHostPort(addr)
+		if err != nil {
+			// Maybe it's just an IP without port, or IPv6
+			host = addr
+		}
+	}
+
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+
+	return ip.IsLoopback()
+}
+
+// GetSystemNameservers returns a merged list of nameservers: first the nameservers
+// from the system's resolv.conf (excluding loopback addresses), then the
+// DefaultExternalDNSServers as fallbacks. Duplicates are removed.
+func GetSystemNameservers() []string {
+	parsed, err := ParseResolvConf(DefaultResolveConfFilename)
+	
+	var result []string
+	seen := make(map[string]bool)
+	
+	// Add system nameservers first (if any)
+	if err == nil {
+		for _, ns := range parsed.Nameservers {
+			if !seen[ns] {
+				seen[ns] = true
+				result = append(result, ns)
+			}
+		}
+	}
+	
+	// Add default external nameservers as fallbacks
+	for _, ns := range DefaultExternalDNSServers {
+		if !seen[ns] {
+			seen[ns] = true
+			result = append(result, ns)
+		}
+	}
+	
+	return result
+}
 
 // WriteResolvConf writes a resolv.conf file that points to a local DNS server
 // with the default internal domain as the search domain.

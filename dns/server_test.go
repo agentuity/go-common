@@ -2,6 +2,7 @@ package dns
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -1138,15 +1139,21 @@ func TestDNSResolver_ProtocolSupport(t *testing.T) {
 					return nil, err
 				}
 
-				// DNS over TCP requires a 2-byte length prefix
-				tcpMsg := make([]byte, 2+len(packed))
-				tcpMsg[0] = byte(len(packed) >> 8)
-				tcpMsg[1] = byte(len(packed))
-				copy(tcpMsg[2:], packed)
+				var readBuf []byte
+				if network == "tcp" {
+					// DNS over TCP requires a 2-byte length prefix
+					readBuf = make([]byte, 2+len(packed))
+					readBuf[0] = byte(len(packed) >> 8)
+					readBuf[1] = byte(len(packed))
+					copy(readBuf[2:], packed)
+				} else {
+					// UDP: raw DNS message without length prefix
+					readBuf = packed
+				}
 
 				// Return a mock connection with the DNS response
 				return &mockConn{
-					readBuf: tcpMsg,
+					readBuf: readBuf,
 					isTCP:   network == "tcp",
 				}, nil
 			}
@@ -1192,6 +1199,722 @@ func TestDNSResolver_ProtocolSupport(t *testing.T) {
 
 			if len(response.Answer) != 1 {
 				t.Errorf("Expected 1 answer, got %d", len(response.Answer))
+			}
+		})
+	}
+}
+
+func TestDNSResolver_ValidateUpstream(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	t.Run("dial error fails validation", func(t *testing.T) {
+		mockDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
+			return nil, net.UnknownNetworkError("no route to host")
+		}
+
+		config := DNSConfig{
+			ManagedDomains:      []string{"test.local"},
+			InternalNameservers: []string{"ns1.test.local:53"},
+			UpstreamNameservers: []string{"8.8.8.8:53"},
+			QueryTimeout:        "2s",
+			ListenAddress:       ":15353",
+			DialContext:         mockDialer,
+		}
+
+		resolver, err := New(context.Background(), testLogger, config)
+		if err != nil {
+			t.Fatalf("Failed to create resolver: %v", err)
+		}
+
+		err = resolver.ValidateUpstream("example.com")
+		if err == nil {
+			t.Error("ValidateUpstream() expected error for dial failure, got nil")
+		}
+	})
+
+	t.Run("successful validation with real DNS", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("Skipping integration test in short mode")
+		}
+
+		config := DNSConfig{
+			ManagedDomains:      []string{"test.local"},
+			InternalNameservers: []string{"ns1.test.local:53"},
+			UpstreamNameservers: []string{"9.9.9.9:53", "1.1.1.1:53"},
+			QueryTimeout:        "5s",
+			ListenAddress:       ":15353",
+		}
+
+		resolver, err := New(context.Background(), testLogger, config)
+		if err != nil {
+			t.Fatalf("Failed to create resolver: %v", err)
+		}
+
+		err = resolver.ValidateUpstream("google.com")
+		if err != nil {
+			t.Errorf("ValidateUpstream() unexpected error: %v", err)
+		}
+	})
+
+	t.Run("empty domain uses default", func(t *testing.T) {
+		if testing.Short() {
+			t.Skip("Skipping integration test in short mode")
+		}
+
+		config := DNSConfig{
+			ManagedDomains:      []string{"test.local"},
+			InternalNameservers: []string{"ns1.test.local:53"},
+			UpstreamNameservers: []string{"9.9.9.9:53", "1.1.1.1:53"},
+			QueryTimeout:        "5s",
+			ListenAddress:       ":15353",
+		}
+
+		resolver, err := New(context.Background(), testLogger, config)
+		if err != nil {
+			t.Fatalf("Failed to create resolver: %v", err)
+		}
+
+		// Empty string should use default "agentuity.com"
+		err = resolver.ValidateUpstream("")
+		if err != nil {
+			t.Errorf("ValidateUpstream() unexpected error: %v", err)
+		}
+	})
+}
+
+func TestDNSResolver_ValidateUpstream_NoUpstreams(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	config := DNSConfig{
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"ns1.test.local:53"},
+		UpstreamNameservers: []string{}, // No upstreams - but validation will fail
+		QueryTimeout:        "2s",
+		ListenAddress:       ":15353",
+	}
+
+	// This will fail validation because no upstream nameservers
+	_, err := New(context.Background(), testLogger, config)
+	if err == nil {
+		t.Error("Expected error when creating resolver with no upstream nameservers")
+	}
+}
+
+func TestDNSResolver_NameserverFallback(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	tests := []struct {
+		name                string
+		firstResponse       *dns.Msg
+		secondResponse      *dns.Msg
+		expectSecondCalled  bool
+		expectSuccessAnswer bool
+	}{
+		{
+			name: "SERVFAIL triggers fallback to next nameserver",
+			firstResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeServerFailure
+				return m
+			}(),
+			secondResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeSuccess
+				m.Answer = []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("93.184.216.34"),
+					},
+				}
+				return m
+			}(),
+			expectSecondCalled:  true,
+			expectSuccessAnswer: true,
+		},
+		{
+			name: "REFUSED triggers fallback to next nameserver",
+			firstResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeRefused
+				return m
+			}(),
+			secondResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeSuccess
+				m.Answer = []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("93.184.216.34"),
+					},
+				}
+				return m
+			}(),
+			expectSecondCalled:  true,
+			expectSuccessAnswer: true,
+		},
+		{
+			name: "NXDOMAIN does NOT trigger fallback (authoritative)",
+			firstResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("nonexistent.example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeNameError // NXDOMAIN
+				return m
+			}(),
+			secondResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("nonexistent.example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeSuccess
+				m.Answer = []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "nonexistent.example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("1.2.3.4"),
+					},
+				}
+				return m
+			}(),
+			expectSecondCalled:  false,
+			expectSuccessAnswer: false, // Should return NXDOMAIN, not success
+		},
+		{
+			name: "Success on first nameserver does not call second",
+			firstResponse: func() *dns.Msg {
+				m := new(dns.Msg)
+				m.SetQuestion("example.com.", dns.TypeA)
+				m.Rcode = dns.RcodeSuccess
+				m.Answer = []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+						A:   net.ParseIP("93.184.216.34"),
+					},
+				}
+				return m
+			}(),
+			secondResponse:      nil, // Should never be called
+			expectSecondCalled:  false,
+			expectSuccessAnswer: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var callCount int
+			var secondCalled bool
+
+			// Create a mock dialer that returns different responses per nameserver
+			mockDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
+				callCount++
+
+				var response *dns.Msg
+				if address == "ns1.test:53" {
+					response = tt.firstResponse
+				} else if address == "ns2.test:53" {
+					secondCalled = true
+					response = tt.secondResponse
+				}
+
+				if response == nil {
+					return nil, net.UnknownNetworkError("no response configured")
+				}
+
+				// Pack and prepare the response for TCP
+				packed, err := response.Pack()
+				if err != nil {
+					return nil, err
+				}
+
+				tcpMsg := make([]byte, 2+len(packed))
+				tcpMsg[0] = byte(len(packed) >> 8)
+				tcpMsg[1] = byte(len(packed))
+				copy(tcpMsg[2:], packed)
+
+				return &mockConn{
+					readBuf: tcpMsg,
+					isTCP:   true,
+				}, nil
+			}
+
+			config := DNSConfig{
+				ManagedDomains:      []string{"test.local"},
+				InternalNameservers: []string{"ns.internal:53"},
+				UpstreamNameservers: []string{"ns1.test:53", "ns2.test:53"},
+				QueryTimeout:        "2s",
+				ListenAddress:       ":15353",
+				DialContext:         mockDialer,
+				DefaultProtocol:     "tcp",
+			}
+
+			resolver, err := New(context.Background(), testLogger, config)
+			if err != nil {
+				t.Fatalf("Failed to create resolver: %v", err)
+			}
+
+			// Create a DNS query
+			query := new(dns.Msg)
+			query.SetQuestion("example.com.", dns.TypeA)
+			queryBytes, err := query.Pack()
+			if err != nil {
+				t.Fatalf("Failed to pack query: %v", err)
+			}
+
+			// Use forwardQueryTCP to test the fallback behavior
+			response := resolver.forwardQueryTCP(queryBytes, "example.com", dns.TypeA, config.UpstreamNameservers, "test:1")
+
+			// Check if second nameserver was called as expected
+			if secondCalled != tt.expectSecondCalled {
+				t.Errorf("Second nameserver called = %v, want %v", secondCalled, tt.expectSecondCalled)
+			}
+
+			// Check response
+			if tt.expectSuccessAnswer {
+				if response == nil {
+					t.Fatal("Expected non-nil response")
+				}
+				if response.Rcode != dns.RcodeSuccess {
+					t.Errorf("Expected RcodeSuccess, got %s", dns.RcodeToString[response.Rcode])
+				}
+				if len(response.Answer) == 0 {
+					t.Error("Expected at least one answer")
+				}
+			} else if response != nil && response.Rcode == dns.RcodeSuccess && len(response.Answer) > 0 {
+				// For NXDOMAIN case, we should NOT get a success with answers
+				if tt.name == "NXDOMAIN does NOT trigger fallback (authoritative)" {
+					t.Error("NXDOMAIN should not have triggered fallback to get success response")
+				}
+			}
+		})
+	}
+}
+
+func TestDNSResolver_NameserverFallback_ConnectionError(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	var callCount int
+
+	// Create a mock dialer where first nameserver fails with connection error
+	mockDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
+		callCount++
+
+		if address == "ns1.test:53" {
+			// First nameserver fails with connection error
+			return nil, net.UnknownNetworkError("connection refused")
+		}
+
+		// Second nameserver succeeds
+		response := new(dns.Msg)
+		response.SetQuestion("example.com.", dns.TypeA)
+		response.Rcode = dns.RcodeSuccess
+		response.Answer = []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.ParseIP("93.184.216.34"),
+			},
+		}
+
+		packed, err := response.Pack()
+		if err != nil {
+			return nil, err
+		}
+
+		tcpMsg := make([]byte, 2+len(packed))
+		tcpMsg[0] = byte(len(packed) >> 8)
+		tcpMsg[1] = byte(len(packed))
+		copy(tcpMsg[2:], packed)
+
+		return &mockConn{
+			readBuf: tcpMsg,
+			isTCP:   true,
+		}, nil
+	}
+
+	config := DNSConfig{
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"ns.internal:53"},
+		UpstreamNameservers: []string{"ns1.test:53", "ns2.test:53"},
+		QueryTimeout:        "2s",
+		ListenAddress:       ":15353",
+		DialContext:         mockDialer,
+		DefaultProtocol:     "tcp",
+	}
+
+	resolver, err := New(context.Background(), testLogger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	// Create a DNS query
+	query := new(dns.Msg)
+	query.SetQuestion("example.com.", dns.TypeA)
+	queryBytes, err := query.Pack()
+	if err != nil {
+		t.Fatalf("Failed to pack query: %v", err)
+	}
+
+	// Use forwardQueryTCP to test the fallback behavior
+	response := resolver.forwardQueryTCP(queryBytes, "example.com", dns.TypeA, config.UpstreamNameservers, "test:1")
+
+	// Both nameservers should have been called
+	if callCount != 2 {
+		t.Errorf("Expected 2 nameserver calls, got %d", callCount)
+	}
+
+	// Should get success from second nameserver
+	if response == nil {
+		t.Fatal("Expected non-nil response")
+	}
+	if response.Rcode != dns.RcodeSuccess {
+		t.Errorf("Expected RcodeSuccess, got %s", dns.RcodeToString[response.Rcode])
+	}
+	if len(response.Answer) == 0 {
+		t.Error("Expected at least one answer")
+	}
+}
+
+func TestDNSResolver_NegativeCaching(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	tests := []struct {
+		name           string
+		response       *dns.Msg
+		expectCached   bool
+		expectedTTL    uint32
+		cacheType      string
+	}{
+		{
+			name: "NODATA response (NOERROR with no answers) is cached",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}},
+				Answer:   []dns.RR{}, // No answers
+				Ns: []dns.RR{
+					&dns.SOA{
+						Hdr:     dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 900},
+						Ns:      "ns1.example.com.",
+						Mbox:    "admin.example.com.",
+						Serial:  1,
+						Refresh: 21600,
+						Retry:   3600,
+						Expire:  259200,
+						Minttl:  60, // Negative cache TTL
+					},
+				},
+			},
+			expectCached: true,
+			expectedTTL:  60, // min(900, 60) = 60
+			cacheType:    "negative",
+		},
+		{
+			name: "NXDOMAIN response is cached",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeNameError, // NXDOMAIN
+				},
+				Question: []dns.Question{{Name: "nonexistent.example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+				Answer:   []dns.RR{},
+				Ns: []dns.RR{
+					&dns.SOA{
+						Hdr:     dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+						Ns:      "ns1.example.com.",
+						Mbox:    "admin.example.com.",
+						Serial:  1,
+						Refresh: 21600,
+						Retry:   3600,
+						Expire:  259200,
+						Minttl:  120,
+					},
+				},
+			},
+			expectCached: true,
+			expectedTTL:  120, // min(300, 120) = 120
+			cacheType:    "negative",
+		},
+		{
+			name: "SOA TTL used when smaller than MINIMUM",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}},
+				Answer:   []dns.RR{},
+				Ns: []dns.RR{
+					&dns.SOA{
+						Hdr:     dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 30},
+						Ns:      "ns1.example.com.",
+						Mbox:    "admin.example.com.",
+						Serial:  1,
+						Refresh: 21600,
+						Retry:   3600,
+						Expire:  259200,
+						Minttl:  300, // Larger than TTL
+					},
+				},
+			},
+			expectCached: true,
+			expectedTTL:  30, // min(30, 300) = 30
+			cacheType:    "negative",
+		},
+		{
+			name: "Negative response without SOA uses DefaultNegativeTTL",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}},
+				Answer:   []dns.RR{}, // No answers
+				Ns:       []dns.RR{}, // No SOA
+			},
+			expectCached: true,
+			expectedTTL:  30, // Uses default negative TTL
+			cacheType:    "negative",
+		},
+		{
+			name: "SERVFAIL is not cached",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeServerFailure,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+			},
+			expectCached: false,
+			expectedTTL:  0,
+			cacheType:    "",
+		},
+		{
+			name: "REFUSED is not cached",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeRefused,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+			},
+			expectCached: false,
+			expectedTTL:  0,
+			cacheType:    "",
+		},
+		{
+			name: "Positive response is still cached",
+			response: &dns.Msg{
+				MsgHdr: dns.MsgHdr{
+					Id:       1234,
+					Response: true,
+					Rcode:    dns.RcodeSuccess,
+				},
+				Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeA, Qclass: dns.ClassINET}},
+				Answer: []dns.RR{
+					&dns.A{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 3600},
+						A:   net.ParseIP("93.184.216.34"),
+					},
+				},
+			},
+			expectCached: true,
+			expectedTTL:  3600,
+			cacheType:    "positive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+
+			config := DNSConfig{
+				ManagedDomains:      []string{"test.local"},
+				InternalNameservers: []string{"ns1.test.local:53"},
+				UpstreamNameservers: []string{"8.8.8.8:53"},
+				QueryTimeout:        "2s",
+				ListenAddress:       ":15353",
+				DefaultNegativeTTL:  30, // Default for tests
+			}
+
+			resolver, err := New(ctx, testLogger, config)
+			if err != nil {
+				t.Fatalf("Failed to create resolver: %v", err)
+			}
+			defer resolver.Stop()
+
+			// Pack the response
+			responseBytes, err := tt.response.Pack()
+			if err != nil {
+				t.Fatalf("Failed to pack response: %v", err)
+			}
+
+			domain := "example.com"
+			queryType := uint16(dns.TypeA)
+			if len(tt.response.Question) > 0 {
+				domain = tt.response.Question[0].Name
+				queryType = tt.response.Question[0].Qtype
+			}
+			cacheKey := fmt.Sprintf("%s:%d", domain, queryType)
+
+			// Call cacheResponse
+			resolver.cacheResponse(cacheKey, responseBytes, tt.response, domain, queryType)
+
+			// Check if it was cached
+			found, cached, _ := resolver.cache.Get(cacheKey)
+
+			if tt.expectCached {
+				if !found {
+					t.Errorf("Expected response to be cached, but it wasn't")
+					return
+				}
+
+				cacheEntry, ok := cached.(*dnsCacheEntry)
+				if !ok {
+					t.Fatalf("Cached value is not a dnsCacheEntry")
+				}
+
+				if cacheEntry.minTTL != tt.expectedTTL {
+					t.Errorf("Expected TTL %d, got %d", tt.expectedTTL, cacheEntry.minTTL)
+				}
+			} else {
+				if found {
+					t.Errorf("Expected response NOT to be cached, but it was")
+				}
+			}
+		})
+	}
+}
+
+func TestDNSResolver_NegativeCaching_DisabledDefault(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+	ctx := context.Background()
+
+	// Test that setting DefaultNegativeTTL to 0 disables caching when no SOA is present
+	config := DNSConfig{
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"ns1.test.local:53"},
+		UpstreamNameservers: []string{"8.8.8.8:53"},
+		QueryTimeout:        "2s",
+		ListenAddress:       ":15353",
+		DefaultNegativeTTL:  0, // Disabled
+	}
+
+	resolver, err := New(ctx, testLogger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+	defer resolver.Stop()
+
+	// Create a negative response without SOA
+	response := &dns.Msg{
+		MsgHdr: dns.MsgHdr{
+			Id:       1234,
+			Response: true,
+			Rcode:    dns.RcodeSuccess,
+		},
+		Question: []dns.Question{{Name: "example.com.", Qtype: dns.TypeAAAA, Qclass: dns.ClassINET}},
+		Answer:   []dns.RR{}, // No answers
+		Ns:       []dns.RR{}, // No SOA
+	}
+
+	responseBytes, err := response.Pack()
+	if err != nil {
+		t.Fatalf("Failed to pack response: %v", err)
+	}
+
+	cacheKey := "example.com.:28" // AAAA = 28
+	resolver.cacheResponse(cacheKey, responseBytes, response, "example.com.", dns.TypeAAAA)
+
+	// Should NOT be cached since DefaultNegativeTTL is 0
+	found, _, _ := resolver.cache.Get(cacheKey)
+	if found {
+		t.Error("Expected response NOT to be cached when DefaultNegativeTTL is 0, but it was")
+	}
+}
+
+func TestDNSResolver_GetNegativeCacheTTL(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+
+	ctx := context.Background()
+	config := DNSConfig{
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"ns1.test.local:53"},
+		UpstreamNameservers: []string{"8.8.8.8:53"},
+		QueryTimeout:        "2s",
+		ListenAddress:       ":15353",
+	}
+
+	resolver, err := New(ctx, testLogger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	tests := []struct {
+		name        string
+		response    *dns.Msg
+		expectedTTL uint32
+	}{
+		{
+			name: "SOA MINIMUM is smaller",
+			response: &dns.Msg{
+				Ns: []dns.RR{
+					&dns.SOA{
+						Hdr:    dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Ttl: 900},
+						Minttl: 60,
+					},
+				},
+			},
+			expectedTTL: 60,
+		},
+		{
+			name: "SOA TTL is smaller",
+			response: &dns.Msg{
+				Ns: []dns.RR{
+					&dns.SOA{
+						Hdr:    dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Ttl: 30},
+						Minttl: 300,
+					},
+				},
+			},
+			expectedTTL: 30,
+		},
+		{
+			name: "No SOA record",
+			response: &dns.Msg{
+				Ns: []dns.RR{},
+			},
+			expectedTTL: 0,
+		},
+		{
+			name: "SOA with other NS records",
+			response: &dns.Msg{
+				Ns: []dns.RR{
+					&dns.NS{
+						Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeNS, Ttl: 3600},
+						Ns:  "ns1.example.com.",
+					},
+					&dns.SOA{
+						Hdr:    dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeSOA, Ttl: 600},
+						Minttl: 120,
+					},
+				},
+			},
+			expectedTTL: 120,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ttl := resolver.getNegativeCacheTTL(tt.response)
+			if ttl != tt.expectedTTL {
+				t.Errorf("getNegativeCacheTTL() = %d, want %d", ttl, tt.expectedTTL)
 			}
 		})
 	}

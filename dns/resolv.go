@@ -55,7 +55,23 @@ func ParseResolvConf(filename string) (*ParsedResolvConf, error) {
 				continue
 			}
 			// Add port 53 if not specified
-			if !strings.Contains(ns, ":") {
+			// Handle IPv6 addresses which contain colons as part of the address
+			if strings.HasPrefix(ns, "[") {
+				// IPv6 with brackets - check if port is present (e.g., [::1]:53)
+				if !strings.Contains(ns, "]:") {
+					ns = ns + ":53"
+				}
+			} else if ip := net.ParseIP(ns); ip != nil {
+				// Valid IP address without port
+				if ip.To4() == nil {
+					// IPv6 without brackets - wrap and add port
+					ns = "[" + ns + "]:53"
+				} else {
+					// IPv4 without port
+					ns = ns + ":53"
+				}
+			} else if !strings.Contains(ns, ":") {
+				// Hostname without port
 				ns = ns + ":53"
 			}
 			result.Nameservers = append(result.Nameservers, ns)

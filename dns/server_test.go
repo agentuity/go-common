@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -1401,18 +1402,23 @@ func TestDNSResolver_NameserverFallback(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			var mu sync.Mutex
 			var callCount int
 			var secondCalled bool
 
 			// Create a mock dialer that returns different responses per nameserver
 			mockDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
+				mu.Lock()
 				callCount++
+				mu.Unlock()
 
 				var response *dns.Msg
 				if address == "ns1.test:53" {
 					response = tt.firstResponse
 				} else if address == "ns2.test:53" {
+					mu.Lock()
 					secondCalled = true
+					mu.Unlock()
 					response = tt.secondResponse
 				}
 
@@ -1461,11 +1467,15 @@ func TestDNSResolver_NameserverFallback(t *testing.T) {
 			}
 
 			// Use forwardQueryTCP to test the fallback behavior
+			// With staggered queries, we need to allow time for the stagger timer to fire
 			response := resolver.forwardQueryTCP(queryBytes, "example.com", dns.TypeA, config.UpstreamNameservers, "test:1")
 
 			// Check if second nameserver was called as expected
-			if secondCalled != tt.expectSecondCalled {
-				t.Errorf("Second nameserver called = %v, want %v", secondCalled, tt.expectSecondCalled)
+			mu.Lock()
+			gotSecondCalled := secondCalled
+			mu.Unlock()
+			if gotSecondCalled != tt.expectSecondCalled {
+				t.Errorf("Second nameserver called = %v, want %v", gotSecondCalled, tt.expectSecondCalled)
 			}
 
 			// Check response

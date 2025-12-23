@@ -19,6 +19,7 @@ const (
 	dnsPacketSize         = 1232 // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
 	maxRecursionDepth     = 10   // maximum CNAME chain depth
 	maxConcurrentRequests = 1000 // maximum concurrent DNS request handlers
+	staggerDelay          = 150  // milliseconds to wait before querying next nameserver
 )
 
 // dnsCacheEntry represents a cached DNS response with metadata
@@ -447,51 +448,108 @@ func (s *DNSResolver) bytesToMsg(data []byte) *dns.Msg {
 	return msg
 }
 
-// forwardQueryTCP forwards a DNS query and returns the response (for TCP)
+// forwardQueryTCP forwards a DNS query and returns the response (for TCP) using staggered queries
 func (s *DNSResolver) forwardQueryTCP(originalData []byte, domain string, queryType uint16, nameservers []string, cacheKey string) *dns.Msg {
-	for _, ns := range nameservers {
-		s.logger.Debug("sending TCP DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], ns)
-		response, err := s.queryNameserver(s.ctx, originalData, ns)
-		if err != nil {
-			s.logger.Debug("Failed to query %s: %v", ns, err)
-			continue
-		}
-		if response == nil {
-			continue
-		}
+	if len(nameservers) == 0 {
+		return nil
+	}
 
-		s.debugDNSResponse(response, domain, queryType)
+	ctx, cancel := context.WithTimeout(s.ctx, s.queryTimeout)
+	defer cancel()
 
-		// If the server returned SERVFAIL or REFUSED, try the next nameserver
-		// NXDOMAIN is authoritative and should not be retried
-		if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
-			s.logger.Debug("Nameserver %s returned %s, trying next", ns, dns.RcodeToString[response.Rcode])
-			continue
-		}
+	resultCh := make(chan nsResponse, len(nameservers))
+	staggerTimer := time.NewTimer(staggerDelay * time.Millisecond)
+	defer staggerTimer.Stop()
 
-		// Check if we need to recursively resolve CNAME
-		if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
-			s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
-			cnameNameservers := s.selectNameservers(cnameTarget)
-			finalResponse, err := s.resolveCNAMERecursively(s.ctx, cnameTarget, queryType, cnameNameservers, 1)
-			if err != nil {
-				s.logger.Error("Failed to resolve CNAME chain: %v", err)
-			} else if finalResponse != nil {
-				finalResponse.MsgHdr = response.MsgHdr
-				finalResponse.Question = response.Question
-				finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
-				response = finalResponse
-				s.debugDNSResponse(response, domain, queryType)
+	nextNS := 0
+
+	// Start first query immediately
+	s.logger.Debug("sending TCP DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], nameservers[nextNS])
+	go func(ns string) {
+		response, err := s.queryNameserver(ctx, originalData, ns)
+		resultCh <- nsResponse{response: response, ns: ns, err: err}
+	}(nameservers[nextNS])
+	nextNS++
+
+	responsesExpected := 1
+	responsesReceived := 0
+	failedResponses := 0
+
+	// Continue while we're waiting for responses OR we have more nameservers to try
+	for responsesReceived < responsesExpected || nextNS < len(nameservers) {
+		select {
+		case <-ctx.Done():
+			s.logger.Debug("TCP DNS query for %s (%s) timed out", domain, dns.TypeToString[queryType])
+			return nil
+
+		case <-staggerTimer.C:
+			if nextNS < len(nameservers) {
+				s.logger.Debug("staggering: sending TCP DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], nameservers[nextNS])
+				go func(ns string) {
+					response, err := s.queryNameserver(ctx, originalData, ns)
+					resultCh <- nsResponse{response: response, ns: ns, err: err}
+				}(nameservers[nextNS])
+				nextNS++
+				responsesExpected++
+				staggerTimer.Reset(staggerDelay * time.Millisecond)
 			}
-		}
 
-		// Cache the response
-		responseBytes, err := response.Pack()
-		if err == nil {
-			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
-		}
+		case result := <-resultCh:
+			responsesReceived++
 
-		return response
+			if result.err != nil {
+				s.logger.Debug("Failed to query %s: %v", result.ns, result.err)
+				failedResponses++
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0)
+				}
+				continue
+			}
+
+			if result.response == nil {
+				failedResponses++
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0)
+				}
+				continue
+			}
+
+			response := result.response
+			s.debugDNSResponse(response, domain, queryType)
+
+			if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
+				s.logger.Debug("Nameserver %s returned %s, waiting for other responses", result.ns, dns.RcodeToString[response.Rcode])
+				failedResponses++
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0)
+				}
+				continue
+			}
+
+			// Check if we need to recursively resolve CNAME
+			if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
+				s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
+				cnameNameservers := s.selectNameservers(cnameTarget)
+				finalResponse, err := s.resolveCNAMERecursively(ctx, cnameTarget, queryType, cnameNameservers, 1)
+				if err != nil {
+					s.logger.Error("Failed to resolve CNAME chain: %v", err)
+				} else if finalResponse != nil {
+					finalResponse.MsgHdr = response.MsgHdr
+					finalResponse.Question = response.Question
+					finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
+					response = finalResponse
+					s.debugDNSResponse(response, domain, queryType)
+				}
+			}
+
+			// Cache the response
+			responseBytes, err := response.Pack()
+			if err == nil {
+				s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+			}
+
+			return response
+		}
 	}
 
 	s.logger.Debug("TCP DNS returned error for %s (%s)", domain, dns.TypeToString[queryType])
@@ -589,66 +647,138 @@ func (s *DNSResolver) selectNameservers(target string) []string {
 	return nameservers
 }
 
-// forwardQuery forwards a DNS query to nameservers
+// nsResponse holds the result of a nameserver query
+type nsResponse struct {
+	response *dns.Msg
+	ns       string
+	err      error
+}
+
+// forwardQuery forwards a DNS query to nameservers using staggered concurrent queries.
+// It starts with the first nameserver, then after staggerDelay fires off additional
+// nameservers if no response has been received yet. Uses the first successful response.
 func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domain string, queryType uint16, clientAddr *net.UDPAddr, nameservers []string, cacheKey string) {
-	for _, ns := range nameservers {
-		s.logger.Debug("sending DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], ns)
-		response, err := s.queryNameserver(s.ctx, originalData, ns)
-		if err != nil {
-			s.logger.Debug("Failed to query %s: %v", ns, err)
-			continue
-		}
-		if response == nil {
-			continue
-		}
+	if len(nameservers) == 0 {
+		s.sendErrorResponse(conn, originalData, clientAddr)
+		return
+	}
 
-		s.debugDNSResponse(response, domain, queryType)
+	ctx, cancel := context.WithTimeout(s.ctx, s.queryTimeout)
+	defer cancel()
 
-		// If the server returned SERVFAIL or REFUSED, try the next nameserver
-		// NXDOMAIN is authoritative and should not be retried
-		if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
-			s.logger.Debug("Nameserver %s returned %s, trying next", ns, dns.RcodeToString[response.Rcode])
-			continue
-		}
+	resultCh := make(chan nsResponse, len(nameservers))
+	staggerTimer := time.NewTimer(staggerDelay * time.Millisecond)
+	defer staggerTimer.Stop()
 
-		// Check if we need to recursively resolve CNAME
-		if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
-			s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
+	// Track which nameservers we've started querying
+	nextNS := 0
 
-			// Determine nameservers for CNAME target
-			cnameNameservers := s.selectNameservers(cnameTarget)
+	// Start first query immediately
+	s.logger.Debug("sending DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], nameservers[nextNS])
+	go func(ns string) {
+		response, err := s.queryNameserver(ctx, originalData, ns)
+		resultCh <- nsResponse{response: response, ns: ns, err: err}
+	}(nameservers[nextNS])
+	nextNS++
 
-			// Recursively resolve the CNAME
-			finalResponse, err := s.resolveCNAMERecursively(s.ctx, cnameTarget, queryType, cnameNameservers, 1)
-			if err != nil {
-				s.logger.Error("Failed to resolve CNAME chain: %v", err)
-				// Fall back to sending the partial CNAME response
-			} else if finalResponse != nil {
-				// Merge CNAME records with final response
-				finalResponse.MsgHdr = response.MsgHdr     // Preserve original header fields and transaction ID
-				finalResponse.Question = response.Question // Preserve original question
-				finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
-				response = finalResponse
-				s.debugDNSResponse(response, domain, queryType)
+	responsesExpected := 1
+	responsesReceived := 0
+	failedResponses := 0
+
+	// Continue while we're waiting for responses OR we have more nameservers to try
+	for responsesReceived < responsesExpected || nextNS < len(nameservers) {
+		select {
+		case <-ctx.Done():
+			s.logger.Debug("DNS query for %s (%s) timed out", domain, dns.TypeToString[queryType])
+			s.sendErrorResponse(conn, originalData, clientAddr)
+			return
+
+		case <-staggerTimer.C:
+			// No response yet, fire off the next nameserver
+			if nextNS < len(nameservers) {
+				s.logger.Debug("staggering: sending DNS query for %s (%s) to %s", domain, dns.TypeToString[queryType], nameservers[nextNS])
+				go func(ns string) {
+					response, err := s.queryNameserver(ctx, originalData, ns)
+					resultCh <- nsResponse{response: response, ns: ns, err: err}
+				}(nameservers[nextNS])
+				nextNS++
+				responsesExpected++
+				staggerTimer.Reset(staggerDelay * time.Millisecond)
 			}
-		}
 
-		// Pack the response back to raw bytes
-		responseBytes, err := response.Pack()
-		if err != nil {
-			s.logger.Error("failed to pack DNS response: %s", err)
+		case result := <-resultCh:
+			responsesReceived++
+
+			if result.err != nil {
+				s.logger.Debug("Failed to query %s: %v", result.ns, result.err)
+				failedResponses++
+				// If all responses so far have failed and we have more nameservers, trigger next one immediately
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0) // Fire next nameserver immediately
+				}
+				continue
+			}
+
+			if result.response == nil {
+				failedResponses++
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0)
+				}
+				continue
+			}
+
+			response := result.response
+			s.debugDNSResponse(response, domain, queryType)
+
+			// If the server returned SERVFAIL or REFUSED, wait for other responses or try next
+			if response.Rcode == dns.RcodeServerFailure || response.Rcode == dns.RcodeRefused {
+				s.logger.Debug("Nameserver %s returned %s, waiting for other responses", result.ns, dns.RcodeToString[response.Rcode])
+				failedResponses++
+				if failedResponses == responsesReceived && nextNS < len(nameservers) {
+					staggerTimer.Reset(0)
+				}
+				continue
+			}
+
+			// Check if we need to recursively resolve CNAME
+			if needsRecursion, cnameTarget := s.needsCNAMEResolution(response, queryType); needsRecursion {
+				s.logger.Debug("Response contains CNAME without final record, recursively resolving %s", cnameTarget)
+
+				// Determine nameservers for CNAME target
+				cnameNameservers := s.selectNameservers(cnameTarget)
+
+				// Recursively resolve the CNAME
+				finalResponse, err := s.resolveCNAMERecursively(ctx, cnameTarget, queryType, cnameNameservers, 1)
+				if err != nil {
+					s.logger.Error("Failed to resolve CNAME chain: %v", err)
+					// Fall back to sending the partial CNAME response
+				} else if finalResponse != nil {
+					// Merge CNAME records with final response
+					finalResponse.MsgHdr = response.MsgHdr     // Preserve original header fields and transaction ID
+					finalResponse.Question = response.Question // Preserve original question
+					finalResponse.Answer = append(response.Answer, finalResponse.Answer...)
+					response = finalResponse
+					s.debugDNSResponse(response, domain, queryType)
+				}
+			}
+
+			// Pack the response back to raw bytes
+			responseBytes, err := response.Pack()
+			if err != nil {
+				s.logger.Error("failed to pack DNS response: %s", err)
+				continue
+			}
+
+			// Cache the response using the minimum TTL from all answers
+			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+
+			// Send response back to client
+			_, err = conn.WriteToUDP(responseBytes, clientAddr)
+			if err != nil {
+				s.logger.Error("Failed to send DNS response: %v", err)
+			}
 			return
 		}
-
-		// Cache the response using the minimum TTL from all answers
-		s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
-
-		// Send response back to client
-		_, err = conn.WriteToUDP(responseBytes, clientAddr)
-		if err != nil {
-			s.logger.Error("Failed to send DNS response: %v", err)
-		}
-		return
 	}
 
 	s.logger.Debug("DNS returned error for %s (%s) to %s", domain, dns.TypeToString[queryType], clientAddr)

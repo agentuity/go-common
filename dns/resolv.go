@@ -113,10 +113,10 @@ func isLoopbackAddress(addr string) bool {
 // DefaultExternalDNSServers as fallbacks. Duplicates are removed.
 func GetSystemNameservers() []string {
 	parsed, err := ParseResolvConf(DefaultResolveConfFilename)
-	
+
 	var result []string
 	seen := make(map[string]bool)
-	
+
 	// Add system nameservers first (if any)
 	if err == nil {
 		for _, ns := range parsed.Nameservers {
@@ -126,7 +126,7 @@ func GetSystemNameservers() []string {
 			}
 		}
 	}
-	
+
 	// Add default external nameservers as fallbacks
 	for _, ns := range DefaultExternalDNSServers {
 		if !seen[ns] {
@@ -134,7 +134,7 @@ func GetSystemNameservers() []string {
 			result = append(result, ns)
 		}
 	}
-	
+
 	return result
 }
 

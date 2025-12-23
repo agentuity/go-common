@@ -16,10 +16,10 @@ import (
 )
 
 const (
-	dnsPacketSize         = 1232          // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
-	maxRecursionDepth     = 10            // maximum CNAME chain depth
-	maxConcurrentRequests = 1000          // maximum concurrent DNS request handlers
-	staggerDelay          = 150           // milliseconds to wait before querying next nameserver
+	dnsPacketSize         = 1232 // EDNS0-safe UDP payload size to avoid IPv6 fragmentation; accommodates most real-world queries.
+	maxRecursionDepth     = 10   // maximum CNAME chain depth
+	maxConcurrentRequests = 1000 // maximum concurrent DNS request handlers
+	staggerDelay          = 150  // milliseconds to wait before querying next nameserver
 )
 
 // dnsCacheEntry represents a cached DNS response with metadata

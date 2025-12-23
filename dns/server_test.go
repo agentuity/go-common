@@ -1587,11 +1587,11 @@ func TestDNSResolver_NegativeCaching(t *testing.T) {
 	testLogger := logger.NewTestLogger()
 
 	tests := []struct {
-		name           string
-		response       *dns.Msg
-		expectCached   bool
-		expectedTTL    uint32
-		cacheType      string
+		name         string
+		response     *dns.Msg
+		expectCached bool
+		expectedTTL  uint32
+		cacheType    string
 	}{
 		{
 			name: "NODATA response (NOERROR with no answers) is cached",

@@ -665,6 +665,7 @@ func (s *DNSResolver) isInternalNameserver(target string) bool {
 			// No port in the address, use as-is
 			host = ns
 		}
+		host = strings.TrimSuffix(host, ".")
 		// Skip if the nameserver is already an IP address
 		if net.ParseIP(host) != nil {
 			continue

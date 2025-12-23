@@ -630,6 +630,14 @@ func (s *DNSResolver) parseSimpleDNSQuery(data []byte) (string, uint16, error) {
 func (s *DNSResolver) selectNameservers(target string) []string {
 	// Determine nameservers for CNAME target
 	var nameservers []string
+
+	// Check if the target is one of the internal nameservers themselves.
+	// This prevents a resolution loop where we try to resolve an internal
+	// nameserver's hostname using that same nameserver.
+	if s.isInternalNameserver(target) {
+		return s.config.UpstreamNameservers
+	}
+
 	if s.config.IsManagedDomain(target) {
 		if len(s.config.InternalNameservers) > 1 {
 			// load balance between internal nameservers
@@ -645,6 +653,27 @@ func (s *DNSResolver) selectNameservers(target string) []string {
 		nameservers = s.config.UpstreamNameservers
 	}
 	return nameservers
+}
+
+// isInternalNameserver checks if the target domain matches any of the internal nameserver hostnames.
+// This is used to prevent resolution loops.
+func (s *DNSResolver) isInternalNameserver(target string) bool {
+	targetLower := strings.ToLower(strings.TrimSuffix(target, "."))
+	for _, ns := range s.config.InternalNameservers {
+		host, _, err := net.SplitHostPort(ns)
+		if err != nil {
+			// No port in the address, use as-is
+			host = ns
+		}
+		// Skip if the nameserver is already an IP address
+		if net.ParseIP(host) != nil {
+			continue
+		}
+		if strings.ToLower(host) == targetLower {
+			return true
+		}
+	}
+	return false
 }
 
 // nsResponse holds the result of a nameserver query

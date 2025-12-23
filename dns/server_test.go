@@ -43,6 +43,76 @@ func TestDNSConfig_IsManagedDomain(t *testing.T) {
 	}
 }
 
+func TestDNSResolver_isInternalNameserver(t *testing.T) {
+	logger := logger.NewTestLogger()
+	config := DNSConfig{
+		ManagedDomains:      []string{"agentuity.io.internal", "agentuity.internal"},
+		InternalNameservers: []string{"aether:53"},
+		UpstreamNameservers: []string{"127.0.0.11:53"},
+		QueryTimeout:        "5s",
+	}
+
+	resolver, err := New(context.Background(), logger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	tests := []struct {
+		target   string
+		expected bool
+	}{
+		{"aether", true},
+		{"aether.", true},
+		{"AETHER", true},
+		{"sub.aether", false},
+		{"aether.agentuity.internal", false},
+		{"other.internal", false},
+		{"127.0.0.11", false}, // upstream is an IP, not a hostname
+		{"", false},
+	}
+
+	for _, test := range tests {
+		result := resolver.isInternalNameserver(test.target)
+		if result != test.expected {
+			t.Errorf("isInternalNameserver(%q) = %v, want %v", test.target, result, test.expected)
+		}
+	}
+}
+
+func TestDNSResolver_selectNameservers_avoidsLoop(t *testing.T) {
+	logger := logger.NewTestLogger()
+	config := DNSConfig{
+		ManagedDomains:      []string{"agentuity.io.internal", "agentuity.internal"},
+		InternalNameservers: []string{"aether:53"},
+		UpstreamNameservers: []string{"127.0.0.11:53"},
+		QueryTimeout:        "5s",
+	}
+
+	resolver, err := New(context.Background(), logger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	tests := []struct {
+		target           string
+		expectUpstream   bool
+		description      string
+	}{
+		{"aether", true, "internal nameserver hostname should use upstream"},
+		{"app.agentuity.internal", false, "managed domain should use internal"},
+		{"google.com", true, "external domain should use upstream"},
+	}
+
+	for _, test := range tests {
+		ns := resolver.selectNameservers(test.target)
+		isUpstream := len(ns) > 0 && ns[0] == "127.0.0.11:53"
+		if isUpstream != test.expectUpstream {
+			t.Errorf("selectNameservers(%q): %s - got upstream=%v, want upstream=%v",
+				test.target, test.description, isUpstream, test.expectUpstream)
+		}
+	}
+}
+
 func TestDNSConfig_Validate(t *testing.T) {
 	tests := []struct {
 		name    string

@@ -119,6 +119,30 @@ func (c *TestLogger) Stack(next Logger) Logger {
 	return &TestLogger{c.metadata, c.Logs, next, sync.Mutex{}}
 }
 
+func (c *TestLogger) IsLevelEnabled(level LogLevel) bool {
+	return true
+}
+
+func (c *TestLogger) IsTraceEnabled() bool {
+	return true
+}
+
+func (c *TestLogger) IsDebugEnabled() bool {
+	return true
+}
+
+func (c *TestLogger) IsInfoEnabled() bool {
+	return true
+}
+
+func (c *TestLogger) IsWarnEnabled() bool {
+	return true
+}
+
+func (c *TestLogger) IsErrorEnabled() bool {
+	return true
+}
+
 // NewTestLogger returns a new Logger instance useful for testing
 func NewTestLogger() *TestLogger {
 	return &TestLogger{

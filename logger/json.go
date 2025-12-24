@@ -211,6 +211,30 @@ func (c *jsonLogger) SetLogLevel(level LogLevel) {
 	c.logLevel = level
 }
 
+func (c *jsonLogger) IsLevelEnabled(level LogLevel) bool {
+	return level >= c.logLevel || (c.sink != nil && level >= c.sinkLogLevel)
+}
+
+func (c *jsonLogger) IsTraceEnabled() bool {
+	return c.IsLevelEnabled(LevelTrace)
+}
+
+func (c *jsonLogger) IsDebugEnabled() bool {
+	return c.IsLevelEnabled(LevelDebug)
+}
+
+func (c *jsonLogger) IsInfoEnabled() bool {
+	return c.IsLevelEnabled(LevelInfo)
+}
+
+func (c *jsonLogger) IsWarnEnabled() bool {
+	return c.IsLevelEnabled(LevelWarn)
+}
+
+func (c *jsonLogger) IsErrorEnabled() bool {
+	return c.IsLevelEnabled(LevelError)
+}
+
 func (c *jsonLogger) Stack(next Logger) Logger {
 	clone := c.clone()
 	clone.child = next

@@ -63,6 +63,18 @@ type Logger interface {
 	Fatal(msg string, args ...interface{})
 	// Stack will return a new logger that logs to the given logger as well as the current logger
 	Stack(next Logger) Logger
+	// IsLevelEnabled returns true if the given log level is enabled
+	IsLevelEnabled(level LogLevel) bool
+	// IsTraceEnabled returns true if trace level logging is enabled
+	IsTraceEnabled() bool
+	// IsDebugEnabled returns true if debug level logging is enabled
+	IsDebugEnabled() bool
+	// IsInfoEnabled returns true if info level logging is enabled
+	IsInfoEnabled() bool
+	// IsWarnEnabled returns true if warn level logging is enabled
+	IsWarnEnabled() bool
+	// IsErrorEnabled returns true if error level logging is enabled
+	IsErrorEnabled() bool
 }
 
 type SinkLogger interface {

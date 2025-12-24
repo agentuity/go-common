@@ -241,6 +241,30 @@ func (c *consoleLogger) SetLogLevel(level LogLevel) {
 	c.logLevel = level
 }
 
+func (c *consoleLogger) IsLevelEnabled(level LogLevel) bool {
+	return level >= c.logLevel || (c.sink != nil && level >= c.sinkLogLevel)
+}
+
+func (c *consoleLogger) IsTraceEnabled() bool {
+	return c.IsLevelEnabled(LevelTrace)
+}
+
+func (c *consoleLogger) IsDebugEnabled() bool {
+	return c.IsLevelEnabled(LevelDebug)
+}
+
+func (c *consoleLogger) IsInfoEnabled() bool {
+	return c.IsLevelEnabled(LevelInfo)
+}
+
+func (c *consoleLogger) IsWarnEnabled() bool {
+	return c.IsLevelEnabled(LevelWarn)
+}
+
+func (c *consoleLogger) IsErrorEnabled() bool {
+	return c.IsLevelEnabled(LevelError)
+}
+
 // NewConsoleLogger returns a new Logger instance which will log to the console
 func NewConsoleLogger(levels ...LogLevel) SinkLogger {
 	if len(levels) > 0 {

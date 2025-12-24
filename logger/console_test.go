@@ -318,3 +318,79 @@ func TestConsoleLoggerSinkErrorLevel(t *testing.T) {
 	})
 	assert.Contains(t, output, "This is an error message")
 }
+
+func TestConsoleLoggerIsLevelEnabled(t *testing.T) {
+	tests := []struct {
+		name           string
+		logLevel       LogLevel
+		traceEnabled   bool
+		debugEnabled   bool
+		infoEnabled    bool
+		warnEnabled    bool
+		errorEnabled   bool
+	}{
+		{
+			name:         "trace level enables all",
+			logLevel:     LevelTrace,
+			traceEnabled: true,
+			debugEnabled: true,
+			infoEnabled:  true,
+			warnEnabled:  true,
+			errorEnabled: true,
+		},
+		{
+			name:         "debug level disables trace",
+			logLevel:     LevelDebug,
+			traceEnabled: false,
+			debugEnabled: true,
+			infoEnabled:  true,
+			warnEnabled:  true,
+			errorEnabled: true,
+		},
+		{
+			name:         "info level disables trace and debug",
+			logLevel:     LevelInfo,
+			traceEnabled: false,
+			debugEnabled: false,
+			infoEnabled:  true,
+			warnEnabled:  true,
+			errorEnabled: true,
+		},
+		{
+			name:         "warn level disables trace, debug, and info",
+			logLevel:     LevelWarn,
+			traceEnabled: false,
+			debugEnabled: false,
+			infoEnabled:  false,
+			warnEnabled:  true,
+			errorEnabled: true,
+		},
+		{
+			name:         "error level only enables error",
+			logLevel:     LevelError,
+			traceEnabled: false,
+			debugEnabled: false,
+			infoEnabled:  false,
+			warnEnabled:  false,
+			errorEnabled: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := NewConsoleLogger(tt.logLevel)
+
+			assert.Equal(t, tt.traceEnabled, logger.IsLevelEnabled(LevelTrace))
+			assert.Equal(t, tt.debugEnabled, logger.IsLevelEnabled(LevelDebug))
+			assert.Equal(t, tt.infoEnabled, logger.IsLevelEnabled(LevelInfo))
+			assert.Equal(t, tt.warnEnabled, logger.IsLevelEnabled(LevelWarn))
+			assert.Equal(t, tt.errorEnabled, logger.IsLevelEnabled(LevelError))
+
+			assert.Equal(t, tt.traceEnabled, logger.IsTraceEnabled())
+			assert.Equal(t, tt.debugEnabled, logger.IsDebugEnabled())
+			assert.Equal(t, tt.infoEnabled, logger.IsInfoEnabled())
+			assert.Equal(t, tt.warnEnabled, logger.IsWarnEnabled())
+			assert.Equal(t, tt.errorEnabled, logger.IsErrorEnabled())
+		})
+	}
+}

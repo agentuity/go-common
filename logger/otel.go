@@ -191,6 +191,30 @@ func (o *otelLogger) Stack(next Logger) Logger {
 	return clone
 }
 
+func (o *otelLogger) IsLevelEnabled(level LogLevel) bool {
+	return level >= o.logLevel
+}
+
+func (o *otelLogger) IsTraceEnabled() bool {
+	return o.IsLevelEnabled(LevelTrace)
+}
+
+func (o *otelLogger) IsDebugEnabled() bool {
+	return o.IsLevelEnabled(LevelDebug)
+}
+
+func (o *otelLogger) IsInfoEnabled() bool {
+	return o.IsLevelEnabled(LevelInfo)
+}
+
+func (o *otelLogger) IsWarnEnabled() bool {
+	return o.IsLevelEnabled(LevelWarn)
+}
+
+func (o *otelLogger) IsErrorEnabled() bool {
+	return o.IsLevelEnabled(LevelError)
+}
+
 func NewOtelLogger(otelsLogger otelLog.Logger, levels LogLevel) Logger {
 	return &otelLogger{
 		otelLogger: otelsLogger,

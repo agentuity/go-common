@@ -136,6 +136,10 @@ type GravityClient struct {
 	pendingRouteDeployment   map[string]chan *pb.RouteDeploymentResponse
 	pendingRouteDeploymentMu sync.RWMutex
 
+	// Route sandbox responses
+	pendingRouteSandbox   map[string]chan *pb.RouteSandboxResponse
+	pendingRouteSandboxMu sync.RWMutex
+
 	// Packet channels for network device multiplexing
 	inboundPackets  chan *PooledBuffer
 	outboundPackets chan []byte
@@ -262,6 +266,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteDeployment: make(map[string]chan *pb.RouteDeploymentResponse),
+		pendingRouteSandbox:    make(map[string]chan *pb.RouteSandboxResponse),
 		inboundPackets:         make(chan *PooledBuffer, 1000),
 		outboundPackets:        make(chan []byte, 1000),
 		textMessages:           make(chan *PooledBuffer, 100),
@@ -703,6 +708,8 @@ func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
 		g.handleConnectResponse(msg.Id, msg.StreamId, m.ConnectResponse)
 	case *pb.ControlMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
+	case *pb.ControlMessage_RouteSandboxResponse:
+		g.handleRouteSandboxResponse(msg.Id, m.RouteSandboxResponse)
 	case *pb.ControlMessage_Unprovision:
 		g.handleUnprovisionRequest(msg.Id, m.Unprovision)
 	case *pb.ControlMessage_Report:
@@ -851,6 +858,24 @@ func (g *GravityClient) handleRouteDeploymentResponse(msgID string, response *pb
 		}
 	} else {
 		g.logger.Debug("handleRouteDeploymentResponse: No pending route deployment request found for msgID: %s", msgID)
+	}
+}
+
+func (g *GravityClient) handleRouteSandboxResponse(msgID string, response *pb.RouteSandboxResponse) {
+	g.logger.Debug("handleRouteSandboxResponse: Received route sandbox response for msgID=%s, ip=%s", msgID, response.Ip)
+
+	// Find pending request and send response
+	g.pendingRouteSandboxMu.RLock()
+	ch, exists := g.pendingRouteSandbox[msgID]
+	g.pendingRouteSandboxMu.RUnlock()
+
+	if exists {
+		select {
+		case ch <- response:
+		default:
+		}
+	} else {
+		g.logger.Debug("handleRouteSandboxResponse: No pending route sandbox request found for msgID: %s", msgID)
 	}
 }
 
@@ -1570,6 +1595,51 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 		return nil, fmt.Errorf("timeout waiting for route deployment response")
 	case <-g.ctx.Done():
 		return nil, fmt.Errorf("context cancelled while waiting for route deployment response")
+	}
+}
+
+// SendRouteSandboxRequest sends a route sandbox request and waits for response (sync)
+func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
+	msgID := generateMessageID()
+
+	// Create response channel
+	responseChan := make(chan *pb.RouteSandboxResponse, 1)
+
+	// Register pending request
+	g.pendingRouteSandboxMu.Lock()
+	g.pendingRouteSandbox[msgID] = responseChan
+	g.pendingRouteSandboxMu.Unlock()
+
+	// Cleanup pending request on exit
+	defer func() {
+		g.pendingRouteSandboxMu.Lock()
+		delete(g.pendingRouteSandbox, msgID)
+		g.pendingRouteSandboxMu.Unlock()
+	}()
+
+	// Create and send the request
+	msg := &pb.ControlMessage{
+		Id: msgID,
+		MessageType: &pb.ControlMessage_RouteSandbox{
+			RouteSandbox: &pb.RouteSandboxRequest{
+				SandboxId: sandboxID,
+				VirtualIp: virtualIP,
+			},
+		},
+	}
+
+	if err := g.sendControlMessageAsync(msg); err != nil {
+		return nil, fmt.Errorf("failed to send route sandbox request: %w", err)
+	}
+
+	// Wait for response with timeout
+	select {
+	case response := <-responseChan:
+		return response, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for route sandbox response")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for route sandbox response")
 	}
 }
 

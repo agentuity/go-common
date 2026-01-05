@@ -4013,7 +4013,7 @@ func (x *DeploymentMetadataResponse) GetExtraHosts() []string {
 type RouteSandboxRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
-	VirtualIp     string                 `protobuf:"bytes,3,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"` // Hadron virtual IP for the sandbox
+	VirtualIp     string                 `protobuf:"bytes,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"` // Hadron virtual IP for the sandbox
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4474,7 +4474,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
 	"\n" +
-	"virtual_ip\x18\x03 \x01(\tR\tvirtualIp\"&\n" +
+	"virtual_ip\x18\x02 \x01(\tR\tvirtualIp\"&\n" +
 	"\x14RouteSandboxResponse\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip2\xb6\x01\n" +
 	"\x0eGravityControl\x12B\n" +

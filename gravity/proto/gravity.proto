@@ -566,7 +566,7 @@ message DeploymentMetadataResponse {
 
 message RouteSandboxRequest {
   string sandbox_id = 1;
-  string virtual_ip = 3;    // Hadron virtual IP for the sandbox
+  string virtual_ip = 2;    // Hadron virtual IP for the sandbox
 }
 
 message RouteSandboxResponse { string ip = 1; }

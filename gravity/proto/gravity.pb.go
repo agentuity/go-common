@@ -253,6 +253,8 @@ type ControlMessage struct {
 	//	*ControlMessage_RouteDeployment
 	//	*ControlMessage_RouteDeploymentResponse
 	//	*ControlMessage_Unprovision
+	//	*ControlMessage_RouteSandbox
+	//	*ControlMessage_RouteSandboxResponse
 	//	*ControlMessage_Ping
 	//	*ControlMessage_Pong
 	//	*ControlMessage_Report
@@ -372,6 +374,24 @@ func (x *ControlMessage) GetUnprovision() *UnprovisionRequest {
 	return nil
 }
 
+func (x *ControlMessage) GetRouteSandbox() *RouteSandboxRequest {
+	if x != nil {
+		if x, ok := x.MessageType.(*ControlMessage_RouteSandbox); ok {
+			return x.RouteSandbox
+		}
+	}
+	return nil
+}
+
+func (x *ControlMessage) GetRouteSandboxResponse() *RouteSandboxResponse {
+	if x != nil {
+		if x, ok := x.MessageType.(*ControlMessage_RouteSandboxResponse); ok {
+			return x.RouteSandboxResponse
+		}
+	}
+	return nil
+}
+
 func (x *ControlMessage) GetPing() *PingRequest {
 	if x != nil {
 		if x, ok := x.MessageType.(*ControlMessage_Ping); ok {
@@ -483,6 +503,14 @@ type ControlMessage_Unprovision struct {
 	Unprovision *UnprovisionRequest `protobuf:"bytes,25,opt,name=unprovision,proto3,oneof"`
 }
 
+type ControlMessage_RouteSandbox struct {
+	RouteSandbox *RouteSandboxRequest `protobuf:"bytes,26,opt,name=route_sandbox,json=routeSandbox,proto3,oneof"`
+}
+
+type ControlMessage_RouteSandboxResponse struct {
+	RouteSandboxResponse *RouteSandboxResponse `protobuf:"bytes,27,opt,name=route_sandbox_response,json=routeSandboxResponse,proto3,oneof"`
+}
+
 type ControlMessage_Ping struct {
 	// Health and monitoring (30-39)
 	Ping *PingRequest `protobuf:"bytes,30,opt,name=ping,proto3,oneof"`
@@ -534,6 +562,10 @@ func (*ControlMessage_RouteDeployment) isControlMessage_MessageType() {}
 func (*ControlMessage_RouteDeploymentResponse) isControlMessage_MessageType() {}
 
 func (*ControlMessage_Unprovision) isControlMessage_MessageType() {}
+
+func (*ControlMessage_RouteSandbox) isControlMessage_MessageType() {}
+
+func (*ControlMessage_RouteSandboxResponse) isControlMessage_MessageType() {}
 
 func (*ControlMessage_Ping) isControlMessage_MessageType() {}
 
@@ -880,7 +912,7 @@ func (x *ConnectResponse) GetSshPublicKey() []byte {
 type RouteDeploymentRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier for the deployment
-	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`                             // Hostname for the deployment
+	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`                             // Deprecated: unused and will be removed
 	VirtualIp     string                 `protobuf:"bytes,3,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`          // Hadron virtual IP for the deployment
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3978,6 +4010,102 @@ func (x *DeploymentMetadataResponse) GetExtraHosts() []string {
 	return nil
 }
 
+type RouteSandboxRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	VirtualIp     string                 `protobuf:"bytes,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"` // Hadron virtual IP for the sandbox
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteSandboxRequest) Reset() {
+	*x = RouteSandboxRequest{}
+	mi := &file_gravity_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteSandboxRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteSandboxRequest) ProtoMessage() {}
+
+func (x *RouteSandboxRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteSandboxRequest.ProtoReflect.Descriptor instead.
+func (*RouteSandboxRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *RouteSandboxRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *RouteSandboxRequest) GetVirtualIp() string {
+	if x != nil {
+		return x.VirtualIp
+	}
+	return ""
+}
+
+type RouteSandboxResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteSandboxResponse) Reset() {
+	*x = RouteSandboxResponse{}
+	mi := &file_gravity_proto_msgTypes[42]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteSandboxResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteSandboxResponse) ProtoMessage() {}
+
+func (x *RouteSandboxResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_proto_msgTypes[42]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteSandboxResponse.ProtoReflect.Descriptor instead.
+func (*RouteSandboxResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *RouteSandboxResponse) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
 var File_gravity_proto protoreflect.FileDescriptor
 
 const file_gravity_proto_rawDesc = "" +
@@ -4007,7 +4135,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\x06org_id\x18\x06 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\a \x01(\tR\tclusterId\x124\n" +
-	"\x16deployment_private_key\x18\b \x01(\fR\x14deploymentPrivateKey\"\xdf\a\n" +
+	"\x16deployment_private_key\x18\b \x01(\fR\x14deploymentPrivateKey\"\xfb\b\n" +
 	"\x0eControlMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x123\n" +
@@ -4017,7 +4145,9 @@ const file_gravity_proto_rawDesc = "" +
 	"\x05close\x18\x0f \x01(\v2\x15.gravity.CloseRequestH\x00R\x05close\x12L\n" +
 	"\x10route_deployment\x18\x16 \x01(\v2\x1f.gravity.RouteDeploymentRequestH\x00R\x0frouteDeployment\x12^\n" +
 	"\x19route_deployment_response\x18\x17 \x01(\v2 .gravity.RouteDeploymentResponseH\x00R\x17routeDeploymentResponse\x12?\n" +
-	"\vunprovision\x18\x19 \x01(\v2\x1b.gravity.UnprovisionRequestH\x00R\vunprovision\x12*\n" +
+	"\vunprovision\x18\x19 \x01(\v2\x1b.gravity.UnprovisionRequestH\x00R\vunprovision\x12C\n" +
+	"\rroute_sandbox\x18\x1a \x01(\v2\x1c.gravity.RouteSandboxRequestH\x00R\frouteSandbox\x12U\n" +
+	"\x16route_sandbox_response\x18\x1b \x01(\v2\x1d.gravity.RouteSandboxResponseH\x00R\x14routeSandboxResponse\x12*\n" +
 	"\x04ping\x18\x1e \x01(\v2\x14.gravity.PingRequestH\x00R\x04ping\x12+\n" +
 	"\x04pong\x18\x1f \x01(\v2\x15.gravity.PongResponseH\x00R\x04pong\x120\n" +
 	"\x06report\x18  \x01(\v2\x16.gravity.ReportRequestH\x00R\x06report\x12-\n" +
@@ -4339,7 +4469,14 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"auth_token\x18\x06 \x01(\tR\tauthToken\x12\x1f\n" +
 	"\vextra_hosts\x18\a \x03(\tR\n" +
-	"extraHosts2\xb6\x01\n" +
+	"extraHosts\"S\n" +
+	"\x13RouteSandboxRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
+	"\n" +
+	"virtual_ip\x18\x02 \x01(\tR\tvirtualIp\"&\n" +
+	"\x14RouteSandboxResponse\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip2\xb6\x01\n" +
 	"\x0eGravityControl\x12B\n" +
 	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse2\x9b\x01\n" +
@@ -4359,7 +4496,7 @@ func file_gravity_proto_rawDescGZIP() []byte {
 	return file_gravity_proto_rawDescData
 }
 
-var file_gravity_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_gravity_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_gravity_proto_goTypes = []any{
 	(*ProvisionRequest)(nil),            // 0: gravity.ProvisionRequest
 	(*ProvisionResponse)(nil),           // 1: gravity.ProvisionResponse
@@ -4402,68 +4539,72 @@ var file_gravity_proto_goTypes = []any{
 	(*ConfigItem)(nil),                  // 38: gravity.ConfigItem
 	(*DeploymentMetadataRequest)(nil),   // 39: gravity.DeploymentMetadataRequest
 	(*DeploymentMetadataResponse)(nil),  // 40: gravity.DeploymentMetadataResponse
-	nil,                                 // 41: gravity.PerformanceMetrics.RuntimeStatsEntry
-	nil,                                 // 42: gravity.MessageStatistics.MessagesByTypeEntry
-	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),         // 44: google.protobuf.Duration
+	(*RouteSandboxRequest)(nil),         // 41: gravity.RouteSandboxRequest
+	(*RouteSandboxResponse)(nil),        // 42: gravity.RouteSandboxResponse
+	nil,                                 // 43: gravity.PerformanceMetrics.RuntimeStatsEntry
+	nil,                                 // 44: gravity.MessageStatistics.MessagesByTypeEntry
+	(*timestamppb.Timestamp)(nil),       // 45: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 46: google.protobuf.Duration
 }
 var file_gravity_proto_depIdxs = []int32{
 	4,  // 0: gravity.ProvisionRequest.capabilities:type_name -> gravity.ClientCapabilities
-	43, // 1: gravity.ProvisionResponse.expires:type_name -> google.protobuf.Timestamp
+	45, // 1: gravity.ProvisionResponse.expires:type_name -> google.protobuf.Timestamp
 	5,  // 2: gravity.ControlMessage.connect:type_name -> gravity.ConnectRequest
 	6,  // 3: gravity.ControlMessage.connect_response:type_name -> gravity.ConnectResponse
 	13, // 4: gravity.ControlMessage.close:type_name -> gravity.CloseRequest
 	7,  // 5: gravity.ControlMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
 	8,  // 6: gravity.ControlMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
 	9,  // 7: gravity.ControlMessage.unprovision:type_name -> gravity.UnprovisionRequest
-	11, // 8: gravity.ControlMessage.ping:type_name -> gravity.PingRequest
-	12, // 9: gravity.ControlMessage.pong:type_name -> gravity.PongResponse
-	10, // 10: gravity.ControlMessage.report:type_name -> gravity.ReportRequest
-	14, // 11: gravity.ControlMessage.pause:type_name -> gravity.PauseRequest
-	15, // 12: gravity.ControlMessage.resume:type_name -> gravity.ResumeRequest
-	18, // 13: gravity.ControlMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	19, // 14: gravity.ControlMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	16, // 15: gravity.ControlMessage.response:type_name -> gravity.ProtocolResponse
-	17, // 16: gravity.ControlMessage.event:type_name -> gravity.ProtocolEvent
-	21, // 17: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
-	20, // 18: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
-	4,  // 19: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
-	26, // 20: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
-	27, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
-	43, // 22: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	43, // 23: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	38, // 24: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
-	43, // 25: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	23, // 26: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
-	24, // 27: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
-	44, // 28: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
-	28, // 29: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
-	29, // 30: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
-	30, // 31: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
-	31, // 32: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
-	32, // 33: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
-	41, // 34: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
-	42, // 35: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
-	33, // 36: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
-	34, // 37: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
-	35, // 38: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
-	36, // 39: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
-	25, // 40: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	24, // 41: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	37, // 42: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
-	0,  // 43: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
-	39, // 44: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	2,  // 45: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
-	3,  // 46: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
-	1,  // 47: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
-	40, // 48: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	2,  // 49: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
-	3,  // 50: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
-	47, // [47:51] is the sub-list for method output_type
-	43, // [43:47] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	41, // 8: gravity.ControlMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
+	42, // 9: gravity.ControlMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
+	11, // 10: gravity.ControlMessage.ping:type_name -> gravity.PingRequest
+	12, // 11: gravity.ControlMessage.pong:type_name -> gravity.PongResponse
+	10, // 12: gravity.ControlMessage.report:type_name -> gravity.ReportRequest
+	14, // 13: gravity.ControlMessage.pause:type_name -> gravity.PauseRequest
+	15, // 14: gravity.ControlMessage.resume:type_name -> gravity.ResumeRequest
+	18, // 15: gravity.ControlMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	19, // 16: gravity.ControlMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	16, // 17: gravity.ControlMessage.response:type_name -> gravity.ProtocolResponse
+	17, // 18: gravity.ControlMessage.event:type_name -> gravity.ProtocolEvent
+	21, // 19: gravity.ConnectRequest.deployments:type_name -> gravity.ExistingDeployment
+	20, // 20: gravity.ConnectRequest.host_info:type_name -> gravity.HostInfo
+	4,  // 21: gravity.ConnectRequest.capabilities:type_name -> gravity.ClientCapabilities
+	26, // 22: gravity.ConnectResponse.host_mapping:type_name -> gravity.HostMapping
+	27, // 23: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	45, // 24: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	45, // 25: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	38, // 26: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	45, // 27: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	23, // 28: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	24, // 29: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
+	46, // 30: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	28, // 31: gravity.ServerMetrics.grpc_metrics:type_name -> gravity.GRPCConnectionMetrics
+	29, // 32: gravity.ServerMetrics.performance:type_name -> gravity.PerformanceMetrics
+	30, // 33: gravity.ServerMetrics.message_stats:type_name -> gravity.MessageStatistics
+	31, // 34: gravity.ServerMetrics.system_metrics:type_name -> gravity.SystemResourceMetrics
+	32, // 35: gravity.ServerMetrics.historical_data:type_name -> gravity.HistoricalMetrics
+	43, // 36: gravity.PerformanceMetrics.runtime_stats:type_name -> gravity.PerformanceMetrics.RuntimeStatsEntry
+	44, // 37: gravity.MessageStatistics.messages_by_type:type_name -> gravity.MessageStatistics.MessagesByTypeEntry
+	33, // 38: gravity.HistoricalMetrics.throughput_history:type_name -> gravity.ThroughputSample
+	34, // 39: gravity.HistoricalMetrics.latency_history:type_name -> gravity.LatencySample
+	35, // 40: gravity.HistoricalMetrics.error_rate_history:type_name -> gravity.ErrorRateSample
+	36, // 41: gravity.HistoricalMetrics.health_history:type_name -> gravity.HealthSample
+	25, // 42: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	24, // 43: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	37, // 44: gravity.PerformanceMetrics.RuntimeStatsEntry.value:type_name -> gravity.ProjectRuntimeStats
+	0,  // 45: gravity.GravityControl.Provision:input_type -> gravity.ProvisionRequest
+	39, // 46: gravity.GravityControl.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	2,  // 47: gravity.GravityTunnel.EstablishTunnel:input_type -> gravity.ControlMessage
+	3,  // 48: gravity.GravityTunnel.StreamPackets:input_type -> gravity.TunnelPacket
+	1,  // 49: gravity.GravityControl.Provision:output_type -> gravity.ProvisionResponse
+	40, // 50: gravity.GravityControl.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	2,  // 51: gravity.GravityTunnel.EstablishTunnel:output_type -> gravity.ControlMessage
+	3,  // 52: gravity.GravityTunnel.StreamPackets:output_type -> gravity.TunnelPacket
+	49, // [49:53] is the sub-list for method output_type
+	45, // [45:49] is the sub-list for method input_type
+	45, // [45:45] is the sub-list for extension type_name
+	45, // [45:45] is the sub-list for extension extendee
+	0,  // [0:45] is the sub-list for field type_name
 }
 
 func init() { file_gravity_proto_init() }
@@ -4478,6 +4619,8 @@ func file_gravity_proto_init() {
 		(*ControlMessage_RouteDeployment)(nil),
 		(*ControlMessage_RouteDeploymentResponse)(nil),
 		(*ControlMessage_Unprovision)(nil),
+		(*ControlMessage_RouteSandbox)(nil),
+		(*ControlMessage_RouteSandboxResponse)(nil),
 		(*ControlMessage_Ping)(nil),
 		(*ControlMessage_Pong)(nil),
 		(*ControlMessage_Report)(nil),
@@ -4494,7 +4637,7 @@ func file_gravity_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_proto_rawDesc), len(file_gravity_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   43,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   2,
 		},

@@ -71,6 +71,8 @@ message ControlMessage {
     RouteDeploymentRequest route_deployment = 22;
     RouteDeploymentResponse route_deployment_response = 23;
     UnprovisionRequest unprovision = 25;
+    RouteSandboxRequest route_sandbox = 26;
+    RouteSandboxResponse route_sandbox_response = 27;
 
     // Health and monitoring (30-39)
     PingRequest ping = 30;
@@ -135,7 +137,7 @@ message ConnectResponse {
 
 message RouteDeploymentRequest {
   string deployment_id = 1; // Unique identifier for the deployment
-  string hostname = 2;      // Hostname for the deployment
+  string hostname = 2;      // Deprecated: unused and will be removed
   string virtual_ip = 3;    // Hadron virtual IP for the deployment
 }
 
@@ -561,3 +563,10 @@ message DeploymentMetadataResponse {
   string auth_token = 6;              // Authentication token
   repeated string extra_hosts = 7;    // Extra /etc/hosts entries for the deployment
 }
+
+message RouteSandboxRequest {
+  string sandbox_id = 1;
+  string virtual_ip = 3;    // Hadron virtual IP for the sandbox
+}
+
+message RouteSandboxResponse { string ip = 1; }

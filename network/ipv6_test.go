@@ -622,7 +622,7 @@ func TestGetRegionFallback(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.region, func(t *testing.T) {
 			result := GetRegion(tc.region)
-			assert.Equal(t, tc.expected, result, "Non-US region %s should default to global", tc.region, tc.expected)
+			assert.Equal(t, tc.expected, result, "Region %s should map to %v", tc.region, tc.expected)
 		})
 	}
 }

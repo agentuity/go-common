@@ -18,6 +18,12 @@ func TestGetSuperRegion(t *testing.T) {
 		{"USWest2", RegionUSWest2, "usw", false},
 		{"USEast1", RegionUSEast1, "use", false},
 		{"USEast2", RegionUSEast2, "use", false},
+		{"EUWest1", RegionEUWest1, "euw", false},
+		{"EUWest2", RegionEUWest2, "euw", false},
+		{"EUWest3", RegionEUWest3, "euw", false},
+		{"EUEast1", RegionEUEast1, "eue", false},
+		{"EUEast2", RegionEUEast2, "eue", false},
+		{"EUEast3", RegionEUEast3, "eue", false},
 		{"GlobalShouldError", RegionGlobal, "", true},
 	}
 

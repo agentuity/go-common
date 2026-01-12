@@ -604,7 +604,13 @@ func TestGetRegionFallback(t *testing.T) {
 		region   string
 		expected Region
 	}{
-		{"europe-west1", RegionGlobal},
+		{"europe-west1", RegionEUWest1},
+		{"europe-west2", RegionEUWest2},
+		{"europe-west3", RegionEUWest3},
+		{"europe-north1", RegionEUEast1},
+		{"eu-west-1", RegionEUWest1},
+		{"eu-central-1", RegionEUEast1},
+		{"westeurope", RegionEUWest1},
 		{"asia-east1", RegionGlobal},
 		{"australia-southeast1", RegionGlobal},
 		{"unknown-region", RegionGlobal},

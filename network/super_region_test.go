@@ -124,7 +124,7 @@ func TestGenerateSuperRegionHostnamesForAllRegions(t *testing.T) {
 	}
 
 	// Should have one hostname per super-region (excluding global)
-	expectedCount := 3 // usc, usw, use
+	expectedCount := 5 // usc, usw, use, euw, eue
 	if len(hostnames) != expectedCount {
 		t.Errorf("GenerateSuperRegionHostnamesForAllRegions() returned %d hostnames, want %d", len(hostnames), expectedCount)
 	}
@@ -134,11 +134,63 @@ func TestGenerateSuperRegionHostnamesForAllRegions(t *testing.T) {
 		"project-123-usc.agentuity.cloud": true,
 		"project-123-usw.agentuity.cloud": true,
 		"project-123-use.agentuity.cloud": true,
+		"project-123-euw.agentuity.cloud": true,
+		"project-123-eue.agentuity.cloud": true,
 	}
 
 	for _, hostname := range hostnames {
 		if !expectedCodes[hostname] {
 			t.Errorf("GenerateSuperRegionHostnamesForAllRegions() returned unexpected hostname: %v", hostname)
 		}
+	}
+}
+
+func TestIsSuperRegion(t *testing.T) {
+	tests := []struct {
+		val      string
+		expected bool
+	}{
+		{"usc", true},
+		{"usw", true},
+		{"use", true},
+		{"euw", true},
+		{"eue", true},
+		{"l", false},
+		{"", false},
+		{"invalid", false},
+		{"USC", false},
+		{"us-central", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.val, func(t *testing.T) {
+			result := IsSuperRegion(tt.val)
+			if result != tt.expected {
+				t.Errorf("IsSuperRegion(%q) = %v, want %v", tt.val, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestIsSuperRegionLocal(t *testing.T) {
+	tests := []struct {
+		val      string
+		expected bool
+	}{
+		{"l", true},
+		{"L", false},
+		{"local", false},
+		{"", false},
+		{"usc", false},
+		{"usw", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.val, func(t *testing.T) {
+			result := IsSuperRegionLocal(tt.val)
+			if result != tt.expected {
+				t.Errorf("IsSuperRegionLocal(%q) = %v, want %v", tt.val, result, tt.expected)
+			}
+		})
 	}
 }

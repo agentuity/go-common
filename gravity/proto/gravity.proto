@@ -12,8 +12,9 @@ service GravityControl {
   // provision is called on startup to get certificates and configuration
   rpc Provision(ProvisionRequest) returns (ProvisionResponse);
   // get deployment metadata for provisioning
-  rpc GetDeploymentMetadata(DeploymentMetadataRequest)
-      returns (DeploymentMetadataResponse);
+  rpc GetDeploymentMetadata(DeploymentMetadataRequest) returns (DeploymentMetadataResponse);
+  // get sandbox metadata (ie a cert)
+  rpc GetSandboxMetadata(SandboxMetadataRequest) returns (SandboxMetadataResponse);
 }
 
 // GravityTunnel service handles bidirectional streaming for packet data and
@@ -227,6 +228,7 @@ message ExistingDeployment {
   bool paused = 9;
   google.protobuf.Duration pausedDuration = 10;
   bool on_demand = 11;
+  string cert = 12;                            // PEM certificate bundle (cert, ca)
 }
 
 message DeploymentSpec {
@@ -562,6 +564,7 @@ message DeploymentMetadataResponse {
   string otlp_token = 5;              // OpenTelemetry token for metrics
   string auth_token = 6;              // Authentication token
   repeated string extra_hosts = 7;    // Extra /etc/hosts entries for the deployment
+  string cert = 8;                    // PEM certificate bundle (cert, ca, 
 }
 
 message RouteSandboxRequest {
@@ -570,3 +573,18 @@ message RouteSandboxRequest {
 }
 
 message RouteSandboxResponse { string ip = 1; }
+
+// Sandbox metadata request
+message SandboxMetadataRequest {
+  string sandbox_id = 1;
+  string org_id = 2;
+  bool generate_certificate = 3; // Whether to generate a certificate
+}
+
+// Sandbox metadata response
+message SandboxMetadataResponse {
+  bool success = 1;                   // Whether the request was successful
+  string error = 2;                   // Error message if request failed
+  repeated string extra_hosts = 3;    // Extra /etc/hosts entries for the sandbox
+  string cert = 4;                    // PEM certificate bundle (cert, ca, key)
+}

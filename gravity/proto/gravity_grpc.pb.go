@@ -21,6 +21,7 @@ const _ = grpc.SupportPackageIsVersion9
 const (
 	GravityControl_Provision_FullMethodName             = "/gravity.GravityControl/Provision"
 	GravityControl_GetDeploymentMetadata_FullMethodName = "/gravity.GravityControl/GetDeploymentMetadata"
+	GravityControl_GetSandboxMetadata_FullMethodName    = "/gravity.GravityControl/GetSandboxMetadata"
 )
 
 // GravityControlClient is the client API for GravityControl service.
@@ -33,6 +34,8 @@ type GravityControlClient interface {
 	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error)
+	// get sandbox metadata (ie a cert)
+	GetSandboxMetadata(ctx context.Context, in *SandboxMetadataRequest, opts ...grpc.CallOption) (*SandboxMetadataResponse, error)
 }
 
 type gravityControlClient struct {
@@ -63,6 +66,16 @@ func (c *gravityControlClient) GetDeploymentMetadata(ctx context.Context, in *De
 	return out, nil
 }
 
+func (c *gravityControlClient) GetSandboxMetadata(ctx context.Context, in *SandboxMetadataRequest, opts ...grpc.CallOption) (*SandboxMetadataResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SandboxMetadataResponse)
+	err := c.cc.Invoke(ctx, GravityControl_GetSandboxMetadata_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GravityControlServer is the server API for GravityControl service.
 // All implementations must embed UnimplementedGravityControlServer
 // for forward compatibility.
@@ -73,6 +86,8 @@ type GravityControlServer interface {
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error)
+	// get sandbox metadata (ie a cert)
+	GetSandboxMetadata(context.Context, *SandboxMetadataRequest) (*SandboxMetadataResponse, error)
 	mustEmbedUnimplementedGravityControlServer()
 }
 
@@ -88,6 +103,9 @@ func (UnimplementedGravityControlServer) Provision(context.Context, *ProvisionRe
 }
 func (UnimplementedGravityControlServer) GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetDeploymentMetadata not implemented")
+}
+func (UnimplementedGravityControlServer) GetSandboxMetadata(context.Context, *SandboxMetadataRequest) (*SandboxMetadataResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetSandboxMetadata not implemented")
 }
 func (UnimplementedGravityControlServer) mustEmbedUnimplementedGravityControlServer() {}
 func (UnimplementedGravityControlServer) testEmbeddedByValue()                        {}
@@ -146,6 +164,24 @@ func _GravityControl_GetDeploymentMetadata_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GravityControl_GetSandboxMetadata_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SandboxMetadataRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GravityControlServer).GetSandboxMetadata(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GravityControl_GetSandboxMetadata_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GravityControlServer).GetSandboxMetadata(ctx, req.(*SandboxMetadataRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GravityControl_ServiceDesc is the grpc.ServiceDesc for GravityControl service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -160,6 +196,10 @@ var GravityControl_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetDeploymentMetadata",
 			Handler:    _GravityControl_GetDeploymentMetadata_Handler,
+		},
+		{
+			MethodName: "GetSandboxMetadata",
+			Handler:    _GravityControl_GetSandboxMetadata_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -41,7 +41,8 @@ func ipv4ToHex(ipv4 string) string {
 type Region uint8
 
 const (
-	RegionGlobal     Region = 0x00
+	RegionGlobal Region = 0x00
+
 	RegionUSCentral1 Region = 0x01
 	RegionUSWest1    Region = 0x02
 	RegionUSEast1    Region = 0x03
@@ -54,6 +55,14 @@ const (
 	RegionUSCentral4 Region = 0x0A
 	RegionUSWest4    Region = 0x0B
 	RegionUSEast4    Region = 0x0C
+
+	RegionEUEast1 Region = 0x0D
+	RegionEUEast2 Region = 0x0E
+	RegionEUEast3 Region = 0x0F
+
+	RegionEUWest1 Region = 0x10
+	RegionEUWest2 Region = 0x11
+	RegionEUWest3 Region = 0x12
 )
 
 type SuperRegion string
@@ -62,7 +71,28 @@ const (
 	SuperRegionUSCentral SuperRegion = "usc"
 	SuperRegionUSWest    SuperRegion = "usw"
 	SuperRegionUSEast    SuperRegion = "use"
+
+	SuperRegionEUEast SuperRegion = "eue"
+	SuperRegionEUWest SuperRegion = "euw"
+
+	SuperRegionLocal SuperRegion = "l"
 )
+
+// IsSuperRegion returns true if the string passed in is a super region
+func IsSuperRegion(val string) bool {
+	switch SuperRegion(val) {
+	case SuperRegionUSCentral, SuperRegionUSWest, SuperRegionUSEast:
+		return true
+	case SuperRegionEUEast, SuperRegionEUWest:
+		return true
+	}
+	return false
+}
+
+// IsSuperRegionLocal returns true if the val is a local development super region
+func IsSuperRegionLocal(val string) bool {
+	return SuperRegionLocal == SuperRegion(val)
+}
 
 // ProductionRegions returns a map of the production regions for each cloud provider currently supported.
 var ProductionRegions = map[CloudProvider][]Region{
@@ -71,6 +101,7 @@ var ProductionRegions = map[CloudProvider][]Region{
 	},
 	CloudProviderGCP: {
 		RegionUSCentral1,
+		RegionUSEast1,
 	},
 	CloudProviderAzure: {
 		RegionUSCentral1,
@@ -108,6 +139,32 @@ var Regions = map[string]Region{
 	"northcentralus": RegionUSCentral2,
 	"southcentralus": RegionUSCentral3,
 	"westcentralus":  RegionUSCentral1, // Map to central1 since it's central-focused
+
+	// GCP Europe regions
+	"europe-west1":  RegionEUWest1, // Belgium
+	"europe-west2":  RegionEUWest2, // London
+	"europe-west3":  RegionEUWest3, // Frankfurt
+	"europe-north1": RegionEUEast1, // Finland
+	"europe-west4":  RegionEUWest1, // Netherlands (map to west1)
+	"europe-west6":  RegionEUWest1, // Zurich (map to west1)
+
+	// AWS Europe regions
+	"eu-west-1":    RegionEUWest1, // Ireland
+	"eu-west-2":    RegionEUWest2, // London
+	"eu-west-3":    RegionEUWest3, // Paris
+	"eu-central-1": RegionEUEast1, // Frankfurt
+	"eu-central-2": RegionEUEast2, // Zurich
+	"eu-north-1":   RegionEUEast3, // Stockholm
+
+	// Azure Europe regions
+	"westeurope":  RegionEUWest1, // Netherlands
+	"northeurope": RegionEUWest2, // Ireland
+	"uksouth":     RegionEUWest2, // UK South
+	"ukwest":      RegionEUWest3, // UK West
+	"germanywestcentral": RegionEUEast1, // Frankfurt
+	"swedencentral":      RegionEUEast2, // Sweden
+	"norwayeast":         RegionEUEast3, // Norway
+	"francecentral":      RegionEUWest3, // France
 }
 
 // RegionToSuperRegion maps each Region to its SuperRegion (excludes RegionGlobal)
@@ -124,6 +181,12 @@ var RegionToSuperRegion = map[Region]SuperRegion{
 	RegionUSEast2:    SuperRegionUSEast,
 	RegionUSEast3:    SuperRegionUSEast,
 	RegionUSEast4:    SuperRegionUSEast,
+	RegionEUWest1:    SuperRegionEUWest,
+	RegionEUWest2:    SuperRegionEUWest,
+	RegionEUWest3:    SuperRegionEUWest,
+	RegionEUEast1:    SuperRegionEUEast,
+	RegionEUEast2:    SuperRegionEUEast,
+	RegionEUEast3:    SuperRegionEUEast,
 }
 
 // GetRegion returns a Region from a string.

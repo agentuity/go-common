@@ -564,7 +564,7 @@ message DeploymentMetadataResponse {
   string otlp_token = 5;              // OpenTelemetry token for metrics
   string auth_token = 6;              // Authentication token
   repeated string extra_hosts = 7;    // Extra /etc/hosts entries for the deployment
-  string cert = 8;                    // PEM certificate bundle (cert, ca, key)
+  string cert_bundle = 8;             // PEM certificate bundle (cert, ca, key)
 }
 
 message RouteSandboxRequest {
@@ -586,5 +586,5 @@ message SandboxMetadataResponse {
   bool success = 1;                   // Whether the request was successful
   string error = 2;                   // Error message if request failed
   repeated string extra_hosts = 3;    // Extra /etc/hosts entries for the sandbox
-  string cert = 4;                    // PEM certificate bundle (cert, ca, key)
+  string cert_bundle = 4;             // PEM certificate bundle (cert, ca, key)
 }

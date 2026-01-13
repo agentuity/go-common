@@ -3935,7 +3935,7 @@ type DeploymentMetadataResponse struct {
 	OtlpToken      string                 `protobuf:"bytes,5,opt,name=otlp_token,json=otlpToken,proto3" json:"otlp_token,omitempty"`                // OpenTelemetry token for metrics
 	AuthToken      string                 `protobuf:"bytes,6,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`                // Authentication token
 	ExtraHosts     []string               `protobuf:"bytes,7,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"`             // Extra /etc/hosts entries for the deployment
-	Cert           string                 `protobuf:"bytes,8,opt,name=cert,proto3" json:"cert,omitempty"`                                           // PEM certificate bundle (cert, ca, key)
+	CertBundle     string                 `protobuf:"bytes,8,opt,name=cert_bundle,json=certBundle,proto3" json:"cert_bundle,omitempty"`             // PEM certificate bundle (cert, ca, key)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4019,9 +4019,9 @@ func (x *DeploymentMetadataResponse) GetExtraHosts() []string {
 	return nil
 }
 
-func (x *DeploymentMetadataResponse) GetCert() string {
+func (x *DeploymentMetadataResponse) GetCertBundle() string {
 	if x != nil {
-		return x.Cert
+		return x.CertBundle
 	}
 	return ""
 }
@@ -4189,7 +4189,7 @@ type SandboxMetadataResponse struct {
 	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                        // Whether the request was successful
 	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`                             // Error message if request failed
 	ExtraHosts    []string               `protobuf:"bytes,3,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"` // Extra /etc/hosts entries for the sandbox
-	Cert          string                 `protobuf:"bytes,4,opt,name=cert,proto3" json:"cert,omitempty"`                               // PEM certificate bundle (cert, ca, key)
+	CertBundle    string                 `protobuf:"bytes,4,opt,name=cert_bundle,json=certBundle,proto3" json:"cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4245,9 +4245,9 @@ func (x *SandboxMetadataResponse) GetExtraHosts() []string {
 	return nil
 }
 
-func (x *SandboxMetadataResponse) GetCert() string {
+func (x *SandboxMetadataResponse) GetCertBundle() string {
 	if x != nil {
-		return x.Cert
+		return x.CertBundle
 	}
 	return ""
 }
@@ -4605,7 +4605,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value\"W\n" +
 	"\x19DeploymentMetadataRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
-	"\x06org_id\x18\x02 \x01(\tR\x05orgId\"\xbd\x02\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\"\xca\x02\n" +
 	"\x1aDeploymentMetadataResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12:\n" +
@@ -4616,8 +4616,9 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"auth_token\x18\x06 \x01(\tR\tauthToken\x12\x1f\n" +
 	"\vextra_hosts\x18\a \x03(\tR\n" +
-	"extraHosts\x12\x12\n" +
-	"\x04cert\x18\b \x01(\tR\x04cert\"S\n" +
+	"extraHosts\x12\x1f\n" +
+	"\vcert_bundle\x18\b \x01(\tR\n" +
+	"certBundle\"S\n" +
 	"\x13RouteSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
@@ -4629,13 +4630,14 @@ const file_gravity_proto_rawDesc = "" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x15\n" +
 	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x121\n" +
-	"\x14generate_certificate\x18\x03 \x01(\bR\x13generateCertificate\"~\n" +
+	"\x14generate_certificate\x18\x03 \x01(\bR\x13generateCertificate\"\x8b\x01\n" +
 	"\x17SandboxMetadataResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
 	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1f\n" +
 	"\vextra_hosts\x18\x03 \x03(\tR\n" +
-	"extraHosts\x12\x12\n" +
-	"\x04cert\x18\x04 \x01(\tR\x04cert2\x8f\x02\n" +
+	"extraHosts\x12\x1f\n" +
+	"\vcert_bundle\x18\x04 \x01(\tR\n" +
+	"certBundle2\x8f\x02\n" +
 	"\x0eGravityControl\x12B\n" +
 	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse\x12W\n" +

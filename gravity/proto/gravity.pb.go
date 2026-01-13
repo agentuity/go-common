@@ -1693,7 +1693,7 @@ type ExistingDeployment struct {
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
 	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
-	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate bundle (cert, ca)
+	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate bundle (just cert, ca + key not required)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -3935,7 +3935,7 @@ type DeploymentMetadataResponse struct {
 	OtlpToken      string                 `protobuf:"bytes,5,opt,name=otlp_token,json=otlpToken,proto3" json:"otlp_token,omitempty"`                // OpenTelemetry token for metrics
 	AuthToken      string                 `protobuf:"bytes,6,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`                // Authentication token
 	ExtraHosts     []string               `protobuf:"bytes,7,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"`             // Extra /etc/hosts entries for the deployment
-	Cert           string                 `protobuf:"bytes,8,opt,name=cert,proto3" json:"cert,omitempty"`                                           // PEM certificate bundle (cert, ca,
+	Cert           string                 `protobuf:"bytes,8,opt,name=cert,proto3" json:"cert,omitempty"`                                           // PEM certificate bundle (cert, ca, key)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }

@@ -228,7 +228,7 @@ message ExistingDeployment {
   bool paused = 9;
   google.protobuf.Duration pausedDuration = 10;
   bool on_demand = 11;
-  string cert = 12;                            // PEM certificate bundle (cert, ca)
+  string cert = 12;                            // PEM certificate bundle (just cert, ca + key not required)
 }
 
 message DeploymentSpec {
@@ -564,7 +564,7 @@ message DeploymentMetadataResponse {
   string otlp_token = 5;              // OpenTelemetry token for metrics
   string auth_token = 6;              // Authentication token
   repeated string extra_hosts = 7;    // Extra /etc/hosts entries for the deployment
-  string cert = 8;                    // PEM certificate bundle (cert, ca, 
+  string cert = 8;                    // PEM certificate bundle (cert, ca, key)
 }
 
 message RouteSandboxRequest {

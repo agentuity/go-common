@@ -1693,7 +1693,7 @@ type ExistingDeployment struct {
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
 	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
-	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate bundle (just cert, ca + key not required)
+	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate that was issued (just cert, ca + key not required)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }

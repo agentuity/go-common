@@ -2334,6 +2334,26 @@ func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID,
 	return g.controlClients[0].GetDeploymentMetadata(authCtx, metadataRequest)
 }
 
+// GetSandboxMetadata makes a gRPC call to get sandbox metadata
+// This is used by HTTP API server for sandbox creation when a port is specified
+func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID string, generateCertificate bool) (*pb.SandboxMetadataResponse, error) {
+	if len(g.controlClients) == 0 {
+		return nil, fmt.Errorf("no gRPC control clients available")
+	}
+
+	metadataRequest := &pb.SandboxMetadataRequest{
+		SandboxId:           sandboxID,
+		OrgId:               orgID,
+		GenerateCertificate: generateCertificate,
+	}
+
+	// Add authorization metadata for authentication
+	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
+	authCtx := metadata.NewOutgoingContext(ctx, md)
+
+	return g.controlClients[0].GetSandboxMetadata(authCtx, metadataRequest)
+}
+
 // GetTLSConfig returns the TLS configuration for external use (like HTTP server)
 func (g *GravityClient) GetTLSConfig() *tls.Config {
 	return g.tlsConfig

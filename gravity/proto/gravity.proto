@@ -7,10 +7,17 @@ option go_package = "github.com/agentuity/go-common/gravity/proto";
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 
-// GravityControl service handles client provisioning and metadata
+// GravityControl service handles client provisioning and metadata.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
 service GravityControl {
+  option deprecated = true;
+
   // provision is called on startup to get certificates and configuration
-  rpc Provision(ProvisionRequest) returns (ProvisionResponse);
+  // Deprecated: Use GravitySessionService.EstablishSession instead.
+  rpc Provision(ProvisionRequest) returns (ProvisionResponse) {
+    option deprecated = true;
+  }
   // get deployment metadata for provisioning
   rpc GetDeploymentMetadata(DeploymentMetadataRequest) returns (DeploymentMetadataResponse);
   // get sandbox metadata (ie a cert)
@@ -18,16 +25,29 @@ service GravityControl {
 }
 
 // GravityTunnel service handles bidirectional streaming for packet data and
-// control messages
+// control messages.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
 service GravityTunnel {
+  option deprecated = true;
+
   // establish a tunnel for the client to send and receive control messages
   // after it has been provisioned
-  rpc EstablishTunnel(stream ControlMessage) returns (stream ControlMessage);
+  // Deprecated: Use GravitySessionService.EstablishSession instead.
+  rpc EstablishTunnel(stream ControlMessage) returns (stream ControlMessage) {
+    option deprecated = true;
+  }
   // stream packet data with multiplexing
-  rpc StreamPackets(stream TunnelPacket) returns (stream TunnelPacket);
+  // Deprecated: Use GravitySessionService.StreamPackets instead.
+  rpc StreamPackets(stream TunnelPacket) returns (stream TunnelPacket) {
+    option deprecated = true;
+  }
 }
 
+// Deprecated: Use GravitySessionService.EstablishSession instead.
 message ProvisionRequest {
+  option deprecated = true;
+
   string region = 1;            // the region for the client
   string availability_zone = 2; // the availability zone for the client
   string provider = 3;          // the provider for the client
@@ -41,7 +61,10 @@ message ProvisionRequest {
   ClientCapabilities capabilities = 10; // the client capabilities requested
 }
 
+// Deprecated: Use GravitySessionService.EstablishSession instead.
 message ProvisionResponse {
+  option deprecated = true;
+
   bytes ca_certificate =
       1; // the CA certificate to trust for self-signed server certificates
   bytes certificate = 2; // the cert to use for the server
@@ -57,8 +80,10 @@ message ProvisionResponse {
          // Agentuity, Inc.
 }
 
-// ControlMessage represents all control plane communications
+// ControlMessage represents all control plane communications.
+// Deprecated: Use SessionMessage from gravity_session.proto instead.
 message ControlMessage {
+  option deprecated = true;
   string id = 1;
   string stream_id = 2; // Logical stream identifier for multiplexing
 

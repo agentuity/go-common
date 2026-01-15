@@ -28,9 +28,15 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// GravityControl service handles client provisioning and metadata
+// GravityControl service handles client provisioning and metadata.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
+//
+// Deprecated: Do not use.
 type GravityControlClient interface {
+	// Deprecated: Do not use.
 	// provision is called on startup to get certificates and configuration
+	// Deprecated: Use GravitySessionService.EstablishSession instead.
 	Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error)
@@ -42,10 +48,12 @@ type gravityControlClient struct {
 	cc grpc.ClientConnInterface
 }
 
+// Deprecated: Do not use.
 func NewGravityControlClient(cc grpc.ClientConnInterface) GravityControlClient {
 	return &gravityControlClient{cc}
 }
 
+// Deprecated: Do not use.
 func (c *gravityControlClient) Provision(ctx context.Context, in *ProvisionRequest, opts ...grpc.CallOption) (*ProvisionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ProvisionResponse)
@@ -80,9 +88,15 @@ func (c *gravityControlClient) GetSandboxMetadata(ctx context.Context, in *Sandb
 // All implementations must embed UnimplementedGravityControlServer
 // for forward compatibility.
 //
-// GravityControl service handles client provisioning and metadata
+// GravityControl service handles client provisioning and metadata.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
+//
+// Deprecated: Do not use.
 type GravityControlServer interface {
+	// Deprecated: Do not use.
 	// provision is called on startup to get certificates and configuration
+	// Deprecated: Use GravitySessionService.EstablishSession instead.
 	Provision(context.Context, *ProvisionRequest) (*ProvisionResponse, error)
 	// get deployment metadata for provisioning
 	GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error)
@@ -117,6 +131,7 @@ type UnsafeGravityControlServer interface {
 	mustEmbedUnimplementedGravityControlServer()
 }
 
+// Deprecated: Do not use.
 func RegisterGravityControlServer(s grpc.ServiceRegistrar, srv GravityControlServer) {
 	// If the following call pancis, it indicates UnimplementedGravityControlServer was
 	// embedded by pointer and is nil.  This will cause panics if an
@@ -216,12 +231,20 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
 // GravityTunnel service handles bidirectional streaming for packet data and
-// control messages
+// control messages.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
+//
+// Deprecated: Do not use.
 type GravityTunnelClient interface {
+	// Deprecated: Do not use.
 	// establish a tunnel for the client to send and receive control messages
 	// after it has been provisioned
+	// Deprecated: Use GravitySessionService.EstablishSession instead.
 	EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error)
+	// Deprecated: Do not use.
 	// stream packet data with multiplexing
+	// Deprecated: Use GravitySessionService.StreamPackets instead.
 	StreamPackets(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelPacket, TunnelPacket], error)
 }
 
@@ -229,10 +252,12 @@ type gravityTunnelClient struct {
 	cc grpc.ClientConnInterface
 }
 
+// Deprecated: Do not use.
 func NewGravityTunnelClient(cc grpc.ClientConnInterface) GravityTunnelClient {
 	return &gravityTunnelClient{cc}
 }
 
+// Deprecated: Do not use.
 func (c *gravityTunnelClient) EstablishTunnel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ControlMessage, ControlMessage], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &GravityTunnel_ServiceDesc.Streams[0], GravityTunnel_EstablishTunnel_FullMethodName, cOpts...)
@@ -246,6 +271,7 @@ func (c *gravityTunnelClient) EstablishTunnel(ctx context.Context, opts ...grpc.
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type GravityTunnel_EstablishTunnelClient = grpc.BidiStreamingClient[ControlMessage, ControlMessage]
 
+// Deprecated: Do not use.
 func (c *gravityTunnelClient) StreamPackets(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TunnelPacket, TunnelPacket], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &GravityTunnel_ServiceDesc.Streams[1], GravityTunnel_StreamPackets_FullMethodName, cOpts...)
@@ -264,12 +290,20 @@ type GravityTunnel_StreamPacketsClient = grpc.BidiStreamingClient[TunnelPacket, 
 // for forward compatibility.
 //
 // GravityTunnel service handles bidirectional streaming for packet data and
-// control messages
+// control messages.
+// Deprecated: Use GravitySessionService from gravity_session.proto instead.
+// This service will be removed in a future version.
+//
+// Deprecated: Do not use.
 type GravityTunnelServer interface {
+	// Deprecated: Do not use.
 	// establish a tunnel for the client to send and receive control messages
 	// after it has been provisioned
+	// Deprecated: Use GravitySessionService.EstablishSession instead.
 	EstablishTunnel(grpc.BidiStreamingServer[ControlMessage, ControlMessage]) error
+	// Deprecated: Do not use.
 	// stream packet data with multiplexing
+	// Deprecated: Use GravitySessionService.StreamPackets instead.
 	StreamPackets(grpc.BidiStreamingServer[TunnelPacket, TunnelPacket]) error
 	mustEmbedUnimplementedGravityTunnelServer()
 }
@@ -297,6 +331,7 @@ type UnsafeGravityTunnelServer interface {
 	mustEmbedUnimplementedGravityTunnelServer()
 }
 
+// Deprecated: Do not use.
 func RegisterGravityTunnelServer(s grpc.ServiceRegistrar, srv GravityTunnelServer) {
 	// If the following call pancis, it indicates UnimplementedGravityTunnelServer was
 	// embedded by pointer and is nil.  This will cause panics if an

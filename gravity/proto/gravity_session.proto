@@ -1,0 +1,109 @@
+syntax = "proto3";
+
+package gravity;
+
+option go_package = "github.com/agentuity/go-common/gravity/proto";
+
+import "gravity.proto"; // Import shared types
+
+// GravitySessionService handles session establishment and tunnel management
+// using self-signed client certificates authenticated against the org's
+// registered public key.
+//
+// This service replaces the legacy Provision + EstablishTunnel two-step flow
+// with a single-step session establishment.
+service GravitySessionService {
+  // EstablishSession creates a bidirectional control stream.
+  // Authentication is performed via mTLS using self-signed client certificates.
+  // The client's certificate public key is verified against the org's registered key.
+  rpc EstablishSession(stream SessionMessage) returns (stream SessionMessage);
+
+  // StreamSessionPackets handles bidirectional packet data streaming.
+  // Same as the legacy GravityTunnel.StreamPackets but on the new service.
+  rpc StreamSessionPackets(stream TunnelPacket) returns (stream TunnelPacket);
+
+  // GetDeploymentMetadata retrieves metadata for a deployment.
+  rpc GetDeploymentMetadata(DeploymentMetadataRequest) returns (DeploymentMetadataResponse);
+
+  // GetSandboxMetadata retrieves metadata for a sandbox.
+  rpc GetSandboxMetadata(SandboxMetadataRequest) returns (SandboxMetadataResponse);
+}
+
+// SessionMessage is the bidirectional message type for EstablishSession.
+// It contains all control plane messages for the session lifecycle.
+message SessionMessage {
+  string id = 1;
+  string stream_id = 2; // Logical stream identifier for multiplexing
+
+  oneof message_type {
+    // Session lifecycle (10-19)
+    SessionHello session_hello = 10;
+    SessionHelloResponse session_hello_response = 11;
+    SessionCloseRequest session_close = 15;
+
+    // Deployment management (20-29)
+    RouteDeploymentRequest route_deployment = 22;
+    RouteDeploymentResponse route_deployment_response = 23;
+    UnprovisionRequest unprovision = 25;
+    RouteSandboxRequest route_sandbox = 26;
+    RouteSandboxResponse route_sandbox_response = 27;
+
+    // Health and monitoring (30-39)
+    PingRequest ping = 30;
+    PongResponse pong = 31;
+    ReportRequest report = 32;
+
+    // Session control (40-49)
+    PauseRequest pause = 40;
+    ResumeRequest resume = 41;
+
+    // Configuration management (45-49)
+    ConfigurationUpdate config_update = 45;
+    ConfigurationUpdateResponse config_update_response = 46;
+
+    // Generic protocol messages (50-59)
+    ProtocolResponse response = 50;
+    ProtocolEvent event = 51;
+  }
+}
+
+// SessionHello is sent by the client as the first message after TLS handshake.
+// The org_id and instance_id are extracted from the client certificate.
+message SessionHello {
+  int32 protocol_version = 1;        // Protocol version number for compatibility
+  string client_version = 2;         // Version string of the client (e.g., SHA, semver)
+  string client_name = 3;            // Name of the client application (e.g., "hadron")
+  repeated ExistingDeployment deployments = 4; // List of existing deployments to restore
+  HostInfo host_info = 5;            // Information about the host system
+  ClientCapabilities capabilities = 6; // Client capabilities for this session
+
+  // Instance metadata (extracted from cert but also sent for validation)
+  string instance_id = 7;            // Instance ID (must match cert CN)
+
+  // Provider information for machine record
+  string provider = 8;               // Cloud provider (e.g., "aws", "gcp", "azure")
+  string region = 9;                 // Cloud region
+}
+
+// SessionHelloResponse is sent by the server after successful authentication.
+message SessionHelloResponse {
+  string machine_id = 1;             // Deterministic machine ID assigned by server
+  string org_id = 2;                 // Organization ID (from cert verification)
+  string otlp_url = 3;               // OpenTelemetry endpoint URL for metrics
+  string otlp_key = 4;               // OpenTelemetry API key for authentication
+  string api_url = 5;                // Base URL for API operations
+  repeated string environment = 6;   // Environment variables to set
+  repeated HostMapping host_mapping = 7; // Host to IP address mappings
+  repeated string subnet_routes = 8; // Subnet routes for the session
+  string gravity_server = 9;         // The gravity server that we're connected to
+  string hostname = 10;              // Dynamic hostname if requested
+  bytes ssh_public_key = 11;         // SSH public key for internal trusted connections
+  string machine_ipv6 = 12;          // IPv6 address assigned to this machine
+  string machine_subnet = 13;        // IPv6 subnet for this machine's containers
+  string machine_token = 14;         // JWT token for machine to authenticate with catalyst
+}
+
+// SessionCloseRequest is sent to gracefully close the session.
+message SessionCloseRequest {
+  string reason = 1; // Reason for closing the session
+}

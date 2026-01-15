@@ -23,6 +23,9 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Deprecated: Use GravitySessionService.EstablishSession instead.
+//
+// Deprecated: Marked as deprecated in gravity.proto.
 type ProvisionRequest struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Region           string                 `protobuf:"bytes,1,opt,name=region,proto3" json:"region,omitempty"`                                             // the region for the client
@@ -140,6 +143,9 @@ func (x *ProvisionRequest) GetCapabilities() *ClientCapabilities {
 	return nil
 }
 
+// Deprecated: Use GravitySessionService.EstablishSession instead.
+//
+// Deprecated: Marked as deprecated in gravity.proto.
 type ProvisionResponse struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	CaCertificate        []byte                 `protobuf:"bytes,1,opt,name=ca_certificate,json=caCertificate,proto3" json:"ca_certificate,omitempty"`                        // the CA certificate to trust for self-signed server certificates
@@ -240,7 +246,10 @@ func (x *ProvisionResponse) GetDeploymentPrivateKey() []byte {
 	return nil
 }
 
-// ControlMessage represents all control plane communications
+// ControlMessage represents all control plane communications.
+// Deprecated: Use SessionMessage from gravity_session.proto instead.
+//
+// Deprecated: Marked as deprecated in gravity.proto.
 type ControlMessage struct {
 	state    protoimpl.MessageState `protogen:"open.v1"`
 	Id       string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -4256,7 +4265,7 @@ var File_gravity_proto protoreflect.FileDescriptor
 
 const file_gravity_proto_rawDesc = "" +
 	"\n" +
-	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\xf6\x02\n" +
+	"\rgravity.proto\x12\agravity\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1egoogle/protobuf/duration.proto\"\xfa\x02\n" +
 	"\x10ProvisionRequest\x12\x16\n" +
 	"\x06region\x18\x01 \x01(\tR\x06region\x12+\n" +
 	"\x11availability_zone\x18\x02 \x01(\tR\x10availabilityZone\x12\x1a\n" +
@@ -4270,7 +4279,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\rerror_message\x18\b \x01(\tR\ferrorMessage\x12\x1c\n" +
 	"\tephemeral\x18\t \x01(\bR\tephemeral\x12?\n" +
 	"\fcapabilities\x18\n" +
-	" \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\"\xc2\x02\n" +
+	" \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities:\x02\x18\x01\"\xc6\x02\n" +
 	"\x11ProvisionResponse\x12%\n" +
 	"\x0eca_certificate\x18\x01 \x01(\fR\rcaCertificate\x12 \n" +
 	"\vcertificate\x18\x02 \x01(\fR\vcertificate\x12\x1f\n" +
@@ -4281,7 +4290,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\x06org_id\x18\x06 \x01(\tR\x05orgId\x12\x1d\n" +
 	"\n" +
 	"cluster_id\x18\a \x01(\tR\tclusterId\x124\n" +
-	"\x16deployment_private_key\x18\b \x01(\fR\x14deploymentPrivateKey\"\xfb\b\n" +
+	"\x16deployment_private_key\x18\b \x01(\fR\x14deploymentPrivateKey:\x02\x18\x01\"\xff\b\n" +
 	"\x0eControlMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x123\n" +
@@ -4302,7 +4311,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\rconfig_update\x18- \x01(\v2\x1c.gravity.ConfigurationUpdateH\x00R\fconfigUpdate\x12\\\n" +
 	"\x16config_update_response\x18. \x01(\v2$.gravity.ConfigurationUpdateResponseH\x00R\x14configUpdateResponse\x127\n" +
 	"\bresponse\x182 \x01(\v2\x19.gravity.ProtocolResponseH\x00R\bresponse\x12.\n" +
-	"\x05event\x183 \x01(\v2\x16.gravity.ProtocolEventH\x00R\x05eventB\x0e\n" +
+	"\x05event\x183 \x01(\v2\x16.gravity.ProtocolEventH\x00R\x05event:\x02\x18\x01B\x0e\n" +
 	"\fmessage_type\"?\n" +
 	"\fTunnelPacket\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
@@ -4637,14 +4646,14 @@ const file_gravity_proto_rawDesc = "" +
 	"\vextra_hosts\x18\x03 \x03(\tR\n" +
 	"extraHosts\x12\x1f\n" +
 	"\vcert_bundle\x18\x04 \x01(\tR\n" +
-	"certBundle2\x8f\x02\n" +
-	"\x0eGravityControl\x12B\n" +
-	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\x12`\n" +
+	"certBundle2\x99\x02\n" +
+	"\x0eGravityControl\x12G\n" +
+	"\tProvision\x12\x19.gravity.ProvisionRequest\x1a\x1a.gravity.ProvisionResponse\"\x03\x88\x02\x01\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse\x12W\n" +
-	"\x12GetSandboxMetadata\x12\x1f.gravity.SandboxMetadataRequest\x1a .gravity.SandboxMetadataResponse2\x9b\x01\n" +
-	"\rGravityTunnel\x12G\n" +
-	"\x0fEstablishTunnel\x12\x17.gravity.ControlMessage\x1a\x17.gravity.ControlMessage(\x010\x01\x12A\n" +
-	"\rStreamPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket(\x010\x01B.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
+	"\x12GetSandboxMetadata\x12\x1f.gravity.SandboxMetadataRequest\x1a .gravity.SandboxMetadataResponse\x1a\x03\x88\x02\x012\xaa\x01\n" +
+	"\rGravityTunnel\x12L\n" +
+	"\x0fEstablishTunnel\x12\x17.gravity.ControlMessage\x1a\x17.gravity.ControlMessage\"\x03\x88\x02\x01(\x010\x01\x12F\n" +
+	"\rStreamPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket\"\x03\x88\x02\x01(\x010\x01\x1a\x03\x88\x02\x01B.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
 
 var (
 	file_gravity_proto_rawDescOnce sync.Once

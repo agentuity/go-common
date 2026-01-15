@@ -2,6 +2,7 @@ package gravity
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"time"
 
 	"github.com/agentuity/go-common/gravity/network"
@@ -28,13 +29,9 @@ type GravityConfig struct {
 	Logger               logger.Logger
 	Provider             provider.Provider
 	URL                  string
-	Cert                 string
-	Key                  string
-	CACert               string
 	IP4Address           string
 	IP6Address           string
 	InstanceID           string
-	AuthToken            string
 	ClientVersion        string
 	ClientName           string
 	Capabilities         *pb.ClientCapabilities
@@ -46,4 +43,9 @@ type GravityConfig struct {
 	ConnectionPoolConfig *ConnectionPoolConfig
 	ReportStats          bool
 	SkipAutoReconnect    bool
+
+	// Session auth - org's private key for self-signed cert generation
+	PrivateKey *ecdsa.PrivateKey
+	Region     string
+	Provider_  string // cloud provider (aws, gcp, azure, etc.)
 }

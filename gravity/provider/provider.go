@@ -53,6 +53,8 @@ type Configuration struct {
 	MachineToken string
 	// MachineID is the server-assigned machine identifier
 	MachineID string
+	// MachineCertBundle is the server-assigned machine certificate bundle (cert, ca, key)
+	MachineCertBundle string
 	// IP6Address is the IPv6 address of the machine
 	IP6Address string
 }

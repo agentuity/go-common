@@ -33,7 +33,7 @@ const (
 // using self-signed client certificates authenticated against the org's
 // registered public key.
 //
-// This service replaces the legacy Provision + EstablishTunnel two-step flow
+// This service replaces the legacy Provision + EstablishTunnelg two-step flow
 // with a single-step session establishment.
 type GravitySessionServiceClient interface {
 	// EstablishSession creates a bidirectional control stream.
@@ -111,7 +111,7 @@ func (c *gravitySessionServiceClient) GetSandboxMetadata(ctx context.Context, in
 // using self-signed client certificates authenticated against the org's
 // registered public key.
 //
-// This service replaces the legacy Provision + EstablishTunnel two-step flow
+// This service replaces the legacy Provision + EstablishTunnelg two-step flow
 // with a single-step session establishment.
 type GravitySessionServiceServer interface {
 	// EstablishSession creates a bidirectional control stream.

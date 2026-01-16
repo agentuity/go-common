@@ -481,23 +481,24 @@ func (x *SessionHello) GetRegion() string {
 
 // SessionHelloResponse is sent by the server after successful authentication.
 type SessionHelloResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	MachineId     string                 `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`              // Deterministic machine ID assigned by server
-	OrgId         string                 `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                          // Organization ID (from cert verification)
-	OtlpUrl       string                 `protobuf:"bytes,3,opt,name=otlp_url,json=otlpUrl,proto3" json:"otlp_url,omitempty"`                    // OpenTelemetry endpoint URL for metrics
-	OtlpKey       string                 `protobuf:"bytes,4,opt,name=otlp_key,json=otlpKey,proto3" json:"otlp_key,omitempty"`                    // OpenTelemetry API key for authentication
-	ApiUrl        string                 `protobuf:"bytes,5,opt,name=api_url,json=apiUrl,proto3" json:"api_url,omitempty"`                       // Base URL for API operations
-	Environment   []string               `protobuf:"bytes,6,rep,name=environment,proto3" json:"environment,omitempty"`                           // Environment variables to set
-	HostMapping   []*HostMapping         `protobuf:"bytes,7,rep,name=host_mapping,json=hostMapping,proto3" json:"host_mapping,omitempty"`        // Host to IP address mappings
-	SubnetRoutes  []string               `protobuf:"bytes,8,rep,name=subnet_routes,json=subnetRoutes,proto3" json:"subnet_routes,omitempty"`     // Subnet routes for the session
-	GravityServer string                 `protobuf:"bytes,9,opt,name=gravity_server,json=gravityServer,proto3" json:"gravity_server,omitempty"`  // The gravity server that we're connected to
-	Hostname      string                 `protobuf:"bytes,10,opt,name=hostname,proto3" json:"hostname,omitempty"`                                // Dynamic hostname if requested
-	SshPublicKey  []byte                 `protobuf:"bytes,11,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`  // SSH public key for internal trusted connections
-	MachineIpv6   string                 `protobuf:"bytes,12,opt,name=machine_ipv6,json=machineIpv6,proto3" json:"machine_ipv6,omitempty"`       // IPv6 address assigned to this machine
-	MachineSubnet string                 `protobuf:"bytes,13,opt,name=machine_subnet,json=machineSubnet,proto3" json:"machine_subnet,omitempty"` // IPv6 subnet for this machine's containers
-	MachineToken  string                 `protobuf:"bytes,14,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`    // JWT token for machine to authenticate with catalyst
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	MachineId         string                 `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`                            // Deterministic machine ID assigned by server
+	OrgId             string                 `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                                        // Organization ID (from cert verification)
+	OtlpUrl           string                 `protobuf:"bytes,3,opt,name=otlp_url,json=otlpUrl,proto3" json:"otlp_url,omitempty"`                                  // OpenTelemetry endpoint URL for metrics
+	OtlpKey           string                 `protobuf:"bytes,4,opt,name=otlp_key,json=otlpKey,proto3" json:"otlp_key,omitempty"`                                  // OpenTelemetry API key for authentication
+	ApiUrl            string                 `protobuf:"bytes,5,opt,name=api_url,json=apiUrl,proto3" json:"api_url,omitempty"`                                     // Base URL for API operations
+	Environment       []string               `protobuf:"bytes,6,rep,name=environment,proto3" json:"environment,omitempty"`                                         // Environment variables to set
+	HostMapping       []*HostMapping         `protobuf:"bytes,7,rep,name=host_mapping,json=hostMapping,proto3" json:"host_mapping,omitempty"`                      // Host to IP address mappings
+	SubnetRoutes      []string               `protobuf:"bytes,8,rep,name=subnet_routes,json=subnetRoutes,proto3" json:"subnet_routes,omitempty"`                   // Subnet routes for the session
+	GravityServer     string                 `protobuf:"bytes,9,opt,name=gravity_server,json=gravityServer,proto3" json:"gravity_server,omitempty"`                // The gravity server that we're connected to
+	Hostname          string                 `protobuf:"bytes,10,opt,name=hostname,proto3" json:"hostname,omitempty"`                                              // Dynamic hostname if requested
+	SshPublicKey      []byte                 `protobuf:"bytes,11,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`                // SSH public key for internal trusted connections
+	MachineIpv6       string                 `protobuf:"bytes,12,opt,name=machine_ipv6,json=machineIpv6,proto3" json:"machine_ipv6,omitempty"`                     // IPv6 address assigned to this machine
+	MachineSubnet     string                 `protobuf:"bytes,13,opt,name=machine_subnet,json=machineSubnet,proto3" json:"machine_subnet,omitempty"`               // IPv6 subnet for this machine's containers
+	MachineToken      string                 `protobuf:"bytes,14,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`                  // JWT token for machine to authenticate with catalyst
+	MachineCertBundle string                 `protobuf:"bytes,15,opt,name=machine_cert_bundle,json=machineCertBundle,proto3" json:"machine_cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *SessionHelloResponse) Reset() {
@@ -628,6 +629,13 @@ func (x *SessionHelloResponse) GetMachineToken() string {
 	return ""
 }
 
+func (x *SessionHelloResponse) GetMachineCertBundle() string {
+	if x != nil {
+		return x.MachineCertBundle
+	}
+	return ""
+}
+
 // SessionCloseRequest is sent to gracefully close the session.
 type SessionCloseRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -711,7 +719,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
 	"instanceId\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x12\x16\n" +
-	"\x06region\x18\t \x01(\tR\x06region\"\xf3\x03\n" +
+	"\x06region\x18\t \x01(\tR\x06region\"\xa3\x04\n" +
 	"\x14SessionHelloResponse\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12\x15\n" +
@@ -728,7 +736,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x0essh_public_key\x18\v \x01(\fR\fsshPublicKey\x12!\n" +
 	"\fmachine_ipv6\x18\f \x01(\tR\vmachineIpv6\x12%\n" +
 	"\x0emachine_subnet\x18\r \x01(\tR\rmachineSubnet\x12#\n" +
-	"\rmachine_token\x18\x0e \x01(\tR\fmachineToken\"-\n" +
+	"\rmachine_token\x18\x0e \x01(\tR\fmachineToken\x12.\n" +
+	"\x13machine_cert_bundle\x18\x0f \x01(\tR\x11machineCertBundle\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason2\xe6\x02\n" +
 	"\x15GravitySessionService\x12H\n" +

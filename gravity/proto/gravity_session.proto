@@ -101,6 +101,7 @@ message SessionHelloResponse {
   string machine_ipv6 = 12; // IPv6 address assigned to this machine
   string machine_subnet = 13; // IPv6 subnet for this machine's containers
   string machine_token = 14; // JWT token for machine to authenticate with catalyst
+  string machine_cert_bundle = 15; // PEM certificate bundle (cert, ca, key)
 }
 
 // SessionCloseRequest is sent to gracefully close the session.

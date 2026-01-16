@@ -3,12 +3,15 @@ package gravity
 import (
 	"compress/gzip"
 	"context"
+	"crypto/ecdsa"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/url"
 	"os"
@@ -80,6 +83,10 @@ type GravityClient struct {
 	logger             logger.Logger
 	provider           provider.Provider
 	url                string
+	ecdsaPrivateKey    *ecdsa.PrivateKey
+	instanceID         string
+	region             string
+	cloudProvider      string
 	authorizationToken string
 	ip4Address         string
 	ip6Address         string
@@ -90,13 +97,17 @@ type GravityClient struct {
 	workingDir         string
 	reportStats        bool
 
+	// Session response fields
+	machineID     string
+	machineIPv6   string
+	machineSubnet string
+
 	// Connection pool configuration
 	poolConfig ConnectionPoolConfig
 
 	// gRPC connections and streams
 	connections    []*grpc.ClientConn // Connection pool (4-8 connections)
-	controlClients []pb.GravityControlClient
-	tunnelClients  []pb.GravityTunnelClient
+	sessionClients []pb.GravitySessionServiceClient
 	streamManager  *StreamManager
 
 	// Fault tolerance
@@ -170,7 +181,7 @@ type GravityClient struct {
 
 // StreamInfo tracks individual stream health and load
 type StreamInfo struct {
-	stream    pb.GravityTunnel_StreamPacketsClient
+	stream    pb.GravitySessionService_StreamSessionPacketsClient
 	connIndex int       // Connection index this stream belongs to
 	streamID  string    // Unique stream identifier
 	isHealthy bool      // Stream health status
@@ -180,8 +191,8 @@ type StreamInfo struct {
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
 type StreamManager struct {
-	// Control streams (one per connection) - now using tunnel service
-	controlStreams []pb.GravityTunnel_EstablishTunnelClient
+	// Control streams (one per connection) - using session service
+	controlStreams []pb.GravitySessionService_EstablishSessionClient
 	controlMu      sync.RWMutex
 
 	// Enhanced tunnel stream management
@@ -214,13 +225,20 @@ type StreamMetrics struct {
 
 // New creates a new gRPC-based Gravity server client
 func New(config GravityConfig) (*GravityClient, error) {
-	tlsConfig, err := createTLSConfig(config.Cert, config.Key, config.CACert)
+	if config.ECDSAPrivateKey == nil {
+		return nil, fmt.Errorf("ECDSAPrivateKey is required")
+	}
+	if config.InstanceID == "" {
+		return nil, fmt.Errorf("InstanceID is required")
+	}
+
+	tlsConfig, err := createSelfSignedTLSConfig(config.ECDSAPrivateKey, config.InstanceID, config.CACert)
 	if err != nil {
 		return nil, fmt.Errorf("error creating TLS configuration: %w", err)
 	}
 
 	// Get host information
-	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, config.IP6Address, config.InstanceID)
+	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, "", config.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -247,9 +265,11 @@ func New(config GravityConfig) (*GravityClient, error) {
 		logger:                 config.Logger,
 		provider:               config.Provider,
 		url:                    config.URL,
-		authorizationToken:     config.AuthToken,
+		ecdsaPrivateKey:        config.ECDSAPrivateKey,
+		instanceID:             config.InstanceID,
+		region:                 config.Region,
+		cloudProvider:          config.CloudProvider,
 		ip4Address:             config.IP4Address,
-		ip6Address:             config.IP6Address,
 		clientVersion:          config.ClientVersion,
 		clientName:             config.ClientName,
 		capabilities:           config.Capabilities,
@@ -262,7 +282,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		tlsConfig:              tlsConfig,
 		caCert:                 config.CACert,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
-		connectionIDChan:       make(chan string, 1), // Buffered channel for connection ID
+		connectionIDChan:       make(chan string, 1),
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteDeployment: make(map[string]chan *pb.RouteDeploymentResponse),
@@ -328,10 +348,23 @@ func (g *GravityClient) Start() error {
 	g.logger.Debug("creating TLS configuration...")
 	// Create TLS config that includes both client certificates (mTLS) and server verification
 	tlsConfig := &tls.Config{
-		Certificates: g.tlsConfig.Certificates,    // Client certificates for mTLS
-		RootCAs:      g.tlsConfig.RootCAs.Clone(), // CA for server verification
-		ServerName:   hostname,                    // Dynamic server name for SNI and verification
+		Certificates: g.tlsConfig.Certificates, // Client certificates for mTLS (self-signed)
+		ServerName:   hostname,                 // Dynamic server name for SNI and verification
 		MinVersion:   tls.VersionTLS13,
+		// GetClientCertificate ensures the client always sends its cert when requested
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			if len(g.tlsConfig.Certificates) > 0 {
+				return &g.tlsConfig.Certificates[0], nil
+			}
+			return nil, fmt.Errorf("no client certificate available")
+		},
+	}
+	// Only set RootCAs if we have them (for server cert verification)
+	if g.tlsConfig.RootCAs != nil {
+		tlsConfig.RootCAs = g.tlsConfig.RootCAs.Clone()
+	} else {
+		// No CA cert provided - skip server verification (dev mode)
+		tlsConfig.InsecureSkipVerify = true
 	}
 	creds := credentials.NewTLS(tlsConfig)
 	g.logger.Debug("TLS credentials created successfully")
@@ -340,8 +373,7 @@ func (g *GravityClient) Start() error {
 	connectionCount := g.poolConfig.PoolSize
 	g.logger.Debug("creating connection pool with %d connections", connectionCount)
 	g.connections = make([]*grpc.ClientConn, connectionCount)
-	g.controlClients = make([]pb.GravityControlClient, connectionCount)
-	g.tunnelClients = make([]pb.GravityTunnelClient, connectionCount)
+	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
 	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
 
 	// Initialize connection health tracking
@@ -369,8 +401,7 @@ func (g *GravityClient) Start() error {
 		g.logger.Debug("gRPC client %d created successfully", i+1)
 
 		g.connections[i] = conn
-		g.controlClients[i] = pb.NewGravityControlClient(conn)
-		g.tunnelClients[i] = pb.NewGravityTunnelClient(conn)
+		g.sessionClients[i] = pb.NewGravitySessionServiceClient(conn)
 		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
 	}
 	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
@@ -388,15 +419,15 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("control streams established successfully")
 
-	g.logger.Debug("sending initial connect message...")
-	// Send initial connect message first to get connection IDs
-	err = g.sendConnectMessage()
+	g.logger.Debug("sending session hello...")
+	// Send session hello to authenticate and get session info
+	err = g.sendSessionHello()
 	if err != nil {
-		g.logger.Error("failed to send connect message: %v", err)
+		g.logger.Error("failed to send session hello: %v", err)
 		g.cleanup()
-		return fmt.Errorf("failed to send connect message: %w", err)
+		return fmt.Errorf("failed to send session hello: %w", err)
 	}
-	g.logger.Debug("connect message sent successfully")
+	g.logger.Debug("session hello sent successfully")
 
 	g.logger.Debug("establishing tunnel streams...")
 	// Establish tunnel streams (multiple per connection) - after connect message
@@ -444,23 +475,18 @@ func (g *GravityClient) Start() error {
 // establishControlStreams creates control streams for each connection
 func (g *GravityClient) establishControlStreams() error {
 	g.logger.Debug("creating control streams for %d connections", len(g.connections))
-	g.streamManager.controlStreams = make([]pb.GravityTunnel_EstablishTunnelClient, len(g.connections))
+	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, len(g.connections))
 	g.streamManager.contexts = make([]context.Context, len(g.connections))
 	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
 
-	for i, client := range g.tunnelClients {
+	for i, client := range g.sessionClients {
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx
 		g.streamManager.cancels[i] = cancel
 
-		// Add authorization metadata for control stream authentication
-		md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
-		ctx = metadata.NewOutgoingContext(ctx, md)
-
 		// Enable gzip compression for control streams (text-based control messages)
-		// Use the grpc.UseCompressor call option for selective compression
-		stream, err := client.EstablishTunnel(ctx, grpc.UseCompressor(grpcgzip.Name))
+		stream, err := client.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
 		if err != nil {
 			g.logger.Error("failed to establish control stream %d: %v", i+1, err)
 			return fmt.Errorf("failed to establish control stream %d: %w", i, err)
@@ -479,20 +505,20 @@ func (g *GravityClient) establishControlStreams() error {
 
 // establishTunnelStreams creates tunnel streams for packet forwarding
 func (g *GravityClient) establishTunnelStreams() error {
-	// Wait for connection ID from primary control stream using channel
-	g.logger.Debug("waiting for connection ID from server...")
+	// Wait for machine ID from primary control stream using channel
+	g.logger.Debug("waiting for machine ID from server...")
 
-	var connectionID string
+	var machineID string
 	select {
-	case connectionID = <-g.connectionIDChan:
-		if connectionID == "" {
-			g.logger.Error("connection failed - authentication rejected by server")
-			return fmt.Errorf("connection failed - authentication rejected by server")
+	case machineID = <-g.connectionIDChan:
+		if machineID == "" {
+			g.logger.Error("session failed - authentication rejected by server")
+			return fmt.Errorf("session failed - authentication rejected by server")
 		}
-		g.logger.Debug("connection ID received: %s, proceeding with tunnel streams", connectionID)
+		g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
 	case <-time.After(time.Minute):
-		g.logger.Error("timeout waiting for connection ID from server - possible server issue or network problem")
-		return fmt.Errorf("timeout waiting for connection ID from server")
+		g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
+		return fmt.Errorf("timeout waiting for machine ID from server")
 	}
 
 	// Use configured streams per connection
@@ -502,24 +528,20 @@ func (g *GravityClient) establishTunnelStreams() error {
 	g.streamManager.tunnelStreams = make([]*StreamInfo, totalStreams)
 
 	streamIndex := 0
-	for connIndex, client := range g.tunnelClients {
+	for connIndex, client := range g.sessionClients {
 		for range streamsPerConnection {
 			streamID := fmt.Sprintf("stream_%s", rand.Text())
-			ctx := context.WithValue(g.ctx, "connection-id", connectionID)
+			ctx := context.WithValue(g.ctx, "machine-id", machineID)
 			ctx = context.WithValue(ctx, "stream-id", streamID)
 
-			// Add metadata for stream identification and authentication
+			// Add metadata for stream identification
 			md := metadata.Pairs(
-				"connection-id", connectionID, // Use the single connection ID for all streams
+				"machine-id", machineID,
 				"stream-id", streamID,
-				"authorization", "Bearer "+g.authorizationToken, // Add auth token
 			)
 			ctx = metadata.NewOutgoingContext(ctx, md)
 
-			// No compression for tunnel streams (binary packet data for performance)
-			// Tunnel streams remain uncompressed as per selective compression strategy
-
-			stream, err := client.StreamPackets(ctx)
+			stream, err := client.StreamSessionPackets(ctx)
 			if err != nil {
 				return fmt.Errorf("failed to establish tunnel stream %d: %w", streamIndex, err)
 			}
@@ -556,11 +578,11 @@ func (g *GravityClient) establishTunnelStreams() error {
 	return nil
 }
 
-// sendConnectMessage sends the initial connect message
-func (g *GravityClient) sendConnectMessage() error {
+// sendSessionHello sends the initial session hello message
+func (g *GravityClient) sendSessionHello() error {
 	// Convert existing deployments to protobuf format
 	var existingDeployments []*pb.ExistingDeployment
-	resources := g.provider.Resources() // Use Resources() method from Provider interface
+	resources := g.provider.Resources()
 
 	g.logger.Debug("gathering current deployment state for server synchronization...")
 	g.logger.Debug("found %d existing deployments to synchronize with server", len(resources))
@@ -573,51 +595,49 @@ func (g *GravityClient) sendConnectMessage() error {
 	if len(existingDeployments) > 0 {
 		g.logger.Debug("sending %d existing deployments to gravity server for state synchronization", len(existingDeployments))
 	} else {
-		g.logger.Debug("no existing deployments to synchronize - this is a fresh connection")
+		g.logger.Debug("no existing deployments to synchronize - this is a fresh session")
 	}
 
-	// Create connect request
-	connectReq := &pb.ConnectRequest{
+	// Create session hello
+	sessionHello := &pb.SessionHello{
 		ProtocolVersion: protocolVersion,
 		ClientVersion:   g.clientVersion,
 		ClientName:      g.clientName,
-		Capabilities:    g.capabilities,
 		Deployments:     existingDeployments,
 		HostInfo:        g.hostInfo,
+		Capabilities:    g.capabilities,
+		InstanceId:      g.instanceID,
+		Provider:        g.cloudProvider,
+		Region:          g.region,
 	}
 
 	// Send on the first control stream
-	msg := &pb.ControlMessage{
-		Id:       "connect",
-		StreamId: "connect",
-		MessageType: &pb.ControlMessage_Connect{
-			Connect: connectReq,
+	msg := &pb.SessionMessage{
+		Id:       "session_hello",
+		StreamId: "session_hello",
+		MessageType: &pb.SessionMessage_SessionHello{
+			SessionHello: sessionHello,
 		},
 	}
 
-	// Send connect message on FIRST control stream only to establish client identity
-	g.logger.Debug("sending connect message on primary control stream")
-	g.logger.Debug("connect message details: ID=%s, ProtocolVersion=%d, ClientName=%s, ClientVersion=%s, Capabilities=[Provision:%v, Unprovision:%v, ProjectRouting:%s, DynamicHostname:%v]",
-		msg.Id, connectReq.ProtocolVersion, connectReq.ClientName, connectReq.ClientVersion,
-		connectReq.Capabilities.GetProvisionDeployments(), connectReq.Capabilities.GetUnprovisionDeployments(), connectReq.Capabilities.GetDynamicProjectRouting(), connectReq.Capabilities.GetDynamicHostname())
+	g.logger.Debug("sending session hello on primary control stream")
 
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
-		g.logger.Debug("actually sending connect message on primary control stream")
 		return stream.Send(msg)
 	})
 
 	if err != nil {
-		return fmt.Errorf("failed to send connect message: %w", err)
+		return fmt.Errorf("failed to send session hello: %w", err)
 	}
 
 	return nil
 }
 
 // handleControlStream processes messages from a control stream
-func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTunnel_EstablishTunnelClient) {
+func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySessionService_EstablishSessionClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("control stream %d panic: %v", streamIndex, r)
@@ -648,14 +668,12 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravityTu
 		}
 
 		g.logger.Trace("control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
-		g.logger.Trace("processing control message: ID=%s, Type=%T", msg.Id, msg.MessageType)
-		// Process control message
-		g.processControlMessage(msg)
+		g.processSessionMessage(msg)
 	}
 }
 
 // handleTunnelStream processes packets from a tunnel stream
-func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravityTunnel_StreamPacketsClient) {
+func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient) {
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
@@ -700,83 +718,76 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravityTun
 	}
 }
 
-// processControlMessage processes incoming control messages
-func (g *GravityClient) processControlMessage(msg *pb.ControlMessage) {
+// processSessionMessage processes incoming session messages
+func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 	switch m := msg.MessageType.(type) {
-	case *pb.ControlMessage_ConnectResponse:
-		g.logger.Debug("received ConnectResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
-		g.handleConnectResponse(msg.Id, msg.StreamId, m.ConnectResponse)
-	case *pb.ControlMessage_RouteDeploymentResponse:
+	case *pb.SessionMessage_SessionHelloResponse:
+		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
+		g.handleSessionHelloResponse(msg.Id, m.SessionHelloResponse)
+	case *pb.SessionMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
-	case *pb.ControlMessage_RouteSandboxResponse:
+	case *pb.SessionMessage_RouteSandboxResponse:
 		g.handleRouteSandboxResponse(msg.Id, m.RouteSandboxResponse)
-	case *pb.ControlMessage_Unprovision:
+	case *pb.SessionMessage_Unprovision:
 		g.handleUnprovisionRequest(msg.Id, m.Unprovision)
-	case *pb.ControlMessage_Report:
+	case *pb.SessionMessage_Report:
 		// this is a server method
-	case *pb.ControlMessage_Ping:
+	case *pb.SessionMessage_Ping:
 		g.handlePingRequest(msg.Id, m.Ping)
-	case *pb.ControlMessage_Close:
-		g.handleCloseRequest(msg.Id, m.Close)
-	case *pb.ControlMessage_Pause:
+	case *pb.SessionMessage_SessionClose:
+		g.handleSessionCloseRequest(msg.Id, m.SessionClose)
+	case *pb.SessionMessage_Pause:
 		g.handlePauseRequest(msg.Id, m.Pause)
-	case *pb.ControlMessage_Resume:
+	case *pb.SessionMessage_Resume:
 		g.handleResumeRequest(msg.Id, m.Resume)
-	case *pb.ControlMessage_Response:
+	case *pb.SessionMessage_Response:
 		g.handleGenericResponse(msg.Id, m.Response)
-	case *pb.ControlMessage_Event:
+	case *pb.SessionMessage_Event:
 		g.handleEvent(msg.Id, m.Event)
-	case *pb.ControlMessage_Pong:
+	case *pb.SessionMessage_Pong:
 		g.handlePong(msg.Id, m.Pong)
 	default:
-		g.logger.Debug("unhandled control message type: %T", m)
+		g.logger.Debug("unhandled session message type: %T", m)
 	}
 }
 
 // Helper functions
-func (g *GravityClient) handleConnectResponse(msgID string, connectionID string, response *pb.ConnectResponse) {
-	g.logger.Debug("handleConnectResponse called: msgID=%s, connectionID=%s, gravityServer=%s response=%v", msgID, connectionID, response.GravityServer, response)
+func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.SessionHelloResponse) {
+	g.logger.Debug("handleSessionHelloResponse called: msgID=%s, machineID=%s, gravityServer=%s", msgID, response.MachineId, response.GravityServer)
 
-	g.logger.Debug("about to acquire mutex...")
 	g.mu.Lock()
-	g.logger.Debug("mutex acquired, storing connection ID...")
 
-	// Store the connection ID for tunnel streams
-	g.connectionIDs = append(g.connectionIDs, connectionID)
-	numConnIDs := len(g.connectionIDs)
-	g.logger.Debug("stored connection ID, now have %d connection IDs", numConnIDs)
+	// Store session response fields
+	g.machineID = response.MachineId
+	g.machineIPv6 = response.MachineIpv6
+	g.machineSubnet = response.MachineSubnet
+	g.authorizationToken = response.MachineToken
+	g.connectionIDs = append(g.connectionIDs, response.MachineId)
 
-	g.logger.Debug("setting response fields...")
 	g.otlpURL = response.OtlpUrl
+	g.otlpToken = response.OtlpKey
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
+	g.hostMapping = response.HostMapping
 
-	// Store SSH public key if provided
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
 	}
 
-	g.logger.Debug("storing host mappings...")
-	// Store host mappings directly (already protobuf)
-	g.hostMapping = response.HostMapping
-	g.logger.Debug("about to release mutex...")
 	g.mu.Unlock()
-	g.logger.Debug("mutex released")
 
-	// IMPORTANT: Send connection ID to channel FIRST before any blocking operations
-	g.logger.Debug("about to send connection ID %s to channel...", connectionID)
+	// Send machine ID to channel to unblock tunnel stream establishment
 	select {
-	case g.connectionIDChan <- connectionID:
-		g.logger.Debug("connection ID sent to channel successfully")
+	case g.connectionIDChan <- response.MachineId:
+		g.logger.Debug("machine ID sent to channel successfully")
 	default:
-		g.logger.Error("connection ID channel full - this should not happen!")
-		return // Early return if channel send fails
+		g.logger.Error("machine ID channel full - this should not happen!")
+		return
 	}
 
-	g.logger.Debug("configuring provider with gRPC server...")
-	// Configure provider with the gRPC server as provider.Server interface
+	// Configure provider with session info
 	if err := g.provider.Configure(provider.Configuration{
-		Server:          g, // Critical: pass the gRPC server as provider.Server
+		Server:          g,
 		Context:         g.context,
 		Logger:          g.logger,
 		APIURL:          g.apiURL,
@@ -790,8 +801,11 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		SubnetRoutes:    response.SubnetRoutes,
 		Hostname:        response.Hostname,
 		OrgID:           response.OrgId,
+		MachineToken:    response.MachineToken,
+		MachineID:       response.MachineId,
+		IP6Address:      response.MachineIpv6,
 	}); err != nil {
-		g.logger.Error("error configuring provider after connect: %v", err)
+		g.logger.Error("error configuring provider after session hello: %v", err)
 		return
 	}
 	g.logger.Debug("provider configured successfully")
@@ -802,14 +816,13 @@ func (g *GravityClient) handleConnectResponse(msgID string, connectionID string,
 		return
 	}
 
-	g.logger.Debug("connected successfully to Gravity with connection ID: %s (total: %d)", connectionID, numConnIDs)
+	g.logger.Debug("session established successfully with machine ID: %s, IPv6: %s", response.MachineId, response.MachineIpv6)
 
-	// Log successful deployment synchronization
 	deploymentCount := len(g.provider.Resources())
 	if deploymentCount > 0 {
 		g.logger.Debug("deployment state synchronization completed - server is now aware of %d existing deployments", deploymentCount)
 	} else {
-		g.logger.Debug("no existing deployments to synchronize - fresh connection established")
+		g.logger.Debug("no existing deployments to synchronize - fresh session established")
 	}
 }
 
@@ -817,10 +830,9 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 	g.logger.Trace("received generic response: msgID=%s, success=%v, error=%s, event=%s",
 		msgID, response.Success, response.Error, response.Event)
 
-	// Check if this is an error response for a connect message
-	if msgID == "connect" && !response.Success {
-		g.logger.Error("connect request failed: %s", response.Error)
-		// Signal error by closing the connection ID channel without sending a value
+	// Check if this is an error response for a session hello message
+	if msgID == "session_hello" && !response.Success {
+		g.logger.Error("session hello failed: %s", response.Error)
 		select {
 		case g.connectionIDChan <- "":
 		default:
@@ -903,17 +915,15 @@ func (g *GravityClient) handleEvent(msgID string, event *pb.ProtocolEvent) {
 func (g *GravityClient) handleProvisionEvent(event *pb.ProtocolEvent) {
 	g.logger.Debug("handling provision event: %s", string(event.Payload))
 
-	// For now, just acknowledge the event
-	// In a real implementation, this would trigger container/service provisioning
 	response := &pb.ProtocolResponse{
 		Id:      event.Id,
 		Event:   "provision",
 		Success: true,
 	}
 
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: event.Id,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -930,17 +940,15 @@ func (g *GravityClient) handleProvisionEvent(event *pb.ProtocolEvent) {
 func (g *GravityClient) handleUnprovisionEvent(event *pb.ProtocolEvent) {
 	g.logger.Debug("handling unprovision event: %s", string(event.Payload))
 
-	// For now, just acknowledge the event
-	// In a real implementation, this would trigger container/service cleanup
 	response := &pb.ProtocolResponse{
 		Id:      event.Id,
 		Event:   "unprovision",
 		Success: true,
 	}
 
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: event.Id,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -1011,9 +1019,9 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 	}
 
 	// Send response back to gravity server
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -1031,12 +1039,11 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 func (g *GravityClient) handlePingRequest(msgID string, request *pb.PingRequest) {
 	g.logger.Debug("received ping request: id=%s", msgID)
 
-	// Send pong response
-	pongMsg := &pb.ControlMessage{
+	pongMsg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Pong{
+		MessageType: &pb.SessionMessage_Pong{
 			Pong: &pb.PongResponse{
-				Timestamp: request.Timestamp, // Echo back the timestamp
+				Timestamp: request.Timestamp,
 			},
 		},
 	}
@@ -1051,19 +1058,18 @@ func (g *GravityClient) handlePingRequest(msgID string, request *pb.PingRequest)
 	}
 }
 
-func (g *GravityClient) handleCloseRequest(msgID string, request *pb.CloseRequest) {
-	g.logger.Debug("received close request: reason=%s", request.Reason)
+func (g *GravityClient) handleSessionCloseRequest(msgID string, request *pb.SessionCloseRequest) {
+	g.logger.Debug("received session close request: reason=%s", request.Reason)
 
-	// Acknowledge the close request
 	response := &pb.ProtocolResponse{
 		Id:      msgID,
-		Event:   "close",
+		Event:   "session_close",
 		Success: true,
 	}
 
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -1072,28 +1078,24 @@ func (g *GravityClient) handleCloseRequest(msgID string, request *pb.CloseReques
 		g.streamManager.controlStreams[0].Send(responseMsg)
 	}
 
-	// For HA: disconnect and attempt reconnection instead of full shutdown
-	g.logger.Info("server requested close, attempting reconnection for HA")
-	go g.handleServerDisconnection("close_request")
+	g.logger.Info("server requested session close, attempting reconnection for HA")
+	go g.handleServerDisconnection("session_close_request")
 }
 
 func (g *GravityClient) handlePauseRequest(msgID string, request *pb.PauseRequest) {
 	g.logger.Debug("received pause request: reason=%s", request.Reason)
 
-	// TODO: we need to implement pause from gravity
-
 	g.logger.Debug("pausing hadron client operations: %s", request.Reason)
 
-	// For now, just acknowledge the pause
 	response := &pb.ProtocolResponse{
 		Id:      msgID,
 		Event:   "pause",
 		Success: true,
 	}
 
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -1111,20 +1113,17 @@ func (g *GravityClient) handlePauseRequest(msgID string, request *pb.PauseReques
 func (g *GravityClient) handleResumeRequest(msgID string, request *pb.ResumeRequest) {
 	g.logger.Debug("received resume request: reason=%s", request.Reason)
 
-	// Resume the hadron client operations
-	// TODO: we need to implement pause from gravity
 	g.logger.Debug("resuming hadron client operations: %s", request.Reason)
 
-	// For now, just acknowledge the resume
 	response := &pb.ProtocolResponse{
 		Id:      msgID,
 		Event:   "resume",
 		Success: true,
 	}
 
-	responseMsg := &pb.ControlMessage{
+	responseMsg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: response,
 		},
 	}
@@ -1531,13 +1530,13 @@ func generateMessageID() string {
 	return uid.String()
 }
 
-// sendControlMessageAsync sends a control message without waiting for response (async)
-func (g *GravityClient) sendControlMessageAsync(msg *pb.ControlMessage) error {
+// sendSessionMessageAsync sends a session message without waiting for response (async)
+func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 	if len(g.streamManager.controlStreams) == 0 {
 		return fmt.Errorf("no control streams available")
 	}
 
-	stream := g.streamManager.controlStreams[0] // Use primary control stream
+	stream := g.streamManager.controlStreams[0]
 	if stream == nil {
 		return fmt.Errorf("control stream is nil")
 	}
@@ -1572,9 +1571,9 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 	}()
 
 	// Create and send the request
-	msg := &pb.ControlMessage{
+	msg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_RouteDeployment{
+		MessageType: &pb.SessionMessage_RouteDeployment{
 			RouteDeployment: &pb.RouteDeploymentRequest{
 				DeploymentId: deploymentID,
 				Hostname:     hostname,
@@ -1583,7 +1582,7 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 		},
 	}
 
-	if err := g.sendControlMessageAsync(msg); err != nil {
+	if err := g.sendSessionMessageAsync(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route deployment request: %w", err)
 	}
 
@@ -1618,9 +1617,9 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 	}()
 
 	// Create and send the request
-	msg := &pb.ControlMessage{
+	msg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_RouteSandbox{
+		MessageType: &pb.SessionMessage_RouteSandbox{
 			RouteSandbox: &pb.RouteSandboxRequest{
 				SandboxId: sandboxID,
 				VirtualIp: virtualIP,
@@ -1628,7 +1627,7 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 		},
 	}
 
-	if err := g.sendControlMessageAsync(msg); err != nil {
+	if err := g.sendSessionMessageAsync(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route sandbox request: %w", err)
 	}
 
@@ -1694,41 +1693,40 @@ func (g *GravityClient) Unprovision(deploymentID string) error {
 	}
 
 	msgID := generateMessageID()
-	controlMsg := &pb.ControlMessage{
+	msg := &pb.SessionMessage{
 		Id: msgID,
-		MessageType: &pb.ControlMessage_Unprovision{
+		MessageType: &pb.SessionMessage_Unprovision{
 			Unprovision: req,
 		},
 	}
 
-	// Send asynchronously on primary control stream
-	return g.sendControlMessageAsync(controlMsg)
+	return g.sendSessionMessageAsync(msg)
 }
 
 // Pause sends a pause event to the gravity server
 func (g *GravityClient) Pause(reason string) error {
-	controlMsg := &pb.ControlMessage{
+	msg := &pb.SessionMessage{
 		Id: generateMessageID(),
-		MessageType: &pb.ControlMessage_Pause{
+		MessageType: &pb.SessionMessage_Pause{
 			Pause: &pb.PauseRequest{Reason: reason},
 		},
 	}
 
-	return g.sendControlMessageAsync(controlMsg)
+	return g.sendSessionMessageAsync(msg)
 }
 
 // Resume sends a resume event to the gravity server
 func (g *GravityClient) Resume(reason string) error {
-	controlMsg := &pb.ControlMessage{
+	msg := &pb.SessionMessage{
 		Id: generateMessageID(),
-		MessageType: &pb.ControlMessage_Resume{
+		MessageType: &pb.SessionMessage_Resume{
 			Resume: &pb.ResumeRequest{
 				Reason: reason,
 			},
 		},
 	}
 
-	return g.sendControlMessageAsync(controlMsg)
+	return g.sendSessionMessageAsync(msg)
 }
 
 // WritePacket sends a tunnel packet via gRPC tunnel stream using load balancing
@@ -2140,17 +2138,41 @@ func extractHostnameFromGravityURL(inputURL string) (string, error) {
 	return hostname, nil
 }
 
-func createTLSConfig(certPEM, keyPEM, caCertPEM string) (*tls.Config, error) {
-	// Load client certificate
+func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID, caCertPEM string) (*tls.Config, error) {
+	// Generate self-signed certificate from ECDSA private key
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(time.Now().UnixNano()),
+		Subject: pkix.Name{
+			CommonName: instanceID,
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
 
-	cert, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load client certificate: %w", err)
+		return nil, fmt.Errorf("failed to create self-signed certificate: %w", err)
+	}
+
+	leaf, err := x509.ParseCertificate(certDER)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse self-signed certificate: %w", err)
+	}
+
+	cert := tls.Certificate{
+		Certificate: [][]byte{certDER},
+		PrivateKey:  privateKey,
+		Leaf:        leaf,
 	}
 
 	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM([]byte(caCertPEM)) {
-		return nil, fmt.Errorf("failed to parse CA certificate")
+	if caCertPEM != "" {
+		if !caCertPool.AppendCertsFromPEM([]byte(caCertPEM)) {
+			return nil, fmt.Errorf("failed to parse CA certificate")
+		}
 	}
 
 	return &tls.Config{
@@ -2158,7 +2180,7 @@ func createTLSConfig(certPEM, keyPEM, caCertPEM string) (*tls.Config, error) {
 		RootCAs:          caCertPool,
 		MinVersion:       tls.VersionTLS13,
 		CurvePreferences: []tls.CurveID{tls.X25519, tls.X25519MLKEM768, tls.CurveP256},
-		NextProtos:       []string{"h2", "http/1.1"}, // Prefer HTTP/2
+		NextProtos:       []string{"h2", "http/1.1"},
 	}, nil
 }
 
@@ -2219,9 +2241,9 @@ func (g *GravityClient) sendReport() {
 	started := time.Now()
 	reportID := generateMessageID()
 
-	reportMsg := &pb.ControlMessage{
+	reportMsg := &pb.SessionMessage{
 		Id: reportID,
-		MessageType: &pb.ControlMessage_Report{
+		MessageType: &pb.SessionMessage_Report{
 			Report: &pb.ReportRequest{
 				Metrics: g.GetServerMetrics(true),
 			},
@@ -2274,9 +2296,9 @@ func (g *GravityClient) sendPing() {
 	started := time.Now()
 	pingID := generateMessageID()
 
-	pingMsg := &pb.ControlMessage{
+	pingMsg := &pb.SessionMessage{
 		Id: pingID,
-		MessageType: &pb.ControlMessage_Ping{
+		MessageType: &pb.SessionMessage_Ping{
 			Ping: &pb.PingRequest{
 				Timestamp: timestamppb.New(started),
 			},
@@ -2316,10 +2338,9 @@ func (g *GravityClient) returnBuffer(pooledBuf *PooledBuffer) {
 }
 
 // GetDeploymentMetadata makes a gRPC call to get deployment metadata
-// This is used by HTTP API server for provision requests
 func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID, orgID string) (*pb.DeploymentMetadataResponse, error) {
-	if len(g.controlClients) == 0 {
-		return nil, fmt.Errorf("no gRPC control clients available")
+	if len(g.sessionClients) == 0 {
+		return nil, fmt.Errorf("no gRPC session clients available")
 	}
 
 	metadataRequest := &pb.DeploymentMetadataRequest{
@@ -2327,18 +2348,16 @@ func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID,
 		OrgId:        orgID,
 	}
 
-	// Add authorization metadata for authentication
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.controlClients[0].GetDeploymentMetadata(authCtx, metadataRequest)
+	return g.sessionClients[0].GetDeploymentMetadata(authCtx, metadataRequest)
 }
 
 // GetSandboxMetadata makes a gRPC call to get sandbox metadata
-// This is used by HTTP API server for sandbox creation when a port is specified
 func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID string, generateCertificate bool) (*pb.SandboxMetadataResponse, error) {
-	if len(g.controlClients) == 0 {
-		return nil, fmt.Errorf("no gRPC control clients available")
+	if len(g.sessionClients) == 0 {
+		return nil, fmt.Errorf("no gRPC session clients available")
 	}
 
 	metadataRequest := &pb.SandboxMetadataRequest{
@@ -2347,11 +2366,10 @@ func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID
 		GenerateCertificate: generateCertificate,
 	}
 
-	// Add authorization metadata for authentication
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.controlClients[0].GetSandboxMetadata(authCtx, metadataRequest)
+	return g.sessionClients[0].GetSandboxMetadata(authCtx, metadataRequest)
 }
 
 // GetTLSConfig returns the TLS configuration for external use (like HTTP server)

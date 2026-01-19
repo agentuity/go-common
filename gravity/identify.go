@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 
 // Identify performs a one-shot authentication to retrieve the org ID.
 // It connects using a self-signed certificate generated from the provided ECDSA private key.
-func Identify(ctx context.Context, gravityURL string, instanceID string, privateKey *ecdsa.PrivateKey) (*pb.IdentifyResponse, error) {
+func Identify(ctx context.Context, gravityURL string, instanceID string, privateKey *ecdsa.PrivateKey, caCert string) (*pb.IdentifyResponse, error) {
 	serverName, err := extractHostnameFromGravityURL(gravityURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract serverName from URL: %w", err)
@@ -26,11 +27,16 @@ func Identify(ctx context.Context, gravityURL string, instanceID string, private
 		return nil, fmt.Errorf("failed to create self-signed certificate: %w", err)
 	}
 
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM([]byte(caCert)); !ok {
+		return nil, fmt.Errorf("failed to parse CA certificate")
+	}
+
 	tlsConfig := &tls.Config{
-		Certificates:       []tls.Certificate{*selfSignedCert},
-		InsecureSkipVerify: true,
-		ServerName:         serverName,
-		MinVersion:         tls.VersionTLS13,
+		Certificates: []tls.Certificate{*selfSignedCert},
+		ServerName:   serverName,
+		MinVersion:   tls.VersionTLS13,
+		RootCAs:      pool,
 		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
 			return selfSignedCert, nil
 		},

@@ -2149,7 +2149,7 @@ func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID string) 
 			CommonName: instanceID,
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(24 * time.Hour),
+		NotAfter:              time.Now().Add((24 * time.Hour) * 30), // 30 days!
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,

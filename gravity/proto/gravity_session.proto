@@ -112,10 +112,8 @@ message SessionHelloResponse {
   string gravity_server = 9; // The gravity server that we're connected to
   string hostname = 10; // Dynamic hostname if requested
   bytes ssh_public_key = 11; // SSH public key for internal trusted connections
-  string machine_ipv6 = 12; // IPv6 address assigned to this machine
-  string machine_subnet = 13; // IPv6 subnet for this machine's containers
-  string machine_token = 14; // JWT token for machine to authenticate with catalyst
-  string machine_cert_bundle = 15; // PEM certificate bundle (cert, ca, key)
+  string machine_token = 12; // JWT token for machine to authenticate with catalyst
+  string machine_cert_bundle = 13; // PEM certificate bundle (cert, ca, key)
 }
 
 // SessionCloseRequest is sent to gracefully close the session.

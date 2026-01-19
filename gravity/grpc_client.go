@@ -98,9 +98,7 @@ type GravityClient struct {
 	reportStats        bool
 
 	// Session response fields
-	machineID     string
-	machineIPv6   string
-	machineSubnet string
+	machineID string
 
 	// Connection pool configuration
 	poolConfig ConnectionPoolConfig
@@ -270,6 +268,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		region:                 config.Region,
 		cloudProvider:          config.CloudProvider,
 		ip4Address:             config.IP4Address,
+		ip6Address:             config.IP6Address,
 		clientVersion:          config.ClientVersion,
 		clientName:             config.ClientName,
 		capabilities:           config.Capabilities,
@@ -765,8 +764,6 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 
 	// Store session response fields
 	g.machineID = response.MachineId
-	g.machineIPv6 = response.MachineIpv6
-	g.machineSubnet = response.MachineSubnet
 	g.authorizationToken = response.MachineToken
 	g.connectionIDs = append(g.connectionIDs, response.MachineId)
 
@@ -775,7 +772,6 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
 	g.hostMapping = response.HostMapping
-	g.ip6Address = response.MachineIpv6
 
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
@@ -823,7 +819,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		return
 	}
 
-	g.logger.Debug("session established successfully with machine ID: %s, IPv6: %s", response.MachineId, response.MachineIpv6)
+	g.logger.Debug("session established successfully with machine ID: %s", response.MachineId)
 
 	deploymentCount := len(g.provider.Resources())
 	if deploymentCount > 0 {

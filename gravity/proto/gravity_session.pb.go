@@ -583,10 +583,8 @@ type SessionHelloResponse struct {
 	GravityServer     string                 `protobuf:"bytes,9,opt,name=gravity_server,json=gravityServer,proto3" json:"gravity_server,omitempty"`                // The gravity server that we're connected to
 	Hostname          string                 `protobuf:"bytes,10,opt,name=hostname,proto3" json:"hostname,omitempty"`                                              // Dynamic hostname if requested
 	SshPublicKey      []byte                 `protobuf:"bytes,11,opt,name=ssh_public_key,json=sshPublicKey,proto3" json:"ssh_public_key,omitempty"`                // SSH public key for internal trusted connections
-	MachineIpv6       string                 `protobuf:"bytes,12,opt,name=machine_ipv6,json=machineIpv6,proto3" json:"machine_ipv6,omitempty"`                     // IPv6 address assigned to this machine
-	MachineSubnet     string                 `protobuf:"bytes,13,opt,name=machine_subnet,json=machineSubnet,proto3" json:"machine_subnet,omitempty"`               // IPv6 subnet for this machine's containers
-	MachineToken      string                 `protobuf:"bytes,14,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`                  // JWT token for machine to authenticate with catalyst
-	MachineCertBundle string                 `protobuf:"bytes,15,opt,name=machine_cert_bundle,json=machineCertBundle,proto3" json:"machine_cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
+	MachineToken      string                 `protobuf:"bytes,12,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`                  // JWT token for machine to authenticate with catalyst
+	MachineCertBundle string                 `protobuf:"bytes,13,opt,name=machine_cert_bundle,json=machineCertBundle,proto3" json:"machine_cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -698,20 +696,6 @@ func (x *SessionHelloResponse) GetSshPublicKey() []byte {
 	return nil
 }
 
-func (x *SessionHelloResponse) GetMachineIpv6() string {
-	if x != nil {
-		return x.MachineIpv6
-	}
-	return ""
-}
-
-func (x *SessionHelloResponse) GetMachineSubnet() string {
-	if x != nil {
-		return x.MachineSubnet
-	}
-	return ""
-}
-
 func (x *SessionHelloResponse) GetMachineToken() string {
 	if x != nil {
 		return x.MachineToken
@@ -814,7 +798,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
 	"instanceId\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x12\x16\n" +
-	"\x06region\x18\t \x01(\tR\x06region\"\xa3\x04\n" +
+	"\x06region\x18\t \x01(\tR\x06region\"\xd9\x03\n" +
 	"\x14SessionHelloResponse\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12\x15\n" +
@@ -828,11 +812,9 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x0egravity_server\x18\t \x01(\tR\rgravityServer\x12\x1a\n" +
 	"\bhostname\x18\n" +
 	" \x01(\tR\bhostname\x12$\n" +
-	"\x0essh_public_key\x18\v \x01(\fR\fsshPublicKey\x12!\n" +
-	"\fmachine_ipv6\x18\f \x01(\tR\vmachineIpv6\x12%\n" +
-	"\x0emachine_subnet\x18\r \x01(\tR\rmachineSubnet\x12#\n" +
-	"\rmachine_token\x18\x0e \x01(\tR\fmachineToken\x12.\n" +
-	"\x13machine_cert_bundle\x18\x0f \x01(\tR\x11machineCertBundle\"-\n" +
+	"\x0essh_public_key\x18\v \x01(\fR\fsshPublicKey\x12#\n" +
+	"\rmachine_token\x18\f \x01(\tR\fmachineToken\x12.\n" +
+	"\x13machine_cert_bundle\x18\r \x01(\tR\x11machineCertBundle\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason2\xa7\x03\n" +
 	"\x15GravitySessionService\x12H\n" +

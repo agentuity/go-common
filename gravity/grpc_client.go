@@ -238,7 +238,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 	}
 
 	// Get host information
-	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, "", config.InstanceID)
+	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, config.IP6Address, config.InstanceID)
 	if err != nil {
 		return nil, err
 	}
@@ -810,8 +810,6 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		OrgID:             response.OrgId,
 		MachineToken:      response.MachineToken,
 		MachineID:         response.MachineId,
-		IP6Address:        response.MachineIpv6,
-		Subnet:            response.MachineSubnet,
 		MachineCertBundle: response.MachineCertBundle,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)

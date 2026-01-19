@@ -23,6 +23,7 @@ const (
 	GravitySessionService_StreamSessionPackets_FullMethodName  = "/gravity.GravitySessionService/StreamSessionPackets"
 	GravitySessionService_GetDeploymentMetadata_FullMethodName = "/gravity.GravitySessionService/GetDeploymentMetadata"
 	GravitySessionService_GetSandboxMetadata_FullMethodName    = "/gravity.GravitySessionService/GetSandboxMetadata"
+	GravitySessionService_Identify_FullMethodName              = "/gravity.GravitySessionService/Identify"
 )
 
 // GravitySessionServiceClient is the client API for GravitySessionService service.
@@ -47,6 +48,9 @@ type GravitySessionServiceClient interface {
 	GetDeploymentMetadata(ctx context.Context, in *DeploymentMetadataRequest, opts ...grpc.CallOption) (*DeploymentMetadataResponse, error)
 	// GetSandboxMetadata retrieves metadata for a sandbox.
 	GetSandboxMetadata(ctx context.Context, in *SandboxMetadataRequest, opts ...grpc.CallOption) (*SandboxMetadataResponse, error)
+	// Identify performs a one-shot authentication to retrieve the org ID.
+	// Authentication is performed via mTLS using self-signed client certificates.
+	Identify(ctx context.Context, in *IdentifyRequest, opts ...grpc.CallOption) (*IdentifyResponse, error)
 }
 
 type gravitySessionServiceClient struct {
@@ -103,6 +107,16 @@ func (c *gravitySessionServiceClient) GetSandboxMetadata(ctx context.Context, in
 	return out, nil
 }
 
+func (c *gravitySessionServiceClient) Identify(ctx context.Context, in *IdentifyRequest, opts ...grpc.CallOption) (*IdentifyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(IdentifyResponse)
+	err := c.cc.Invoke(ctx, GravitySessionService_Identify_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GravitySessionServiceServer is the server API for GravitySessionService service.
 // All implementations must embed UnimplementedGravitySessionServiceServer
 // for forward compatibility.
@@ -125,6 +139,9 @@ type GravitySessionServiceServer interface {
 	GetDeploymentMetadata(context.Context, *DeploymentMetadataRequest) (*DeploymentMetadataResponse, error)
 	// GetSandboxMetadata retrieves metadata for a sandbox.
 	GetSandboxMetadata(context.Context, *SandboxMetadataRequest) (*SandboxMetadataResponse, error)
+	// Identify performs a one-shot authentication to retrieve the org ID.
+	// Authentication is performed via mTLS using self-signed client certificates.
+	Identify(context.Context, *IdentifyRequest) (*IdentifyResponse, error)
 	mustEmbedUnimplementedGravitySessionServiceServer()
 }
 
@@ -146,6 +163,9 @@ func (UnimplementedGravitySessionServiceServer) GetDeploymentMetadata(context.Co
 }
 func (UnimplementedGravitySessionServiceServer) GetSandboxMetadata(context.Context, *SandboxMetadataRequest) (*SandboxMetadataResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetSandboxMetadata not implemented")
+}
+func (UnimplementedGravitySessionServiceServer) Identify(context.Context, *IdentifyRequest) (*IdentifyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Identify not implemented")
 }
 func (UnimplementedGravitySessionServiceServer) mustEmbedUnimplementedGravitySessionServiceServer() {}
 func (UnimplementedGravitySessionServiceServer) testEmbeddedByValue()                               {}
@@ -218,6 +238,24 @@ func _GravitySessionService_GetSandboxMetadata_Handler(srv interface{}, ctx cont
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GravitySessionService_Identify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(IdentifyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GravitySessionServiceServer).Identify(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GravitySessionService_Identify_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GravitySessionServiceServer).Identify(ctx, req.(*IdentifyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GravitySessionService_ServiceDesc is the grpc.ServiceDesc for GravitySessionService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -232,6 +270,10 @@ var GravitySessionService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSandboxMetadata",
 			Handler:    _GravitySessionService_GetSandboxMetadata_Handler,
+		},
+		{
+			MethodName: "Identify",
+			Handler:    _GravitySessionService_Identify_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

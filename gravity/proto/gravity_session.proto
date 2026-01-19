@@ -27,6 +27,20 @@ service GravitySessionService {
 
   // GetSandboxMetadata retrieves metadata for a sandbox.
   rpc GetSandboxMetadata(SandboxMetadataRequest) returns (SandboxMetadataResponse);
+
+  // Identify performs a one-shot authentication to retrieve the org ID.
+  // Authentication is performed via mTLS using self-signed client certificates.
+  rpc Identify(IdentifyRequest) returns (IdentifyResponse);
+}
+
+// IdentifyRequest is sent by the client to identify the org associated with the key.
+message IdentifyRequest {
+  string instance_id = 1; // Instance ID (must match cert CN)
+}
+
+// IdentifyResponse contains the org ID from cert verification.
+message IdentifyResponse {
+  string org_id = 1; // Organization ID (from cert verification)
 }
 
 // SessionMessage is the bidirectional message type for EstablishSession.

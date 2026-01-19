@@ -30,11 +30,12 @@ type GravityConfig struct {
 	Provider             provider.Provider
 	URL                  string
 	CACert               string
+	IP4Address           string
+	IP6Address           string
 	ECDSAPrivateKey      *ecdsa.PrivateKey
 	InstanceID           string
 	Region               string
 	CloudProvider        string
-	IP4Address           string
 	ClientVersion        string
 	ClientName           string
 	Capabilities         *pb.ClientCapabilities

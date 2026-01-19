@@ -55,10 +55,6 @@ type Configuration struct {
 	MachineID string
 	// MachineCertBundle is the server-assigned machine certificate bundle (cert, ca, key)
 	MachineCertBundle string
-	// IP6Address is the IPv6 address of the machine
-	IP6Address string
-	// Subnet is the subnet of the machine
-	Subnet string
 }
 
 // DeprovisionReason specifies why a resource is being deprovisioned

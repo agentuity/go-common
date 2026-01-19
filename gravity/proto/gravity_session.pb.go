@@ -21,6 +21,96 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// IdentifyRequest is sent by the client to identify the org associated with the key.
+type IdentifyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InstanceId    string                 `protobuf:"bytes,1,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // Instance ID (must match cert CN)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IdentifyRequest) Reset() {
+	*x = IdentifyRequest{}
+	mi := &file_gravity_session_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IdentifyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IdentifyRequest) ProtoMessage() {}
+
+func (x *IdentifyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IdentifyRequest.ProtoReflect.Descriptor instead.
+func (*IdentifyRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *IdentifyRequest) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+// IdentifyResponse contains the org ID from cert verification.
+type IdentifyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	OrgId         string                 `protobuf:"bytes,1,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"` // Organization ID (from cert verification)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IdentifyResponse) Reset() {
+	*x = IdentifyResponse{}
+	mi := &file_gravity_session_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IdentifyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IdentifyResponse) ProtoMessage() {}
+
+func (x *IdentifyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IdentifyResponse.ProtoReflect.Descriptor instead.
+func (*IdentifyResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *IdentifyResponse) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
 // SessionMessage is the bidirectional message type for EstablishSession.
 // It contains all control plane messages for the session lifecycle.
 type SessionMessage struct {
@@ -53,7 +143,7 @@ type SessionMessage struct {
 
 func (x *SessionMessage) Reset() {
 	*x = SessionMessage{}
-	mi := &file_gravity_session_proto_msgTypes[0]
+	mi := &file_gravity_session_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -65,7 +155,7 @@ func (x *SessionMessage) String() string {
 func (*SessionMessage) ProtoMessage() {}
 
 func (x *SessionMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_session_proto_msgTypes[0]
+	mi := &file_gravity_session_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -78,7 +168,7 @@ func (x *SessionMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionMessage.ProtoReflect.Descriptor instead.
 func (*SessionMessage) Descriptor() ([]byte, []int) {
-	return file_gravity_session_proto_rawDescGZIP(), []int{0}
+	return file_gravity_session_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *SessionMessage) GetId() string {
@@ -388,7 +478,7 @@ type SessionHello struct {
 
 func (x *SessionHello) Reset() {
 	*x = SessionHello{}
-	mi := &file_gravity_session_proto_msgTypes[1]
+	mi := &file_gravity_session_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -400,7 +490,7 @@ func (x *SessionHello) String() string {
 func (*SessionHello) ProtoMessage() {}
 
 func (x *SessionHello) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_session_proto_msgTypes[1]
+	mi := &file_gravity_session_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -413,7 +503,7 @@ func (x *SessionHello) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionHello.ProtoReflect.Descriptor instead.
 func (*SessionHello) Descriptor() ([]byte, []int) {
-	return file_gravity_session_proto_rawDescGZIP(), []int{1}
+	return file_gravity_session_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SessionHello) GetProtocolVersion() int32 {
@@ -503,7 +593,7 @@ type SessionHelloResponse struct {
 
 func (x *SessionHelloResponse) Reset() {
 	*x = SessionHelloResponse{}
-	mi := &file_gravity_session_proto_msgTypes[2]
+	mi := &file_gravity_session_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +605,7 @@ func (x *SessionHelloResponse) String() string {
 func (*SessionHelloResponse) ProtoMessage() {}
 
 func (x *SessionHelloResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_session_proto_msgTypes[2]
+	mi := &file_gravity_session_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +618,7 @@ func (x *SessionHelloResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionHelloResponse.ProtoReflect.Descriptor instead.
 func (*SessionHelloResponse) Descriptor() ([]byte, []int) {
-	return file_gravity_session_proto_rawDescGZIP(), []int{2}
+	return file_gravity_session_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *SessionHelloResponse) GetMachineId() string {
@@ -646,7 +736,7 @@ type SessionCloseRequest struct {
 
 func (x *SessionCloseRequest) Reset() {
 	*x = SessionCloseRequest{}
-	mi := &file_gravity_session_proto_msgTypes[3]
+	mi := &file_gravity_session_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -658,7 +748,7 @@ func (x *SessionCloseRequest) String() string {
 func (*SessionCloseRequest) ProtoMessage() {}
 
 func (x *SessionCloseRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_session_proto_msgTypes[3]
+	mi := &file_gravity_session_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -671,7 +761,7 @@ func (x *SessionCloseRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SessionCloseRequest.ProtoReflect.Descriptor instead.
 func (*SessionCloseRequest) Descriptor() ([]byte, []int) {
-	return file_gravity_session_proto_rawDescGZIP(), []int{3}
+	return file_gravity_session_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *SessionCloseRequest) GetReason() string {
@@ -685,7 +775,12 @@ var File_gravity_session_proto protoreflect.FileDescriptor
 
 const file_gravity_session_proto_rawDesc = "" +
 	"\n" +
-	"\x15gravity_session.proto\x12\agravity\x1a\rgravity.proto\"\xaa\t\n" +
+	"\x15gravity_session.proto\x12\agravity\x1a\rgravity.proto\"2\n" +
+	"\x0fIdentifyRequest\x12\x1f\n" +
+	"\vinstance_id\x18\x01 \x01(\tR\n" +
+	"instanceId\")\n" +
+	"\x10IdentifyResponse\x12\x15\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xaa\t\n" +
 	"\x0eSessionMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x12<\n" +
@@ -739,12 +834,13 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\rmachine_token\x18\x0e \x01(\tR\fmachineToken\x12.\n" +
 	"\x13machine_cert_bundle\x18\x0f \x01(\tR\x11machineCertBundle\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason2\xe6\x02\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason2\xa7\x03\n" +
 	"\x15GravitySessionService\x12H\n" +
 	"\x10EstablishSession\x12\x17.gravity.SessionMessage\x1a\x17.gravity.SessionMessage(\x010\x01\x12H\n" +
 	"\x14StreamSessionPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket(\x010\x01\x12`\n" +
 	"\x15GetDeploymentMetadata\x12\".gravity.DeploymentMetadataRequest\x1a#.gravity.DeploymentMetadataResponse\x12W\n" +
-	"\x12GetSandboxMetadata\x12\x1f.gravity.SandboxMetadataRequest\x1a .gravity.SandboxMetadataResponseB.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
+	"\x12GetSandboxMetadata\x12\x1f.gravity.SandboxMetadataRequest\x1a .gravity.SandboxMetadataResponse\x12?\n" +
+	"\bIdentify\x12\x18.gravity.IdentifyRequest\x1a\x19.gravity.IdentifyResponseB.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
 
 var (
 	file_gravity_session_proto_rawDescOnce sync.Once
@@ -758,68 +854,72 @@ func file_gravity_session_proto_rawDescGZIP() []byte {
 	return file_gravity_session_proto_rawDescData
 }
 
-var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_gravity_session_proto_goTypes = []any{
-	(*SessionMessage)(nil),              // 0: gravity.SessionMessage
-	(*SessionHello)(nil),                // 1: gravity.SessionHello
-	(*SessionHelloResponse)(nil),        // 2: gravity.SessionHelloResponse
-	(*SessionCloseRequest)(nil),         // 3: gravity.SessionCloseRequest
-	(*RouteDeploymentRequest)(nil),      // 4: gravity.RouteDeploymentRequest
-	(*RouteDeploymentResponse)(nil),     // 5: gravity.RouteDeploymentResponse
-	(*UnprovisionRequest)(nil),          // 6: gravity.UnprovisionRequest
-	(*RouteSandboxRequest)(nil),         // 7: gravity.RouteSandboxRequest
-	(*RouteSandboxResponse)(nil),        // 8: gravity.RouteSandboxResponse
-	(*PingRequest)(nil),                 // 9: gravity.PingRequest
-	(*PongResponse)(nil),                // 10: gravity.PongResponse
-	(*ReportRequest)(nil),               // 11: gravity.ReportRequest
-	(*PauseRequest)(nil),                // 12: gravity.PauseRequest
-	(*ResumeRequest)(nil),               // 13: gravity.ResumeRequest
-	(*ConfigurationUpdate)(nil),         // 14: gravity.ConfigurationUpdate
-	(*ConfigurationUpdateResponse)(nil), // 15: gravity.ConfigurationUpdateResponse
-	(*ProtocolResponse)(nil),            // 16: gravity.ProtocolResponse
-	(*ProtocolEvent)(nil),               // 17: gravity.ProtocolEvent
-	(*ExistingDeployment)(nil),          // 18: gravity.ExistingDeployment
-	(*HostInfo)(nil),                    // 19: gravity.HostInfo
-	(*ClientCapabilities)(nil),          // 20: gravity.ClientCapabilities
-	(*HostMapping)(nil),                 // 21: gravity.HostMapping
-	(*TunnelPacket)(nil),                // 22: gravity.TunnelPacket
-	(*DeploymentMetadataRequest)(nil),   // 23: gravity.DeploymentMetadataRequest
-	(*SandboxMetadataRequest)(nil),      // 24: gravity.SandboxMetadataRequest
-	(*DeploymentMetadataResponse)(nil),  // 25: gravity.DeploymentMetadataResponse
-	(*SandboxMetadataResponse)(nil),     // 26: gravity.SandboxMetadataResponse
+	(*IdentifyRequest)(nil),             // 0: gravity.IdentifyRequest
+	(*IdentifyResponse)(nil),            // 1: gravity.IdentifyResponse
+	(*SessionMessage)(nil),              // 2: gravity.SessionMessage
+	(*SessionHello)(nil),                // 3: gravity.SessionHello
+	(*SessionHelloResponse)(nil),        // 4: gravity.SessionHelloResponse
+	(*SessionCloseRequest)(nil),         // 5: gravity.SessionCloseRequest
+	(*RouteDeploymentRequest)(nil),      // 6: gravity.RouteDeploymentRequest
+	(*RouteDeploymentResponse)(nil),     // 7: gravity.RouteDeploymentResponse
+	(*UnprovisionRequest)(nil),          // 8: gravity.UnprovisionRequest
+	(*RouteSandboxRequest)(nil),         // 9: gravity.RouteSandboxRequest
+	(*RouteSandboxResponse)(nil),        // 10: gravity.RouteSandboxResponse
+	(*PingRequest)(nil),                 // 11: gravity.PingRequest
+	(*PongResponse)(nil),                // 12: gravity.PongResponse
+	(*ReportRequest)(nil),               // 13: gravity.ReportRequest
+	(*PauseRequest)(nil),                // 14: gravity.PauseRequest
+	(*ResumeRequest)(nil),               // 15: gravity.ResumeRequest
+	(*ConfigurationUpdate)(nil),         // 16: gravity.ConfigurationUpdate
+	(*ConfigurationUpdateResponse)(nil), // 17: gravity.ConfigurationUpdateResponse
+	(*ProtocolResponse)(nil),            // 18: gravity.ProtocolResponse
+	(*ProtocolEvent)(nil),               // 19: gravity.ProtocolEvent
+	(*ExistingDeployment)(nil),          // 20: gravity.ExistingDeployment
+	(*HostInfo)(nil),                    // 21: gravity.HostInfo
+	(*ClientCapabilities)(nil),          // 22: gravity.ClientCapabilities
+	(*HostMapping)(nil),                 // 23: gravity.HostMapping
+	(*TunnelPacket)(nil),                // 24: gravity.TunnelPacket
+	(*DeploymentMetadataRequest)(nil),   // 25: gravity.DeploymentMetadataRequest
+	(*SandboxMetadataRequest)(nil),      // 26: gravity.SandboxMetadataRequest
+	(*DeploymentMetadataResponse)(nil),  // 27: gravity.DeploymentMetadataResponse
+	(*SandboxMetadataResponse)(nil),     // 28: gravity.SandboxMetadataResponse
 }
 var file_gravity_session_proto_depIdxs = []int32{
-	1,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
-	2,  // 1: gravity.SessionMessage.session_hello_response:type_name -> gravity.SessionHelloResponse
-	3,  // 2: gravity.SessionMessage.session_close:type_name -> gravity.SessionCloseRequest
-	4,  // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
-	5,  // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
-	6,  // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
-	7,  // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
-	8,  // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
-	9,  // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
-	10, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
-	11, // 10: gravity.SessionMessage.report:type_name -> gravity.ReportRequest
-	12, // 11: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
-	13, // 12: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
-	14, // 13: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	15, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	16, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
-	17, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
-	18, // 17: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
-	19, // 18: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
-	20, // 19: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
-	21, // 20: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
-	0,  // 21: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	22, // 22: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	23, // 23: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	24, // 24: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	0,  // 25: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	22, // 26: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	25, // 27: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	26, // 28: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	25, // [25:29] is the sub-list for method output_type
-	21, // [21:25] is the sub-list for method input_type
+	3,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
+	4,  // 1: gravity.SessionMessage.session_hello_response:type_name -> gravity.SessionHelloResponse
+	5,  // 2: gravity.SessionMessage.session_close:type_name -> gravity.SessionCloseRequest
+	6,  // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
+	7,  // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
+	8,  // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
+	9,  // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
+	10, // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
+	11, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
+	12, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
+	13, // 10: gravity.SessionMessage.report:type_name -> gravity.ReportRequest
+	14, // 11: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
+	15, // 12: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
+	16, // 13: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	17, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	18, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
+	19, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
+	20, // 17: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
+	21, // 18: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
+	22, // 19: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
+	23, // 20: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
+	2,  // 21: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	24, // 22: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	25, // 23: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	26, // 24: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	0,  // 25: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	2,  // 26: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	24, // 27: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	27, // 28: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	28, // 29: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	1,  // 30: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	26, // [26:31] is the sub-list for method output_type
+	21, // [21:26] is the sub-list for method input_type
 	21, // [21:21] is the sub-list for extension type_name
 	21, // [21:21] is the sub-list for extension extendee
 	0,  // [0:21] is the sub-list for field type_name
@@ -831,7 +931,7 @@ func file_gravity_session_proto_init() {
 		return
 	}
 	file_gravity_proto_init()
-	file_gravity_session_proto_msgTypes[0].OneofWrappers = []any{
+	file_gravity_session_proto_msgTypes[2].OneofWrappers = []any{
 		(*SessionMessage_SessionHello)(nil),
 		(*SessionMessage_SessionHelloResponse)(nil),
 		(*SessionMessage_SessionClose)(nil),
@@ -856,7 +956,7 @@ func file_gravity_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_session_proto_rawDesc), len(file_gravity_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

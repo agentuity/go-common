@@ -10,7 +10,7 @@ option go_package = "github.com/agentuity/go-common/gravity/proto";
 // using self-signed client certificates authenticated against the org's
 // registered public key.
 //
-// This service replaces the legacy Provision + EstablishTunnelg two-step flow
+// This service replaces the legacy Provision + EstablishTunnel two-step flow
 // with a single-step session establishment.
 service GravitySessionService {
   // EstablishSession creates a bidirectional control stream.

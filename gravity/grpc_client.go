@@ -811,6 +811,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		MachineToken:      response.MachineToken,
 		MachineID:         response.MachineId,
 		IP6Address:        response.MachineIpv6,
+		Subnet:            response.MachineSubnet,
 		MachineCertBundle: response.MachineCertBundle,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)

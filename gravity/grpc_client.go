@@ -122,7 +122,7 @@ type GravityClient struct {
 	closing           bool
 	ctx               context.Context
 	cancel            context.CancelFunc
-	tlsConfig         *tls.Config
+	tlsCert           *tls.Certificate
 	skipAutoReconnect bool
 	closed            chan struct{}
 
@@ -232,7 +232,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		return nil, fmt.Errorf("InstanceID is required")
 	}
 
-	tlsConfig, err := createSelfSignedTLSConfig(config.ECDSAPrivateKey, config.InstanceID, config.CACert)
+	selfSignedCert, err := createSelfSignedTLSConfig(config.ECDSAPrivateKey, config.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("error creating TLS configuration: %w", err)
 	}
@@ -279,7 +279,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		retryConfig:            retryConfig,
 		ctx:                    ctx,
 		cancel:                 cancel,
-		tlsConfig:              tlsConfig,
+		tlsCert:                selfSignedCert,
 		caCert:                 config.CACert,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
 		connectionIDChan:       make(chan string, 1),
@@ -344,28 +344,34 @@ func (g *GravityClient) Start() error {
 	}
 
 	g.logger.Debug("loading CA certificate for TLS...")
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
+		g.logger.Error("failed to load embedded CA certificate")
+		return fmt.Errorf("failed to load embedded CA certificate")
+	}
 
 	g.logger.Debug("creating TLS configuration...")
+	if g.tlsCert == nil {
+		g.logger.Error("failed to load TLS certificate")
+		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
+	}
+	cert := *g.tlsCert
+
 	// Create TLS config that includes both client certificates (mTLS) and server verification
 	tlsConfig := &tls.Config{
-		Certificates: g.tlsConfig.Certificates, // Client certificates for mTLS (self-signed)
-		ServerName:   hostname,                 // Dynamic server name for SNI and verification
+		Certificates: []tls.Certificate{cert}, // Client certificates for mTLS (self-signed)
+		ServerName:   hostname,                // Dynamic server name for SNI and verification
 		MinVersion:   tls.VersionTLS13,
 		// GetClientCertificate ensures the client always sends its cert when requested
 		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			if len(g.tlsConfig.Certificates) > 0 {
-				return &g.tlsConfig.Certificates[0], nil
+			if g.tlsCert != nil {
+				return g.tlsCert, nil
 			}
 			return nil, fmt.Errorf("no client certificate available")
 		},
+		RootCAs: pool,
 	}
-	// Only set RootCAs if we have them (for server cert verification)
-	if g.tlsConfig.RootCAs != nil {
-		tlsConfig.RootCAs = g.tlsConfig.RootCAs.Clone()
-	} else {
-		// No CA cert provided - skip server verification (dev mode)
-		tlsConfig.InsecureSkipVerify = true
-	}
+
 	creds := credentials.NewTLS(tlsConfig)
 	g.logger.Debug("TLS credentials created successfully")
 
@@ -769,6 +775,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
 	g.hostMapping = response.HostMapping
+	g.ip6Address = response.MachineIpv6
 
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
@@ -2139,7 +2146,7 @@ func extractHostnameFromGravityURL(inputURL string) (string, error) {
 	return hostname, nil
 }
 
-func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID, caCertPEM string) (*tls.Config, error) {
+func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID string) (*tls.Certificate, error) {
 	// Generate self-signed certificate from ECDSA private key
 	template := &x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
@@ -2169,20 +2176,7 @@ func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID, caCertP
 		Leaf:        leaf,
 	}
 
-	caCertPool := x509.NewCertPool()
-	if caCertPEM != "" {
-		if !caCertPool.AppendCertsFromPEM([]byte(caCertPEM)) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
-	}
-
-	return &tls.Config{
-		Certificates:     []tls.Certificate{cert},
-		RootCAs:          caCertPool,
-		MinVersion:       tls.VersionTLS13,
-		CurvePreferences: []tls.CurveID{tls.X25519, tls.X25519MLKEM768, tls.CurveP256},
-		NextProtos:       []string{"h2", "http/1.1"},
-	}, nil
+	return &cert, nil
 }
 
 func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
@@ -2371,11 +2365,6 @@ func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
 	return g.sessionClients[0].GetSandboxMetadata(authCtx, metadataRequest)
-}
-
-// GetTLSConfig returns the TLS configuration for external use (like HTTP server)
-func (g *GravityClient) GetTLSConfig() *tls.Config {
-	return g.tlsConfig
 }
 
 // GetIPv6Address returns the IPv6 address for external use

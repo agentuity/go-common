@@ -49,6 +49,12 @@ type Configuration struct {
 	OrgID string
 	// SSHPublicKey is the public key for internal SSH authentication (SSH wire format)
 	SSHPublicKey []byte
+	// MachineToken is the JWT token for machine authentication with catalyst
+	MachineToken string
+	// MachineID is the server-assigned machine identifier
+	MachineID string
+	// MachineCertBundle is the server-assigned machine certificate bundle (cert, ca, key)
+	MachineCertBundle string
 }
 
 // DeprovisionReason specifies why a resource is being deprovisioned

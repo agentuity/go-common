@@ -36,7 +36,7 @@ func TestUnprovisionMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
 	server := &GravityClient{
 		streamManager: &StreamManager{
-			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
+			controlStreams: make([]pb.GravitySessionService_EstablishSessionClient, 0),
 		},
 	}
 
@@ -58,7 +58,7 @@ func TestPauseMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
 	server := &GravityClient{
 		streamManager: &StreamManager{
-			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
+			controlStreams: make([]pb.GravitySessionService_EstablishSessionClient, 0),
 		},
 	}
 
@@ -80,7 +80,7 @@ func TestResumeMethodWithoutStreams(t *testing.T) {
 	// Create a minimal GRPCGravityServer for testing (no streams)
 	server := &GravityClient{
 		streamManager: &StreamManager{
-			controlStreams: make([]pb.GravityTunnel_EstablishTunnelClient, 0),
+			controlStreams: make([]pb.GravitySessionService_EstablishSessionClient, 0),
 		},
 	}
 

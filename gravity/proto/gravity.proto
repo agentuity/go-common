@@ -215,6 +215,10 @@ message HostInfo {
   string ipv6_address = 6; // IPv6 address
   string hostname = 7;     // hostname
   string instance_id = 8;  // instance id of the client
+  string provider = 9; // Cloud provider (e.g., "aws", "gcp", "azure")
+  string region = 10; // Cloud region
+  string instance_type = 11; // instance type of the client (n1-standard-32, m6i.8xlarge)
+  repeated string instance_tags = 12; // tags on the instance
 }
 
 message ExistingDeployment {

@@ -34,8 +34,8 @@ type GravityConfig struct {
 	IP6Address           string
 	ECDSAPrivateKey      *ecdsa.PrivateKey
 	InstanceID           string
-	Region               string
-	CloudProvider        string
+	Region               string // Region where the instance is located, for display only
+	CloudProvider        string // Type of cloud provider (e.g., aws, gcp, azure), for display only
 	ClientVersion        string
 	ClientName           string
 	Capabilities         *pb.ClientCapabilities
@@ -47,4 +47,6 @@ type GravityConfig struct {
 	ConnectionPoolConfig *ConnectionPoolConfig
 	ReportStats          bool
 	SkipAutoReconnect    bool
+	InstanceTags         []string // Tags for display only
+	InstanceType         string   // Type of instance (e.g., t2.micro)
 }

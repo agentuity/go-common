@@ -85,8 +85,6 @@ type GravityClient struct {
 	url                string
 	ecdsaPrivateKey    *ecdsa.PrivateKey
 	instanceID         string
-	region             string
-	cloudProvider      string
 	authorizationToken string
 	ip4Address         string
 	ip6Address         string
@@ -236,7 +234,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 	}
 
 	// Get host information
-	hostInfo, err := getHostInfo(config.WorkingDir, config.IP4Address, config.IP6Address, config.InstanceID)
+	hostInfo, err := getHostInfo(config)
 	if err != nil {
 		return nil, err
 	}
@@ -265,8 +263,6 @@ func New(config GravityConfig) (*GravityClient, error) {
 		url:                    config.URL,
 		ecdsaPrivateKey:        config.ECDSAPrivateKey,
 		instanceID:             config.InstanceID,
-		region:                 config.Region,
-		cloudProvider:          config.CloudProvider,
 		ip4Address:             config.IP4Address,
 		ip6Address:             config.IP6Address,
 		clientVersion:          config.ClientVersion,
@@ -612,8 +608,6 @@ func (g *GravityClient) sendSessionHello() error {
 		HostInfo:        g.hostInfo,
 		Capabilities:    g.capabilities,
 		InstanceId:      g.instanceID,
-		Provider:        g.cloudProvider,
-		Region:          g.region,
 	}
 
 	// Send on the first control stream
@@ -2174,7 +2168,7 @@ func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID string) 
 	return &cert, nil
 }
 
-func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.HostInfo, error) {
+func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 	// Get runtime information about the host
 	hostname, err := os.Hostname()
 	if err != nil {
@@ -2188,17 +2182,21 @@ func getHostInfo(workingDir, ip4Address, ip6Address, instanceID string) (*pb.Hos
 	memoryBytes := getSystemMemory()
 
 	// Get disk info for current working directory
-	diskBytes := getDiskFreeSpace(workingDir)
+	diskBytes := getDiskFreeSpace(config.WorkingDir)
 
 	return &pb.HostInfo{
-		Started:     uint64(time.Now().UnixMilli()),
-		Cpu:         uint32(cpuCount),
-		Memory:      memoryBytes,
-		Disk:        diskBytes,
-		Ipv4Address: ip4Address,
-		Ipv6Address: ip6Address,
-		Hostname:    hostname,
-		InstanceId:  instanceID,
+		Started:      uint64(time.Now().UnixMilli()),
+		Cpu:          uint32(cpuCount),
+		Memory:       memoryBytes,
+		Disk:         diskBytes,
+		Ipv4Address:  config.IP4Address,
+		Ipv6Address:  config.IP6Address,
+		Hostname:     hostname,
+		InstanceId:   config.InstanceID,
+		Region:       config.Region,
+		Provider:     config.CloudProvider,
+		InstanceType: config.InstanceType,
+		InstanceTags: config.InstanceTags,
 	}, nil
 }
 

@@ -219,6 +219,7 @@ message HostInfo {
   string region = 10; // Cloud region
   string instance_type = 11; // instance type of the client (n1-standard-32, m6i.8xlarge)
   repeated string instance_tags = 12; // tags on the instance
+  string availability_zone = 13; // the availability zone for the client
 }
 
 message ExistingDeployment {

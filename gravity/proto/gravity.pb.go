@@ -1582,21 +1582,22 @@ func (x *ConfigurationUpdateResponse) GetError() string {
 
 // Supporting data structures
 type HostInfo struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Started       uint64                 `protobuf:"varint,1,opt,name=started,proto3" json:"started,omitempty"`                               // epoch time in milliseconds since server started
-	Cpu           uint32                 `protobuf:"varint,2,opt,name=cpu,proto3" json:"cpu,omitempty"`                                       // number of CPUs
-	Memory        uint64                 `protobuf:"varint,3,opt,name=memory,proto3" json:"memory,omitempty"`                                 // memory in bytes
-	Disk          uint64                 `protobuf:"varint,4,opt,name=disk,proto3" json:"disk,omitempty"`                                     // disk free space in bytes
-	Ipv4Address   string                 `protobuf:"bytes,5,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"`     // IPv4 address
-	Ipv6Address   string                 `protobuf:"bytes,6,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"`     // IPv6 address
-	Hostname      string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                              // hostname
-	InstanceId    string                 `protobuf:"bytes,8,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`        // instance id of the client
-	Provider      string                 `protobuf:"bytes,9,opt,name=provider,proto3" json:"provider,omitempty"`                              // Cloud provider (e.g., "aws", "gcp", "azure")
-	Region        string                 `protobuf:"bytes,10,opt,name=region,proto3" json:"region,omitempty"`                                 // Cloud region
-	InstanceType  string                 `protobuf:"bytes,11,opt,name=instance_type,json=instanceType,proto3" json:"instance_type,omitempty"` // instance type of the client (n1-standard-32, m6i.8xlarge)
-	InstanceTags  []string               `protobuf:"bytes,12,rep,name=instance_tags,json=instanceTags,proto3" json:"instance_tags,omitempty"` // tags on the instance
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Started          uint64                 `protobuf:"varint,1,opt,name=started,proto3" json:"started,omitempty"`                                           // epoch time in milliseconds since server started
+	Cpu              uint32                 `protobuf:"varint,2,opt,name=cpu,proto3" json:"cpu,omitempty"`                                                   // number of CPUs
+	Memory           uint64                 `protobuf:"varint,3,opt,name=memory,proto3" json:"memory,omitempty"`                                             // memory in bytes
+	Disk             uint64                 `protobuf:"varint,4,opt,name=disk,proto3" json:"disk,omitempty"`                                                 // disk free space in bytes
+	Ipv4Address      string                 `protobuf:"bytes,5,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"`                 // IPv4 address
+	Ipv6Address      string                 `protobuf:"bytes,6,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"`                 // IPv6 address
+	Hostname         string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                                          // hostname
+	InstanceId       string                 `protobuf:"bytes,8,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                    // instance id of the client
+	Provider         string                 `protobuf:"bytes,9,opt,name=provider,proto3" json:"provider,omitempty"`                                          // Cloud provider (e.g., "aws", "gcp", "azure")
+	Region           string                 `protobuf:"bytes,10,opt,name=region,proto3" json:"region,omitempty"`                                             // Cloud region
+	InstanceType     string                 `protobuf:"bytes,11,opt,name=instance_type,json=instanceType,proto3" json:"instance_type,omitempty"`             // instance type of the client (n1-standard-32, m6i.8xlarge)
+	InstanceTags     []string               `protobuf:"bytes,12,rep,name=instance_tags,json=instanceTags,proto3" json:"instance_tags,omitempty"`             // tags on the instance
+	AvailabilityZone string                 `protobuf:"bytes,13,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the client
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *HostInfo) Reset() {
@@ -1711,6 +1712,13 @@ func (x *HostInfo) GetInstanceTags() []string {
 		return x.InstanceTags
 	}
 	return nil
+}
+
+func (x *HostInfo) GetAvailabilityZone() string {
+	if x != nil {
+		return x.AvailabilityZone
+	}
+	return ""
 }
 
 type ExistingDeployment struct {
@@ -4401,7 +4409,7 @@ const file_gravity_proto_rawDesc = "" +
 	"\x1bConfigurationUpdateResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\xe3\x02\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x90\x03\n" +
 	"\bHostInfo\x12\x18\n" +
 	"\astarted\x18\x01 \x01(\x04R\astarted\x12\x10\n" +
 	"\x03cpu\x18\x02 \x01(\rR\x03cpu\x12\x16\n" +
@@ -4416,7 +4424,8 @@ const file_gravity_proto_rawDesc = "" +
 	"\x06region\x18\n" +
 	" \x01(\tR\x06region\x12#\n" +
 	"\rinstance_type\x18\v \x01(\tR\finstanceType\x12#\n" +
-	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\"\xc9\x03\n" +
+	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\x12+\n" +
+	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\xc9\x03\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +

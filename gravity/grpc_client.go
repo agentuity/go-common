@@ -2185,18 +2185,19 @@ func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 	diskBytes := getDiskFreeSpace(config.WorkingDir)
 
 	return &pb.HostInfo{
-		Started:      uint64(time.Now().UnixMilli()),
-		Cpu:          uint32(cpuCount),
-		Memory:       memoryBytes,
-		Disk:         diskBytes,
-		Ipv4Address:  config.IP4Address,
-		Ipv6Address:  config.IP6Address,
-		Hostname:     hostname,
-		InstanceId:   config.InstanceID,
-		Region:       config.Region,
-		Provider:     config.CloudProvider,
-		InstanceType: config.InstanceType,
-		InstanceTags: config.InstanceTags,
+		Started:          uint64(time.Now().UnixMilli()),
+		Cpu:              uint32(cpuCount),
+		Memory:           memoryBytes,
+		Disk:             diskBytes,
+		Ipv4Address:      config.IP4Address,
+		Ipv6Address:      config.IP6Address,
+		Hostname:         hostname,
+		InstanceId:       config.InstanceID,
+		Region:           config.Region,
+		AvailabilityZone: config.AvailabilityZone,
+		Provider:         config.CloudProvider,
+		InstanceType:     config.InstanceType,
+		InstanceTags:     config.InstanceTags,
 	}, nil
 }
 

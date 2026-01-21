@@ -35,6 +35,7 @@ type GravityConfig struct {
 	ECDSAPrivateKey      *ecdsa.PrivateKey
 	InstanceID           string
 	Region               string // Region where the instance is located, for display only
+	AvailabilityZone     string // Availability zone where the instance is located, for display only
 	CloudProvider        string // Type of cloud provider (e.g., aws, gcp, azure), for display only
 	ClientVersion        string
 	ClientName           string

@@ -94,9 +94,11 @@ message SessionHello {
   // Instance metadata (extracted from cert but also sent for validation)
   string instance_id = 7; // Instance ID (must match cert CN)
 
-  // Provider information for machine record
+  // Provider information
   string provider = 8; // Cloud provider (e.g., "aws", "gcp", "azure")
   string region = 9; // Cloud region
+  string instance_type = 10; // instance type of the client (n1-standard-32, m6i.8xlarge)
+  repeated string instance_tags = 11; // tags on the instance
 }
 
 // SessionHelloResponse is sent by the server after successful authentication.

@@ -469,9 +469,11 @@ type SessionHello struct {
 	Capabilities    *ClientCapabilities    `protobuf:"bytes,6,opt,name=capabilities,proto3" json:"capabilities,omitempty"`                               // Client capabilities for this session
 	// Instance metadata (extracted from cert but also sent for validation)
 	InstanceId string `protobuf:"bytes,7,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"` // Instance ID (must match cert CN)
-	// Provider information for machine record
-	Provider      string `protobuf:"bytes,8,opt,name=provider,proto3" json:"provider,omitempty"` // Cloud provider (e.g., "aws", "gcp", "azure")
-	Region        string `protobuf:"bytes,9,opt,name=region,proto3" json:"region,omitempty"`     // Cloud region
+	// Provider information
+	Provider      string   `protobuf:"bytes,8,opt,name=provider,proto3" json:"provider,omitempty"`                              // Cloud provider (e.g., "aws", "gcp", "azure")
+	Region        string   `protobuf:"bytes,9,opt,name=region,proto3" json:"region,omitempty"`                                  // Cloud region
+	InstanceType  string   `protobuf:"bytes,10,opt,name=instance_type,json=instanceType,proto3" json:"instance_type,omitempty"` // instance type of the client (n1-standard-32, m6i.8xlarge)
+	InstanceTags  []string `protobuf:"bytes,11,rep,name=instance_tags,json=instanceTags,proto3" json:"instance_tags,omitempty"` // tags on the instance
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -567,6 +569,20 @@ func (x *SessionHello) GetRegion() string {
 		return x.Region
 	}
 	return ""
+}
+
+func (x *SessionHello) GetInstanceType() string {
+	if x != nil {
+		return x.InstanceType
+	}
+	return ""
+}
+
+func (x *SessionHello) GetInstanceTags() []string {
+	if x != nil {
+		return x.InstanceTags
+	}
+	return nil
 }
 
 // SessionHelloResponse is sent by the server after successful authentication.
@@ -786,7 +802,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x16config_update_response\x18. \x01(\v2$.gravity.ConfigurationUpdateResponseH\x00R\x14configUpdateResponse\x127\n" +
 	"\bresponse\x182 \x01(\v2\x19.gravity.ProtocolResponseH\x00R\bresponse\x12.\n" +
 	"\x05event\x183 \x01(\v2\x16.gravity.ProtocolEventH\x00R\x05eventB\x0e\n" +
-	"\fmessage_type\"\x86\x03\n" +
+	"\fmessage_type\"\xd0\x03\n" +
 	"\fSessionHello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12%\n" +
 	"\x0eclient_version\x18\x02 \x01(\tR\rclientVersion\x12\x1f\n" +
@@ -798,7 +814,10 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
 	"instanceId\x12\x1a\n" +
 	"\bprovider\x18\b \x01(\tR\bprovider\x12\x16\n" +
-	"\x06region\x18\t \x01(\tR\x06region\"\xd9\x03\n" +
+	"\x06region\x18\t \x01(\tR\x06region\x12#\n" +
+	"\rinstance_type\x18\n" +
+	" \x01(\tR\finstanceType\x12#\n" +
+	"\rinstance_tags\x18\v \x03(\tR\finstanceTags\"\xd9\x03\n" +
 	"\x14SessionHelloResponse\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12\x15\n" +

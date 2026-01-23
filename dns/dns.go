@@ -26,6 +26,8 @@ var DefaultManagedDomains = []string{
 	"agentuity.cloud.internal",
 	"agentuity.run",
 	"agentuity.run.internal",
+	"agentuity.live",
+	"agentuity.live.internal",
 	"agentuity.ai",
 	"agentuity.ai.internal",
 	"agentuity.app",

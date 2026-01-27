@@ -50,6 +50,21 @@ func init() {
 // Error variables for consistency with old implementation
 var ErrConnectionClosed = errors.New("gravity connection closed")
 
+// isContextCanceled checks if an error is due to context cancellation
+// This includes both direct context.Canceled errors and gRPC Canceled status codes
+func isContextCanceled(ctx context.Context, err error) bool {
+	if ctx.Err() == context.Canceled {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
+	if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
+		return true
+	}
+	return false
+}
+
 // ConnectionPoolConfig holds configuration for gRPC connection pool optimization
 type ConnectionPoolConfig struct {
 	// Connection pool size (4-8 connections as per PLAN.md)
@@ -414,6 +429,12 @@ func (g *GravityClient) Start() error {
 	// Establish control streams (one per connection)
 	err = g.establishControlStreams()
 	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("control streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
 		g.logger.Error("failed to establish control streams: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to establish control streams: %w", err)
@@ -424,6 +445,12 @@ func (g *GravityClient) Start() error {
 	// Send session hello to authenticate and get session info
 	err = g.sendSessionHello()
 	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("session hello cancelled due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
 		g.logger.Error("failed to send session hello: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to send session hello: %w", err)
@@ -434,6 +461,12 @@ func (g *GravityClient) Start() error {
 	// Establish tunnel streams (multiple per connection) - after connect message
 	err = g.establishTunnelStreams()
 	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("tunnel streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
 		g.logger.Error("failed to establish tunnel streams: %v", err)
 		g.cleanup()
 		return fmt.Errorf("failed to establish tunnel streams: %w", err)
@@ -489,7 +522,10 @@ func (g *GravityClient) establishControlStreams() error {
 		// Enable gzip compression for control streams (text-based control messages)
 		stream, err := client.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
 		if err != nil {
-			g.logger.Error("failed to establish control stream %d: %v", i+1, err)
+			// Don't log error if context was cancelled (graceful shutdown)
+			if !isContextCanceled(g.ctx, err) {
+				g.logger.Error("failed to establish control stream %d: %v", i+1, err)
+			}
 			return fmt.Errorf("failed to establish control stream %d: %w", i, err)
 		}
 		g.logger.Debug("control stream %d established successfully", i+1)

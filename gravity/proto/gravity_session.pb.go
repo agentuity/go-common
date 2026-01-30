@@ -9,6 +9,8 @@ package proto
 import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
+	durationpb "google.golang.org/protobuf/types/known/durationpb"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -738,11 +740,1794 @@ func (x *SessionCloseRequest) GetReason() string {
 	return ""
 }
 
+// TunnelPacket represents network packet data for the tunnel
+type TunnelPacket struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                         // Raw IP packet data
+	StreamId      string                 `protobuf:"bytes,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"` // Logical stream identifier for multiplexing
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunnelPacket) Reset() {
+	*x = TunnelPacket{}
+	mi := &file_gravity_session_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelPacket) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelPacket) ProtoMessage() {}
+
+func (x *TunnelPacket) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelPacket.ProtoReflect.Descriptor instead.
+func (*TunnelPacket) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *TunnelPacket) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *TunnelPacket) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+// ClientCapabilities defines what capabilities a client supports
+type ClientCapabilities struct {
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	ProvisionDeployments   bool                   `protobuf:"varint,1,opt,name=provision_deployments,json=provisionDeployments,proto3" json:"provision_deployments,omitempty"`       // Can handle provision deployment requests
+	UnprovisionDeployments bool                   `protobuf:"varint,2,opt,name=unprovision_deployments,json=unprovisionDeployments,proto3" json:"unprovision_deployments,omitempty"` // Can handle unprovision deployment requests
+	DynamicProjectRouting  string                 `protobuf:"bytes,3,opt,name=dynamic_project_routing,json=dynamicProjectRouting,proto3" json:"dynamic_project_routing,omitempty"`   // Project ID for dynamic routing (empty = no routing)
+	DynamicHostname        bool                   `protobuf:"varint,4,opt,name=dynamic_hostname,json=dynamicHostname,proto3" json:"dynamic_hostname,omitempty"`                      // Request dynamic hostname generation and routing
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
+}
+
+func (x *ClientCapabilities) Reset() {
+	*x = ClientCapabilities{}
+	mi := &file_gravity_session_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ClientCapabilities) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ClientCapabilities) ProtoMessage() {}
+
+func (x *ClientCapabilities) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ClientCapabilities.ProtoReflect.Descriptor instead.
+func (*ClientCapabilities) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ClientCapabilities) GetProvisionDeployments() bool {
+	if x != nil {
+		return x.ProvisionDeployments
+	}
+	return false
+}
+
+func (x *ClientCapabilities) GetUnprovisionDeployments() bool {
+	if x != nil {
+		return x.UnprovisionDeployments
+	}
+	return false
+}
+
+func (x *ClientCapabilities) GetDynamicProjectRouting() string {
+	if x != nil {
+		return x.DynamicProjectRouting
+	}
+	return ""
+}
+
+func (x *ClientCapabilities) GetDynamicHostname() bool {
+	if x != nil {
+		return x.DynamicHostname
+	}
+	return false
+}
+
+type RouteDeploymentRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier for the deployment
+	Hostname      string                 `protobuf:"bytes,2,opt,name=hostname,proto3" json:"hostname,omitempty"`                             // Deprecated: unused and will be removed
+	VirtualIp     string                 `protobuf:"bytes,3,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`          // Hadron virtual IP for the deployment
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteDeploymentRequest) Reset() {
+	*x = RouteDeploymentRequest{}
+	mi := &file_gravity_session_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteDeploymentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteDeploymentRequest) ProtoMessage() {}
+
+func (x *RouteDeploymentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteDeploymentRequest.ProtoReflect.Descriptor instead.
+func (*RouteDeploymentRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *RouteDeploymentRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *RouteDeploymentRequest) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *RouteDeploymentRequest) GetVirtualIp() string {
+	if x != nil {
+		return x.VirtualIp
+	}
+	return ""
+}
+
+type RouteDeploymentResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteDeploymentResponse) Reset() {
+	*x = RouteDeploymentResponse{}
+	mi := &file_gravity_session_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteDeploymentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteDeploymentResponse) ProtoMessage() {}
+
+func (x *RouteDeploymentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteDeploymentResponse.ProtoReflect.Descriptor instead.
+func (*RouteDeploymentResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *RouteDeploymentResponse) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+// Unprovision request
+type UnprovisionRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier of deployment to remove
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *UnprovisionRequest) Reset() {
+	*x = UnprovisionRequest{}
+	mi := &file_gravity_session_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *UnprovisionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*UnprovisionRequest) ProtoMessage() {}
+
+func (x *UnprovisionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use UnprovisionRequest.ProtoReflect.Descriptor instead.
+func (*UnprovisionRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *UnprovisionRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+// Report request for metrics
+type ReportRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Metrics       *ServerMetrics         `protobuf:"bytes,1,opt,name=metrics,proto3" json:"metrics,omitempty"` // Comprehensive server metrics and performance data
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportRequest) Reset() {
+	*x = ReportRequest{}
+	mi := &file_gravity_session_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportRequest) ProtoMessage() {}
+
+func (x *ReportRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportRequest.ProtoReflect.Descriptor instead.
+func (*ReportRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *ReportRequest) GetMetrics() *ServerMetrics {
+	if x != nil {
+		return x.Metrics
+	}
+	return nil
+}
+
+// Ping request for health checking
+type PingRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PingRequest) Reset() {
+	*x = PingRequest{}
+	mi := &file_gravity_session_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PingRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PingRequest) ProtoMessage() {}
+
+func (x *PingRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
+func (*PingRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *PingRequest) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
+	}
+	return nil
+}
+
+// Pong response
+type PongResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Timestamp     *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PongResponse) Reset() {
+	*x = PongResponse{}
+	mi := &file_gravity_session_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PongResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PongResponse) ProtoMessage() {}
+
+func (x *PongResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PongResponse.ProtoReflect.Descriptor instead.
+func (*PongResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *PongResponse) GetTimestamp() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Timestamp
+	}
+	return nil
+}
+
+// Close request
+type CloseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // Reason for closing the connection
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseRequest) Reset() {
+	*x = CloseRequest{}
+	mi := &file_gravity_session_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseRequest) ProtoMessage() {}
+
+func (x *CloseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseRequest.ProtoReflect.Descriptor instead.
+func (*CloseRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CloseRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// Pause request
+type PauseRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // Reason for pausing the session
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PauseRequest) Reset() {
+	*x = PauseRequest{}
+	mi := &file_gravity_session_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PauseRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PauseRequest) ProtoMessage() {}
+
+func (x *PauseRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PauseRequest.ProtoReflect.Descriptor instead.
+func (*PauseRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *PauseRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// Resume request
+type ResumeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"` // Reason for resuming the session
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResumeRequest) Reset() {
+	*x = ResumeRequest{}
+	mi := &file_gravity_session_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResumeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResumeRequest) ProtoMessage() {}
+
+func (x *ResumeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResumeRequest.ProtoReflect.Descriptor instead.
+func (*ResumeRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ResumeRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// Generic protocol response
+type ProtocolResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`            // Unique identifier for the response
+	Event         string                 `protobuf:"bytes,2,opt,name=event,proto3" json:"event,omitempty"`      // Event type this response is for
+	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"` // Whether the operation was successful
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`      // Error message if operation failed
+	Payload       []byte                 `protobuf:"bytes,5,opt,name=payload,proto3" json:"payload,omitempty"`  // Optional response payload data
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProtocolResponse) Reset() {
+	*x = ProtocolResponse{}
+	mi := &file_gravity_session_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtocolResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtocolResponse) ProtoMessage() {}
+
+func (x *ProtocolResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtocolResponse.ProtoReflect.Descriptor instead.
+func (*ProtocolResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ProtocolResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ProtocolResponse) GetEvent() string {
+	if x != nil {
+		return x.Event
+	}
+	return ""
+}
+
+func (x *ProtocolResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ProtocolResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ProtocolResponse) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// Generic protocol event (server-initiated)
+type ProtocolEvent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`           // Unique identifier for the event
+	Event         string                 `protobuf:"bytes,2,opt,name=event,proto3" json:"event,omitempty"`     // Event type being sent
+	Payload       []byte                 `protobuf:"bytes,3,opt,name=payload,proto3" json:"payload,omitempty"` // Event payload data
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ProtocolEvent) Reset() {
+	*x = ProtocolEvent{}
+	mi := &file_gravity_session_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ProtocolEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ProtocolEvent) ProtoMessage() {}
+
+func (x *ProtocolEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ProtocolEvent.ProtoReflect.Descriptor instead.
+func (*ProtocolEvent) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *ProtocolEvent) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ProtocolEvent) GetEvent() string {
+	if x != nil {
+		return x.Event
+	}
+	return ""
+}
+
+func (x *ProtocolEvent) GetPayload() []byte {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+// Configuration update from server to client
+type ConfigurationUpdate struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`         // Unique identifier for tracking this update
+	Config        []*ConfigItem          `protobuf:"bytes,2,rep,name=config,proto3" json:"config,omitempty"` // List of configuration items to set
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigurationUpdate) Reset() {
+	*x = ConfigurationUpdate{}
+	mi := &file_gravity_session_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigurationUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigurationUpdate) ProtoMessage() {}
+
+func (x *ConfigurationUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigurationUpdate.ProtoReflect.Descriptor instead.
+func (*ConfigurationUpdate) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ConfigurationUpdate) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ConfigurationUpdate) GetConfig() []*ConfigItem {
+	if x != nil {
+		return x.Config
+	}
+	return nil
+}
+
+type ConfigItem struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Key           string                 `protobuf:"bytes,1,opt,name=key,proto3" json:"key,omitempty"`     // Configuration key name
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"` // Configuration value
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigItem) Reset() {
+	*x = ConfigItem{}
+	mi := &file_gravity_session_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigItem) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigItem) ProtoMessage() {}
+
+func (x *ConfigItem) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigItem.ProtoReflect.Descriptor instead.
+func (*ConfigItem) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ConfigItem) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *ConfigItem) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+// Configuration update response from client to server
+type ConfigurationUpdateResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`            // Identifier matching the ConfigurationUpdate
+	Success       bool                   `protobuf:"varint,2,opt,name=success,proto3" json:"success,omitempty"` // Whether the configuration was successful
+	Error         string                 `protobuf:"bytes,3,opt,name=error,proto3" json:"error,omitempty"`      // Error message if configuration failed
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConfigurationUpdateResponse) Reset() {
+	*x = ConfigurationUpdateResponse{}
+	mi := &file_gravity_session_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConfigurationUpdateResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConfigurationUpdateResponse) ProtoMessage() {}
+
+func (x *ConfigurationUpdateResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConfigurationUpdateResponse.ProtoReflect.Descriptor instead.
+func (*ConfigurationUpdateResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ConfigurationUpdateResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ConfigurationUpdateResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ConfigurationUpdateResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// Supporting data structures
+type HostInfo struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Started          uint64                 `protobuf:"varint,1,opt,name=started,proto3" json:"started,omitempty"`                                           // epoch time in milliseconds since server started
+	Cpu              uint32                 `protobuf:"varint,2,opt,name=cpu,proto3" json:"cpu,omitempty"`                                                   // number of CPUs
+	Memory           uint64                 `protobuf:"varint,3,opt,name=memory,proto3" json:"memory,omitempty"`                                             // memory in bytes
+	Disk             uint64                 `protobuf:"varint,4,opt,name=disk,proto3" json:"disk,omitempty"`                                                 // disk free space in bytes
+	Ipv4Address      string                 `protobuf:"bytes,5,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"`                 // IPv4 address
+	Ipv6Address      string                 `protobuf:"bytes,6,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"`                 // IPv6 address
+	Hostname         string                 `protobuf:"bytes,7,opt,name=hostname,proto3" json:"hostname,omitempty"`                                          // hostname
+	InstanceId       string                 `protobuf:"bytes,8,opt,name=instance_id,json=instanceId,proto3" json:"instance_id,omitempty"`                    // instance id of the client
+	Provider         string                 `protobuf:"bytes,9,opt,name=provider,proto3" json:"provider,omitempty"`                                          // Cloud provider (e.g., "aws", "gcp", "azure")
+	Region           string                 `protobuf:"bytes,10,opt,name=region,proto3" json:"region,omitempty"`                                             // Cloud region
+	InstanceType     string                 `protobuf:"bytes,11,opt,name=instance_type,json=instanceType,proto3" json:"instance_type,omitempty"`             // instance type of the client (n1-standard-32, m6i.8xlarge)
+	InstanceTags     []string               `protobuf:"bytes,12,rep,name=instance_tags,json=instanceTags,proto3" json:"instance_tags,omitempty"`             // tags on the instance
+	AvailabilityZone string                 `protobuf:"bytes,13,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the client
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *HostInfo) Reset() {
+	*x = HostInfo{}
+	mi := &file_gravity_session_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostInfo) ProtoMessage() {}
+
+func (x *HostInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostInfo.ProtoReflect.Descriptor instead.
+func (*HostInfo) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *HostInfo) GetStarted() uint64 {
+	if x != nil {
+		return x.Started
+	}
+	return 0
+}
+
+func (x *HostInfo) GetCpu() uint32 {
+	if x != nil {
+		return x.Cpu
+	}
+	return 0
+}
+
+func (x *HostInfo) GetMemory() uint64 {
+	if x != nil {
+		return x.Memory
+	}
+	return 0
+}
+
+func (x *HostInfo) GetDisk() uint64 {
+	if x != nil {
+		return x.Disk
+	}
+	return 0
+}
+
+func (x *HostInfo) GetIpv4Address() string {
+	if x != nil {
+		return x.Ipv4Address
+	}
+	return ""
+}
+
+func (x *HostInfo) GetIpv6Address() string {
+	if x != nil {
+		return x.Ipv6Address
+	}
+	return ""
+}
+
+func (x *HostInfo) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *HostInfo) GetInstanceId() string {
+	if x != nil {
+		return x.InstanceId
+	}
+	return ""
+}
+
+func (x *HostInfo) GetProvider() string {
+	if x != nil {
+		return x.Provider
+	}
+	return ""
+}
+
+func (x *HostInfo) GetRegion() string {
+	if x != nil {
+		return x.Region
+	}
+	return ""
+}
+
+func (x *HostInfo) GetInstanceType() string {
+	if x != nil {
+		return x.InstanceType
+	}
+	return ""
+}
+
+func (x *HostInfo) GetInstanceTags() []string {
+	if x != nil {
+		return x.InstanceTags
+	}
+	return nil
+}
+
+func (x *HostInfo) GetAvailabilityZone() string {
+	if x != nil {
+		return x.AvailabilityZone
+	}
+	return ""
+}
+
+type ExistingDeployment struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`                                      // Unique identifier for the deployment
+	Started        *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=started,proto3" json:"started,omitempty"`                            // When the deployment was started
+	Ipv6Address    string                 `protobuf:"bytes,4,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // Assigned IPv6 address for the deployment
+	OrgId          string                 `protobuf:"bytes,5,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	Resources      *ResourceRequirements  `protobuf:"bytes,6,opt,name=resources,proto3" json:"resources,omitempty"` // CPU and memory requirements
+	DeploymentCert *DeploymentCert        `protobuf:"bytes,7,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"`
+	UsedPrivateKey bool                   `protobuf:"varint,8,opt,name=used_private_key,json=usedPrivateKey,proto3" json:"used_private_key,omitempty"` // Deployment used private key
+	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
+	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
+	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
+	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate that was issued (just cert, ca + key not required)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ExistingDeployment) Reset() {
+	*x = ExistingDeployment{}
+	mi := &file_gravity_session_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ExistingDeployment) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ExistingDeployment) ProtoMessage() {}
+
+func (x *ExistingDeployment) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ExistingDeployment.ProtoReflect.Descriptor instead.
+func (*ExistingDeployment) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ExistingDeployment) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ExistingDeployment) GetStarted() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Started
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetIpv6Address() string {
+	if x != nil {
+		return x.Ipv6Address
+	}
+	return ""
+}
+
+func (x *ExistingDeployment) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *ExistingDeployment) GetResources() *ResourceRequirements {
+	if x != nil {
+		return x.Resources
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetDeploymentCert() *DeploymentCert {
+	if x != nil {
+		return x.DeploymentCert
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetUsedPrivateKey() bool {
+	if x != nil {
+		return x.UsedPrivateKey
+	}
+	return false
+}
+
+func (x *ExistingDeployment) GetPaused() bool {
+	if x != nil {
+		return x.Paused
+	}
+	return false
+}
+
+func (x *ExistingDeployment) GetPausedDuration() *durationpb.Duration {
+	if x != nil {
+		return x.PausedDuration
+	}
+	return nil
+}
+
+func (x *ExistingDeployment) GetOnDemand() bool {
+	if x != nil {
+		return x.OnDemand
+	}
+	return false
+}
+
+func (x *ExistingDeployment) GetCert() string {
+	if x != nil {
+		return x.Cert
+	}
+	return ""
+}
+
+// Deprecated: Marked as deprecated in gravity_session.proto.
+type DeploymentSpec struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeploymentSpec) Reset() {
+	*x = DeploymentSpec{}
+	mi := &file_gravity_session_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeploymentSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeploymentSpec) ProtoMessage() {}
+
+func (x *DeploymentSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeploymentSpec.ProtoReflect.Descriptor instead.
+func (*DeploymentSpec) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{24}
+}
+
+type ResourceRequirements struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MemoryLimit   int64                  `protobuf:"varint,1,opt,name=memory_limit,json=memoryLimit,proto3" json:"memory_limit,omitempty"`       // Maximum memory in bytes
+	CpuLimit      int64                  `protobuf:"varint,2,opt,name=cpu_limit,json=cpuLimit,proto3" json:"cpu_limit,omitempty"`                // Maximum CPU in millicores (1000 = 1 core)
+	MemoryRequest int64                  `protobuf:"varint,3,opt,name=memory_request,json=memoryRequest,proto3" json:"memory_request,omitempty"` // Requested memory in bytes
+	CpuRequest    int64                  `protobuf:"varint,4,opt,name=cpu_request,json=cpuRequest,proto3" json:"cpu_request,omitempty"`          // Requested CPU in millicores
+	DiskLimit     int64                  `protobuf:"varint,5,opt,name=disk_limit,json=diskLimit,proto3" json:"disk_limit,omitempty"`             // Maximum storage in bytes
+	DiskRequest   int64                  `protobuf:"varint,6,opt,name=disk_request,json=diskRequest,proto3" json:"disk_request,omitempty"`       // Requested storage in bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResourceRequirements) Reset() {
+	*x = ResourceRequirements{}
+	mi := &file_gravity_session_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResourceRequirements) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResourceRequirements) ProtoMessage() {}
+
+func (x *ResourceRequirements) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResourceRequirements.ProtoReflect.Descriptor instead.
+func (*ResourceRequirements) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *ResourceRequirements) GetMemoryLimit() int64 {
+	if x != nil {
+		return x.MemoryLimit
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetCpuLimit() int64 {
+	if x != nil {
+		return x.CpuLimit
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetMemoryRequest() int64 {
+	if x != nil {
+		return x.MemoryRequest
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetCpuRequest() int64 {
+	if x != nil {
+		return x.CpuRequest
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetDiskLimit() int64 {
+	if x != nil {
+		return x.DiskLimit
+	}
+	return 0
+}
+
+func (x *ResourceRequirements) GetDiskRequest() int64 {
+	if x != nil {
+		return x.DiskRequest
+	}
+	return 0
+}
+
+type DeploymentCert struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Cert          string                 `protobuf:"bytes,1,opt,name=cert,proto3" json:"cert,omitempty"`       // TLS certificate in PEM format
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`         // TLS private key in PEM format
+	Ca            string                 `protobuf:"bytes,3,opt,name=ca,proto3" json:"ca,omitempty"`           // Certificate Authority certificate
+	Dnsname       string                 `protobuf:"bytes,4,opt,name=dnsname,proto3" json:"dnsname,omitempty"` // DNS name for the certificate
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeploymentCert) Reset() {
+	*x = DeploymentCert{}
+	mi := &file_gravity_session_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeploymentCert) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeploymentCert) ProtoMessage() {}
+
+func (x *DeploymentCert) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeploymentCert.ProtoReflect.Descriptor instead.
+func (*DeploymentCert) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *DeploymentCert) GetCert() string {
+	if x != nil {
+		return x.Cert
+	}
+	return ""
+}
+
+func (x *DeploymentCert) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *DeploymentCert) GetCa() string {
+	if x != nil {
+		return x.Ca
+	}
+	return ""
+}
+
+func (x *DeploymentCert) GetDnsname() string {
+	if x != nil {
+		return x.Dnsname
+	}
+	return ""
+}
+
+type CodeMetadata struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Env           []string               `protobuf:"bytes,1,rep,name=env,proto3" json:"env,omitempty"`         // Environment variable names
+	Secrets       []string               `protobuf:"bytes,2,rep,name=secrets,proto3" json:"secrets,omitempty"` // Secret names required by the code
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CodeMetadata) Reset() {
+	*x = CodeMetadata{}
+	mi := &file_gravity_session_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CodeMetadata) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CodeMetadata) ProtoMessage() {}
+
+func (x *CodeMetadata) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CodeMetadata.ProtoReflect.Descriptor instead.
+func (*CodeMetadata) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *CodeMetadata) GetEnv() []string {
+	if x != nil {
+		return x.Env
+	}
+	return nil
+}
+
+func (x *CodeMetadata) GetSecrets() []string {
+	if x != nil {
+		return x.Secrets
+	}
+	return nil
+}
+
+type HostMapping struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Hostname      string                 `protobuf:"bytes,1,opt,name=hostname,proto3" json:"hostname,omitempty"`                    // Hostname to map
+	IpAddress     string                 `protobuf:"bytes,2,opt,name=ip_address,json=ipAddress,proto3" json:"ip_address,omitempty"` // IP address to map the hostname to
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostMapping) Reset() {
+	*x = HostMapping{}
+	mi := &file_gravity_session_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostMapping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostMapping) ProtoMessage() {}
+
+func (x *HostMapping) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostMapping.ProtoReflect.Descriptor instead.
+func (*HostMapping) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *HostMapping) GetHostname() string {
+	if x != nil {
+		return x.Hostname
+	}
+	return ""
+}
+
+func (x *HostMapping) GetIpAddress() string {
+	if x != nil {
+		return x.IpAddress
+	}
+	return ""
+}
+
+// Deployment metadata request
+type DeploymentMetadataRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier for the deployment
+	OrgId         string                 `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                      // Organization identifier
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeploymentMetadataRequest) Reset() {
+	*x = DeploymentMetadataRequest{}
+	mi := &file_gravity_session_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeploymentMetadataRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeploymentMetadataRequest) ProtoMessage() {}
+
+func (x *DeploymentMetadataRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeploymentMetadataRequest.ProtoReflect.Descriptor instead.
+func (*DeploymentMetadataRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *DeploymentMetadataRequest) GetDeploymentId() string {
+	if x != nil {
+		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *DeploymentMetadataRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+// Deployment metadata response
+type DeploymentMetadataResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Success        bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                                    // Whether the request was successful
+	Error          string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`                                         // Error message if request failed
+	CodeMetadata   *CodeMetadata          `protobuf:"bytes,3,opt,name=code_metadata,json=codeMetadata,proto3" json:"code_metadata,omitempty"`       // Code metadata from FetchEnv
+	DeploymentCert *DeploymentCert        `protobuf:"bytes,4,opt,name=deployment_cert,json=deploymentCert,proto3" json:"deployment_cert,omitempty"` // Generated deployment certificate
+	OtlpToken      string                 `protobuf:"bytes,5,opt,name=otlp_token,json=otlpToken,proto3" json:"otlp_token,omitempty"`                // OpenTelemetry token for metrics
+	AuthToken      string                 `protobuf:"bytes,6,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`                // Authentication token
+	ExtraHosts     []string               `protobuf:"bytes,7,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"`             // Extra /etc/hosts entries for the deployment
+	CertBundle     string                 `protobuf:"bytes,8,opt,name=cert_bundle,json=certBundle,proto3" json:"cert_bundle,omitempty"`             // PEM certificate bundle (cert, ca, key)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *DeploymentMetadataResponse) Reset() {
+	*x = DeploymentMetadataResponse{}
+	mi := &file_gravity_session_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeploymentMetadataResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeploymentMetadataResponse) ProtoMessage() {}
+
+func (x *DeploymentMetadataResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeploymentMetadataResponse.ProtoReflect.Descriptor instead.
+func (*DeploymentMetadataResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *DeploymentMetadataResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *DeploymentMetadataResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *DeploymentMetadataResponse) GetCodeMetadata() *CodeMetadata {
+	if x != nil {
+		return x.CodeMetadata
+	}
+	return nil
+}
+
+func (x *DeploymentMetadataResponse) GetDeploymentCert() *DeploymentCert {
+	if x != nil {
+		return x.DeploymentCert
+	}
+	return nil
+}
+
+func (x *DeploymentMetadataResponse) GetOtlpToken() string {
+	if x != nil {
+		return x.OtlpToken
+	}
+	return ""
+}
+
+func (x *DeploymentMetadataResponse) GetAuthToken() string {
+	if x != nil {
+		return x.AuthToken
+	}
+	return ""
+}
+
+func (x *DeploymentMetadataResponse) GetExtraHosts() []string {
+	if x != nil {
+		return x.ExtraHosts
+	}
+	return nil
+}
+
+func (x *DeploymentMetadataResponse) GetCertBundle() string {
+	if x != nil {
+		return x.CertBundle
+	}
+	return ""
+}
+
+type RouteSandboxRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	VirtualIp     string                 `protobuf:"bytes,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"` // Hadron virtual IP for the sandbox
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteSandboxRequest) Reset() {
+	*x = RouteSandboxRequest{}
+	mi := &file_gravity_session_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteSandboxRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteSandboxRequest) ProtoMessage() {}
+
+func (x *RouteSandboxRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[31]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteSandboxRequest.ProtoReflect.Descriptor instead.
+func (*RouteSandboxRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *RouteSandboxRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *RouteSandboxRequest) GetVirtualIp() string {
+	if x != nil {
+		return x.VirtualIp
+	}
+	return ""
+}
+
+type RouteSandboxResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ip            string                 `protobuf:"bytes,1,opt,name=ip,proto3" json:"ip,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RouteSandboxResponse) Reset() {
+	*x = RouteSandboxResponse{}
+	mi := &file_gravity_session_proto_msgTypes[32]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RouteSandboxResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RouteSandboxResponse) ProtoMessage() {}
+
+func (x *RouteSandboxResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[32]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RouteSandboxResponse.ProtoReflect.Descriptor instead.
+func (*RouteSandboxResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *RouteSandboxResponse) GetIp() string {
+	if x != nil {
+		return x.Ip
+	}
+	return ""
+}
+
+// Sandbox metadata request
+type SandboxMetadataRequest struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId           string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	OrgId               string                 `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	GenerateCertificate bool                   `protobuf:"varint,3,opt,name=generate_certificate,json=generateCertificate,proto3" json:"generate_certificate,omitempty"` // Whether to generate a certificate
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *SandboxMetadataRequest) Reset() {
+	*x = SandboxMetadataRequest{}
+	mi := &file_gravity_session_proto_msgTypes[33]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxMetadataRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxMetadataRequest) ProtoMessage() {}
+
+func (x *SandboxMetadataRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[33]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxMetadataRequest.ProtoReflect.Descriptor instead.
+func (*SandboxMetadataRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{33}
+}
+
+func (x *SandboxMetadataRequest) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *SandboxMetadataRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *SandboxMetadataRequest) GetGenerateCertificate() bool {
+	if x != nil {
+		return x.GenerateCertificate
+	}
+	return false
+}
+
+// Sandbox metadata response
+type SandboxMetadataResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`                        // Whether the request was successful
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`                             // Error message if request failed
+	ExtraHosts    []string               `protobuf:"bytes,3,rep,name=extra_hosts,json=extraHosts,proto3" json:"extra_hosts,omitempty"` // Extra /etc/hosts entries for the sandbox
+	CertBundle    string                 `protobuf:"bytes,4,opt,name=cert_bundle,json=certBundle,proto3" json:"cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxMetadataResponse) Reset() {
+	*x = SandboxMetadataResponse{}
+	mi := &file_gravity_session_proto_msgTypes[34]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxMetadataResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxMetadataResponse) ProtoMessage() {}
+
+func (x *SandboxMetadataResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[34]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxMetadataResponse.ProtoReflect.Descriptor instead.
+func (*SandboxMetadataResponse) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{34}
+}
+
+func (x *SandboxMetadataResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *SandboxMetadataResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *SandboxMetadataResponse) GetExtraHosts() []string {
+	if x != nil {
+		return x.ExtraHosts
+	}
+	return nil
+}
+
+func (x *SandboxMetadataResponse) GetCertBundle() string {
+	if x != nil {
+		return x.CertBundle
+	}
+	return ""
+}
+
 var File_gravity_session_proto protoreflect.FileDescriptor
 
 const file_gravity_session_proto_rawDesc = "" +
 	"\n" +
-	"\x15gravity_session.proto\x12\agravity\x1a\rgravity.proto\"2\n" +
+	"\x15gravity_session.proto\x12\agravity\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15gravity_metrics.proto\"2\n" +
 	"\x0fIdentifyRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\")\n" +
@@ -797,7 +2582,143 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\rmachine_token\x18\f \x01(\tR\fmachineToken\x12.\n" +
 	"\x13machine_cert_bundle\x18\r \x01(\tR\x11machineCertBundle\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason2\xa7\x03\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"?\n" +
+	"\fTunnelPacket\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
+	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\xe5\x01\n" +
+	"\x12ClientCapabilities\x123\n" +
+	"\x15provision_deployments\x18\x01 \x01(\bR\x14provisionDeployments\x127\n" +
+	"\x17unprovision_deployments\x18\x02 \x01(\bR\x16unprovisionDeployments\x126\n" +
+	"\x17dynamic_project_routing\x18\x03 \x01(\tR\x15dynamicProjectRouting\x12)\n" +
+	"\x10dynamic_hostname\x18\x04 \x01(\bR\x0fdynamicHostname\"x\n" +
+	"\x16RouteDeploymentRequest\x12#\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x1a\n" +
+	"\bhostname\x18\x02 \x01(\tR\bhostname\x12\x1d\n" +
+	"\n" +
+	"virtual_ip\x18\x03 \x01(\tR\tvirtualIp\")\n" +
+	"\x17RouteDeploymentResponse\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\"9\n" +
+	"\x12UnprovisionRequest\x12#\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\"A\n" +
+	"\rReportRequest\x120\n" +
+	"\ametrics\x18\x01 \x01(\v2\x16.gravity.ServerMetricsR\ametrics\"G\n" +
+	"\vPingRequest\x128\n" +
+	"\ttimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"H\n" +
+	"\fPongResponse\x128\n" +
+	"\ttimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"&\n" +
+	"\fCloseRequest\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"&\n" +
+	"\fPauseRequest\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"'\n" +
+	"\rResumeRequest\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"\x82\x01\n" +
+	"\x10ProtocolResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05event\x18\x02 \x01(\tR\x05event\x12\x18\n" +
+	"\asuccess\x18\x03 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\x12\x18\n" +
+	"\apayload\x18\x05 \x01(\fR\apayload\"O\n" +
+	"\rProtocolEvent\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
+	"\x05event\x18\x02 \x01(\tR\x05event\x12\x18\n" +
+	"\apayload\x18\x03 \x01(\fR\apayload\"R\n" +
+	"\x13ConfigurationUpdate\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
+	"\x06config\x18\x02 \x03(\v2\x13.gravity.ConfigItemR\x06config\"4\n" +
+	"\n" +
+	"ConfigItem\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"]\n" +
+	"\x1bConfigurationUpdateResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
+	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\x90\x03\n" +
+	"\bHostInfo\x12\x18\n" +
+	"\astarted\x18\x01 \x01(\x04R\astarted\x12\x10\n" +
+	"\x03cpu\x18\x02 \x01(\rR\x03cpu\x12\x16\n" +
+	"\x06memory\x18\x03 \x01(\x04R\x06memory\x12\x12\n" +
+	"\x04disk\x18\x04 \x01(\x04R\x04disk\x12!\n" +
+	"\fipv4_address\x18\x05 \x01(\tR\vipv4Address\x12!\n" +
+	"\fipv6_address\x18\x06 \x01(\tR\vipv6Address\x12\x1a\n" +
+	"\bhostname\x18\a \x01(\tR\bhostname\x12\x1f\n" +
+	"\vinstance_id\x18\b \x01(\tR\n" +
+	"instanceId\x12\x1a\n" +
+	"\bprovider\x18\t \x01(\tR\bprovider\x12\x16\n" +
+	"\x06region\x18\n" +
+	" \x01(\tR\x06region\x12#\n" +
+	"\rinstance_type\x18\v \x01(\tR\finstanceType\x12#\n" +
+	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\x12+\n" +
+	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\xc9\x03\n" +
+	"\x12ExistingDeployment\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
+	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
+	"\fipv6_address\x18\x04 \x01(\tR\vipv6Address\x12\x15\n" +
+	"\x06org_id\x18\x05 \x01(\tR\x05orgId\x12;\n" +
+	"\tresources\x18\x06 \x01(\v2\x1d.gravity.ResourceRequirementsR\tresources\x12@\n" +
+	"\x0fdeployment_cert\x18\a \x01(\v2\x17.gravity.DeploymentCertR\x0edeploymentCert\x12(\n" +
+	"\x10used_private_key\x18\b \x01(\bR\x0eusedPrivateKey\x12\x16\n" +
+	"\x06paused\x18\t \x01(\bR\x06paused\x12A\n" +
+	"\x0epausedDuration\x18\n" +
+	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\x12\x1b\n" +
+	"\ton_demand\x18\v \x01(\bR\bonDemand\x12\x12\n" +
+	"\x04cert\x18\f \x01(\tR\x04cert\"\x14\n" +
+	"\x0eDeploymentSpec:\x02\x18\x01\"\xe0\x01\n" +
+	"\x14ResourceRequirements\x12!\n" +
+	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +
+	"\tcpu_limit\x18\x02 \x01(\x03R\bcpuLimit\x12%\n" +
+	"\x0ememory_request\x18\x03 \x01(\x03R\rmemoryRequest\x12\x1f\n" +
+	"\vcpu_request\x18\x04 \x01(\x03R\n" +
+	"cpuRequest\x12\x1d\n" +
+	"\n" +
+	"disk_limit\x18\x05 \x01(\x03R\tdiskLimit\x12!\n" +
+	"\fdisk_request\x18\x06 \x01(\x03R\vdiskRequest\"`\n" +
+	"\x0eDeploymentCert\x12\x12\n" +
+	"\x04cert\x18\x01 \x01(\tR\x04cert\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x0e\n" +
+	"\x02ca\x18\x03 \x01(\tR\x02ca\x12\x18\n" +
+	"\adnsname\x18\x04 \x01(\tR\adnsname\":\n" +
+	"\fCodeMetadata\x12\x10\n" +
+	"\x03env\x18\x01 \x03(\tR\x03env\x12\x18\n" +
+	"\asecrets\x18\x02 \x03(\tR\asecrets\"H\n" +
+	"\vHostMapping\x12\x1a\n" +
+	"\bhostname\x18\x01 \x01(\tR\bhostname\x12\x1d\n" +
+	"\n" +
+	"ip_address\x18\x02 \x01(\tR\tipAddress\"W\n" +
+	"\x19DeploymentMetadataRequest\x12#\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x15\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\"\xca\x02\n" +
+	"\x1aDeploymentMetadataResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12:\n" +
+	"\rcode_metadata\x18\x03 \x01(\v2\x15.gravity.CodeMetadataR\fcodeMetadata\x12@\n" +
+	"\x0fdeployment_cert\x18\x04 \x01(\v2\x17.gravity.DeploymentCertR\x0edeploymentCert\x12\x1d\n" +
+	"\n" +
+	"otlp_token\x18\x05 \x01(\tR\totlpToken\x12\x1d\n" +
+	"\n" +
+	"auth_token\x18\x06 \x01(\tR\tauthToken\x12\x1f\n" +
+	"\vextra_hosts\x18\a \x03(\tR\n" +
+	"extraHosts\x12\x1f\n" +
+	"\vcert_bundle\x18\b \x01(\tR\n" +
+	"certBundle\"S\n" +
+	"\x13RouteSandboxRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
+	"\n" +
+	"virtual_ip\x18\x02 \x01(\tR\tvirtualIp\"&\n" +
+	"\x14RouteSandboxResponse\x12\x0e\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\"\x81\x01\n" +
+	"\x16SandboxMetadataRequest\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x15\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x121\n" +
+	"\x14generate_certificate\x18\x03 \x01(\bR\x13generateCertificate\"\x8b\x01\n" +
+	"\x17SandboxMetadataResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1f\n" +
+	"\vextra_hosts\x18\x03 \x03(\tR\n" +
+	"extraHosts\x12\x1f\n" +
+	"\vcert_bundle\x18\x04 \x01(\tR\n" +
+	"certBundle2\xa7\x03\n" +
 	"\x15GravitySessionService\x12H\n" +
 	"\x10EstablishSession\x12\x17.gravity.SessionMessage\x1a\x17.gravity.SessionMessage(\x010\x01\x12H\n" +
 	"\x14StreamSessionPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket(\x010\x01\x12`\n" +
@@ -817,7 +2738,7 @@ func file_gravity_session_proto_rawDescGZIP() []byte {
 	return file_gravity_session_proto_rawDescData
 }
 
-var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
 var file_gravity_session_proto_goTypes = []any{
 	(*IdentifyRequest)(nil),             // 0: gravity.IdentifyRequest
 	(*IdentifyResponse)(nil),            // 1: gravity.IdentifyResponse
@@ -825,67 +2746,86 @@ var file_gravity_session_proto_goTypes = []any{
 	(*SessionHello)(nil),                // 3: gravity.SessionHello
 	(*SessionHelloResponse)(nil),        // 4: gravity.SessionHelloResponse
 	(*SessionCloseRequest)(nil),         // 5: gravity.SessionCloseRequest
-	(*RouteDeploymentRequest)(nil),      // 6: gravity.RouteDeploymentRequest
-	(*RouteDeploymentResponse)(nil),     // 7: gravity.RouteDeploymentResponse
-	(*UnprovisionRequest)(nil),          // 8: gravity.UnprovisionRequest
-	(*RouteSandboxRequest)(nil),         // 9: gravity.RouteSandboxRequest
-	(*RouteSandboxResponse)(nil),        // 10: gravity.RouteSandboxResponse
-	(*PingRequest)(nil),                 // 11: gravity.PingRequest
-	(*PongResponse)(nil),                // 12: gravity.PongResponse
-	(*ReportRequest)(nil),               // 13: gravity.ReportRequest
-	(*PauseRequest)(nil),                // 14: gravity.PauseRequest
-	(*ResumeRequest)(nil),               // 15: gravity.ResumeRequest
-	(*ConfigurationUpdate)(nil),         // 16: gravity.ConfigurationUpdate
-	(*ConfigurationUpdateResponse)(nil), // 17: gravity.ConfigurationUpdateResponse
-	(*ProtocolResponse)(nil),            // 18: gravity.ProtocolResponse
-	(*ProtocolEvent)(nil),               // 19: gravity.ProtocolEvent
-	(*ExistingDeployment)(nil),          // 20: gravity.ExistingDeployment
-	(*HostInfo)(nil),                    // 21: gravity.HostInfo
-	(*ClientCapabilities)(nil),          // 22: gravity.ClientCapabilities
-	(*HostMapping)(nil),                 // 23: gravity.HostMapping
-	(*TunnelPacket)(nil),                // 24: gravity.TunnelPacket
-	(*DeploymentMetadataRequest)(nil),   // 25: gravity.DeploymentMetadataRequest
-	(*SandboxMetadataRequest)(nil),      // 26: gravity.SandboxMetadataRequest
-	(*DeploymentMetadataResponse)(nil),  // 27: gravity.DeploymentMetadataResponse
-	(*SandboxMetadataResponse)(nil),     // 28: gravity.SandboxMetadataResponse
+	(*TunnelPacket)(nil),                // 6: gravity.TunnelPacket
+	(*ClientCapabilities)(nil),          // 7: gravity.ClientCapabilities
+	(*RouteDeploymentRequest)(nil),      // 8: gravity.RouteDeploymentRequest
+	(*RouteDeploymentResponse)(nil),     // 9: gravity.RouteDeploymentResponse
+	(*UnprovisionRequest)(nil),          // 10: gravity.UnprovisionRequest
+	(*ReportRequest)(nil),               // 11: gravity.ReportRequest
+	(*PingRequest)(nil),                 // 12: gravity.PingRequest
+	(*PongResponse)(nil),                // 13: gravity.PongResponse
+	(*CloseRequest)(nil),                // 14: gravity.CloseRequest
+	(*PauseRequest)(nil),                // 15: gravity.PauseRequest
+	(*ResumeRequest)(nil),               // 16: gravity.ResumeRequest
+	(*ProtocolResponse)(nil),            // 17: gravity.ProtocolResponse
+	(*ProtocolEvent)(nil),               // 18: gravity.ProtocolEvent
+	(*ConfigurationUpdate)(nil),         // 19: gravity.ConfigurationUpdate
+	(*ConfigItem)(nil),                  // 20: gravity.ConfigItem
+	(*ConfigurationUpdateResponse)(nil), // 21: gravity.ConfigurationUpdateResponse
+	(*HostInfo)(nil),                    // 22: gravity.HostInfo
+	(*ExistingDeployment)(nil),          // 23: gravity.ExistingDeployment
+	(*DeploymentSpec)(nil),              // 24: gravity.DeploymentSpec
+	(*ResourceRequirements)(nil),        // 25: gravity.ResourceRequirements
+	(*DeploymentCert)(nil),              // 26: gravity.DeploymentCert
+	(*CodeMetadata)(nil),                // 27: gravity.CodeMetadata
+	(*HostMapping)(nil),                 // 28: gravity.HostMapping
+	(*DeploymentMetadataRequest)(nil),   // 29: gravity.DeploymentMetadataRequest
+	(*DeploymentMetadataResponse)(nil),  // 30: gravity.DeploymentMetadataResponse
+	(*RouteSandboxRequest)(nil),         // 31: gravity.RouteSandboxRequest
+	(*RouteSandboxResponse)(nil),        // 32: gravity.RouteSandboxResponse
+	(*SandboxMetadataRequest)(nil),      // 33: gravity.SandboxMetadataRequest
+	(*SandboxMetadataResponse)(nil),     // 34: gravity.SandboxMetadataResponse
+	(*ServerMetrics)(nil),               // 35: gravity.ServerMetrics
+	(*timestamppb.Timestamp)(nil),       // 36: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 37: google.protobuf.Duration
 }
 var file_gravity_session_proto_depIdxs = []int32{
 	3,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
 	4,  // 1: gravity.SessionMessage.session_hello_response:type_name -> gravity.SessionHelloResponse
 	5,  // 2: gravity.SessionMessage.session_close:type_name -> gravity.SessionCloseRequest
-	6,  // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
-	7,  // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
-	8,  // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
-	9,  // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
-	10, // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
-	11, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
-	12, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
-	13, // 10: gravity.SessionMessage.report:type_name -> gravity.ReportRequest
-	14, // 11: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
-	15, // 12: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
-	16, // 13: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	17, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	18, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
-	19, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
-	20, // 17: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
-	21, // 18: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
-	22, // 19: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
-	23, // 20: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
-	2,  // 21: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	24, // 22: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	25, // 23: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	26, // 24: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	0,  // 25: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
-	2,  // 26: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	24, // 27: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	27, // 28: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	28, // 29: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	1,  // 30: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
-	26, // [26:31] is the sub-list for method output_type
-	21, // [21:26] is the sub-list for method input_type
-	21, // [21:21] is the sub-list for extension type_name
-	21, // [21:21] is the sub-list for extension extendee
-	0,  // [0:21] is the sub-list for field type_name
+	8,  // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
+	9,  // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
+	10, // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
+	31, // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
+	32, // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
+	12, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
+	13, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
+	11, // 10: gravity.SessionMessage.report:type_name -> gravity.ReportRequest
+	15, // 11: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
+	16, // 12: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
+	19, // 13: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	21, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	17, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
+	18, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
+	23, // 17: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
+	22, // 18: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
+	7,  // 19: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
+	28, // 20: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
+	35, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	36, // 22: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	36, // 23: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	20, // 24: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	36, // 25: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	25, // 26: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	26, // 27: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
+	37, // 28: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	27, // 29: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	26, // 30: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	2,  // 31: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	6,  // 32: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	29, // 33: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	33, // 34: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	0,  // 35: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	2,  // 36: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	6,  // 37: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	30, // 38: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	34, // 39: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	1,  // 40: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	36, // [36:41] is the sub-list for method output_type
+	31, // [31:36] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_gravity_session_proto_init() }
@@ -893,7 +2833,7 @@ func file_gravity_session_proto_init() {
 	if File_gravity_session_proto != nil {
 		return
 	}
-	file_gravity_proto_init()
+	file_gravity_metrics_proto_init()
 	file_gravity_session_proto_msgTypes[2].OneofWrappers = []any{
 		(*SessionMessage_SessionHello)(nil),
 		(*SessionMessage_SessionHelloResponse)(nil),
@@ -919,7 +2859,7 @@ func file_gravity_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_session_proto_rawDesc), len(file_gravity_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   6,
+			NumMessages:   35,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

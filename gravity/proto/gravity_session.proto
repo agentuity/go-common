@@ -2,7 +2,9 @@ syntax = "proto3";
 
 package gravity;
 
-import "gravity.proto"; // Import shared types
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "gravity_metrics.proto"; // Import shared types
 
 option go_package = "github.com/agentuity/go-common/gravity/proto";
 
@@ -115,4 +117,201 @@ message SessionHelloResponse {
 // SessionCloseRequest is sent to gracefully close the session.
 message SessionCloseRequest {
   string reason = 1; // Reason for closing the session
+}
+
+// TunnelPacket represents network packet data for the tunnel
+message TunnelPacket {
+  bytes data = 1; // Raw IP packet data
+  string stream_id = 2; // Logical stream identifier for multiplexing
+}
+
+// ClientCapabilities defines what capabilities a client supports
+message ClientCapabilities {
+  bool provision_deployments = 1; // Can handle provision deployment requests
+  bool unprovision_deployments = 2; // Can handle unprovision deployment requests
+  string dynamic_project_routing = 3; // Project ID for dynamic routing (empty = no routing)
+  bool dynamic_hostname = 4; // Request dynamic hostname generation and routing
+}
+
+message RouteDeploymentRequest {
+  string deployment_id = 1; // Unique identifier for the deployment
+  string hostname = 2; // Deprecated: unused and will be removed
+  string virtual_ip = 3; // Hadron virtual IP for the deployment
+}
+
+message RouteDeploymentResponse {
+  string ip = 1;
+}
+
+// Unprovision request
+message UnprovisionRequest {
+  string deployment_id = 1; // Unique identifier of deployment to remove
+}
+
+// Report request for metrics
+message ReportRequest {
+  ServerMetrics metrics = 1; // Comprehensive server metrics and performance data
+}
+
+// Ping request for health checking
+message PingRequest {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+// Pong response
+message PongResponse {
+  google.protobuf.Timestamp timestamp = 1;
+}
+
+// Close request
+message CloseRequest {
+  string reason = 1; // Reason for closing the connection
+}
+
+// Pause request
+message PauseRequest {
+  string reason = 1; // Reason for pausing the session
+}
+
+// Resume request
+message ResumeRequest {
+  string reason = 1; // Reason for resuming the session
+}
+
+// Generic protocol response
+message ProtocolResponse {
+  string id = 1; // Unique identifier for the response
+  string event = 2; // Event type this response is for
+  bool success = 3; // Whether the operation was successful
+  string error = 4; // Error message if operation failed
+  bytes payload = 5; // Optional response payload data
+}
+
+// Generic protocol event (server-initiated)
+message ProtocolEvent {
+  string id = 1; // Unique identifier for the event
+  string event = 2; // Event type being sent
+  bytes payload = 3; // Event payload data
+}
+
+// Configuration update from server to client
+message ConfigurationUpdate {
+  string id = 1; // Unique identifier for tracking this update
+  repeated ConfigItem config = 2; // List of configuration items to set
+}
+
+message ConfigItem {
+  string key = 1; // Configuration key name
+  string value = 2; // Configuration value
+}
+
+// Configuration update response from client to server
+message ConfigurationUpdateResponse {
+  string id = 1; // Identifier matching the ConfigurationUpdate
+  bool success = 2; // Whether the configuration was successful
+  string error = 3; // Error message if configuration failed
+}
+
+// Supporting data structures
+message HostInfo {
+  uint64 started = 1; // epoch time in milliseconds since server started
+  uint32 cpu = 2; // number of CPUs
+  uint64 memory = 3; // memory in bytes
+  uint64 disk = 4; // disk free space in bytes
+  string ipv4_address = 5; // IPv4 address
+  string ipv6_address = 6; // IPv6 address
+  string hostname = 7; // hostname
+  string instance_id = 8; // instance id of the client
+  string provider = 9; // Cloud provider (e.g., "aws", "gcp", "azure")
+  string region = 10; // Cloud region
+  string instance_type = 11; // instance type of the client (n1-standard-32, m6i.8xlarge)
+  repeated string instance_tags = 12; // tags on the instance
+  string availability_zone = 13; // the availability zone for the client
+}
+
+message ExistingDeployment {
+  string id = 1; // Unique identifier for the deployment
+  google.protobuf.Timestamp started = 3; // When the deployment was started
+  string ipv6_address = 4; // Assigned IPv6 address for the deployment
+  string org_id = 5;
+  ResourceRequirements resources = 6; // CPU and memory requirements
+  DeploymentCert deployment_cert = 7;
+  bool used_private_key = 8; // Deployment used private key
+  bool paused = 9;
+  google.protobuf.Duration pausedDuration = 10;
+  bool on_demand = 11;
+  string cert = 12; // PEM certificate that was issued (just cert, ca + key not required)
+}
+
+message DeploymentSpec {
+  // Deprecated but removing DeploymentSpec breaks wire compat
+  option deprecated = true;
+}
+
+message ResourceRequirements {
+  int64 memory_limit = 1; // Maximum memory in bytes
+  int64 cpu_limit = 2; // Maximum CPU in millicores (1000 = 1 core)
+  int64 memory_request = 3; // Requested memory in bytes
+  int64 cpu_request = 4; // Requested CPU in millicores
+  int64 disk_limit = 5; // Maximum storage in bytes
+  int64 disk_request = 6; // Requested storage in bytes
+}
+
+message DeploymentCert {
+  string cert = 1; // TLS certificate in PEM format
+  string key = 2; // TLS private key in PEM format
+  string ca = 3; // Certificate Authority certificate
+  string dnsname = 4; // DNS name for the certificate
+}
+
+message CodeMetadata {
+  repeated string env = 1; // Environment variable names
+  repeated string secrets = 2; // Secret names required by the code
+}
+
+message HostMapping {
+  string hostname = 1; // Hostname to map
+  string ip_address = 2; // IP address to map the hostname to
+}
+
+// Deployment metadata request
+message DeploymentMetadataRequest {
+  string deployment_id = 1; // Unique identifier for the deployment
+  string org_id = 2; // Organization identifier
+}
+
+// Deployment metadata response
+message DeploymentMetadataResponse {
+  bool success = 1; // Whether the request was successful
+  string error = 2; // Error message if request failed
+  CodeMetadata code_metadata = 3; // Code metadata from FetchEnv
+  DeploymentCert deployment_cert = 4; // Generated deployment certificate
+  string otlp_token = 5; // OpenTelemetry token for metrics
+  string auth_token = 6; // Authentication token
+  repeated string extra_hosts = 7; // Extra /etc/hosts entries for the deployment
+  string cert_bundle = 8; // PEM certificate bundle (cert, ca, key)
+}
+
+message RouteSandboxRequest {
+  string sandbox_id = 1;
+  string virtual_ip = 2; // Hadron virtual IP for the sandbox
+}
+
+message RouteSandboxResponse {
+  string ip = 1;
+}
+
+// Sandbox metadata request
+message SandboxMetadataRequest {
+  string sandbox_id = 1;
+  string org_id = 2;
+  bool generate_certificate = 3; // Whether to generate a certificate
+}
+
+// Sandbox metadata response
+message SandboxMetadataResponse {
+  bool success = 1; // Whether the request was successful
+  string error = 2; // Error message if request failed
+  repeated string extra_hosts = 3; // Extra /etc/hosts entries for the sandbox
+  string cert_bundle = 4; // PEM certificate bundle (cert, ca, key)
 }

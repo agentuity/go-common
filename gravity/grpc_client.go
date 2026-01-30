@@ -619,20 +619,22 @@ func (g *GravityClient) establishTunnelStreams() error {
 func (g *GravityClient) sendSessionHello() error {
 	// Convert existing deployments to protobuf format
 	var existingDeployments []*pb.ExistingDeployment
-	resources := g.provider.Resources()
+	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
+		resources := provisioningProvider.Resources()
 
-	g.logger.Debug("gathering current deployment state for server synchronization...")
-	g.logger.Debug("found %d existing deployments to synchronize with server", len(resources))
+		g.logger.Debug("gathering current deployment state for server synchronization...")
+		g.logger.Debug("found %d existing deployments to synchronize with server", len(resources))
 
-	for _, res := range resources {
-		g.logger.Debug("synchronizing deployment: ID=%s, IPv6=%s, Started=%s", res.GetId(), res.GetIpv6Address(), res.GetStarted().AsTime().Format("2006-01-02 15:04:05"))
-		existingDeployments = append(existingDeployments, res)
-	}
+		for _, res := range resources {
+			g.logger.Debug("synchronizing deployment: ID=%s, IPv6=%s, Started=%s", res.GetId(), res.GetIpv6Address(), res.GetStarted().AsTime().Format("2006-01-02 15:04:05"))
+			existingDeployments = append(existingDeployments, res)
+		}
 
-	if len(existingDeployments) > 0 {
-		g.logger.Debug("sending %d existing deployments to gravity server for state synchronization", len(existingDeployments))
-	} else {
-		g.logger.Debug("no existing deployments to synchronize - this is a fresh session")
+		if len(existingDeployments) > 0 {
+			g.logger.Debug("sending %d existing deployments to gravity server for state synchronization", len(existingDeployments))
+		} else {
+			g.logger.Debug("no existing deployments to synchronize - this is a fresh session")
+		}
 	}
 
 	// Create session hello
@@ -850,12 +852,13 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	}
 
 	g.logger.Debug("session established successfully with machine ID: %s", response.MachineId)
-
-	deploymentCount := len(g.provider.Resources())
-	if deploymentCount > 0 {
-		g.logger.Debug("deployment state synchronization completed - server is now aware of %d existing deployments", deploymentCount)
-	} else {
-		g.logger.Debug("no existing deployments to synchronize - fresh session established")
+	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
+		deploymentCount := len(provisioningProvider.Resources())
+		if deploymentCount > 0 {
+			g.logger.Debug("deployment state synchronization completed - server is now aware of %d existing deployments", deploymentCount)
+		} else {
+			g.logger.Debug("no existing deployments to synchronize - fresh session established")
+		}
 	}
 }
 
@@ -1026,11 +1029,15 @@ func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
 }
 
 func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.UnprovisionRequest) {
+	provisioningProvider, ok := g.provider.(provider.ProvisioningProvider)
+	if !ok {
+		return
+	}
 	g.logger.Debug("received unprovision request: deployment_id=%s", request.DeploymentId)
 
 	// Call provider to deprovision the deployment
 	ctx := context.WithoutCancel(g.context)
-	err := g.provider.Deprovision(ctx, request.DeploymentId, provider.DeprovisionReasonUnprovision)
+	err := provisioningProvider.Deprovision(ctx, request.DeploymentId, provider.DeprovisionReasonUnprovision)
 
 	// Create generic response since there's no UnprovisionResponse message type
 	var response *pb.ProtocolResponse
@@ -1372,13 +1379,14 @@ func (g *GravityClient) reconnect() error {
 		// Channel already empty
 	}
 	g.mu.Unlock()
-
-	// Log deployment synchronization intent
-	deploymentCount := len(g.provider.Resources())
-	if deploymentCount > 0 {
-		g.logger.Info("connection state reset, attempting to start new connection and synchronize %d existing deployments", deploymentCount)
-	} else {
-		g.logger.Info("connection state reset, attempting to start new connection")
+	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
+		// Log deployment synchronization intent
+		deploymentCount := len(provisioningProvider.Resources())
+		if deploymentCount > 0 {
+			g.logger.Info("connection state reset, attempting to start new connection and synchronize %d existing deployments", deploymentCount)
+		} else {
+			g.logger.Info("connection state reset, attempting to start new connection")
+		}
 	}
 
 	// Start new connection

@@ -1,0 +1,287 @@
+syntax = "proto3";
+
+package gravity;
+
+option go_package = "github.com/agentuity/go-common/gravity/proto";
+
+// Enhanced ServerMetrics with comprehensive performance and health data
+message ServerMetrics {
+  // Basic server metrics (1-10)
+  int64 start_time = 1; // epoch milliseconds
+  uint64 uptime = 2; // milliseconds since start
+  int64 connected_time = 3; // epoch milliseconds (optional)
+  int64 last_message_time = 4; // epoch milliseconds (optional)
+
+  // Connection metrics (11-20)
+  bool is_connected = 11;
+  int64 reconnect_count = 12;
+  int64 total_connections = 13;
+
+  // Component metrics (21-40)
+  GRPCConnectionMetrics grpc_metrics = 21;
+  PerformanceMetrics performance = 22;
+  MessageStatistics message_stats = 23;
+  SystemResourceMetrics system_metrics = 24;
+
+  // Historical data (41-50)
+  HistoricalMetrics historical_data = 41;
+}
+
+// GRPCConnectionMetrics contains gRPC-specific connection metrics
+message GRPCConnectionMetrics {
+  // Connection pool information (1-10)
+  int32 pool_size = 1;
+  int32 active_connections = 2;
+  int32 idle_connections = 3;
+  int32 failed_connections = 4;
+  repeated string connection_states = 5;
+
+  // Stream information (11-20)
+  int32 total_streams = 11;
+  int32 control_streams = 12;
+  int32 tunnel_streams = 13;
+  int32 healthy_streams = 14;
+  int32 active_streams = 15;
+  string stream_allocation = 16; // allocation strategy
+
+  // Protocol information (21-30)
+  string protocol_version = 21;
+  bool compression_enabled = 22;
+  string tls_version = 23;
+
+  // Health monitoring (31-40)
+  int64 last_health_check = 31; // epoch milliseconds
+  int64 health_check_interval_ns = 32; // nanoseconds
+  repeated string unhealthy_streams = 33;
+}
+
+// PerformanceMetrics contains performance data from MetricsCollector
+message PerformanceMetrics {
+  // Latency metrics (1-10) - all in nanoseconds
+  int64 avg_packet_latency_ns = 1;
+  int64 p95_packet_latency_ns = 2;
+  int64 p99_packet_latency_ns = 3;
+  int64 max_packet_latency_ns = 4;
+  int64 avg_control_latency_ns = 5;
+  int64 p95_control_latency_ns = 6;
+
+  // Throughput metrics (11-20)
+  double packets_per_second = 11;
+  double bytes_per_second = 12;
+  double control_messages_per_sec = 13;
+
+  // Error metrics (21-30)
+  double error_rate = 21; // percentage
+  int64 packet_drops = 22;
+  int64 stream_errors = 23;
+  int64 connection_errors = 24;
+
+  // Stream health (31-40)
+  int64 healthy_streams = 31;
+  int64 total_streams = 32;
+  int64 active_connections = 33;
+  int64 unhealthy_streams = 34;
+  double stream_utilization = 35; // percentage
+
+  // Circuit breaker metrics (41-50)
+  repeated string circuit_breaker_states = 41;
+  int64 total_circuit_breaks = 42;
+  int64 avg_recovery_time_ns = 43;
+
+  // Compression metrics (51-60)
+  double compression_ratio = 51; // percentage
+  int64 bytes_saved = 52;
+  int64 compression_time_ns = 53;
+  int64 decompression_time_ns = 54;
+
+  // Retry metrics (61-70)
+  int64 total_retry_attempts = 61;
+  int64 successful_retries = 62;
+  int64 failed_retries = 63;
+  double retry_success_rate = 64; // percentage
+
+  // Connection pool metrics (71-80)
+  double pool_utilization = 71; // percentage
+  int64 idle_connections = 72;
+  int64 connection_resets = 73;
+
+  // Resource utilization (81-90)
+  int64 memory_usage_bytes = 81;
+  int64 buffer_pool_size = 82;
+  int64 buffer_pool_hits = 83;
+  int64 buffer_pool_misses = 84;
+
+  // Metadata and timing (91-100)
+  int64 last_updated = 91; // epoch milliseconds
+  int64 collection_interval_ns = 92; // nanoseconds
+
+  // Runtime metrics (101-110)
+  map<string, ProjectRuntimeStats> runtime_stats = 101;
+}
+
+// MessageStatistics contains detailed message flow statistics
+message MessageStatistics {
+  // Packet statistics (1-10)
+  int64 packets_sent = 1;
+  int64 packets_received = 2;
+  int64 packets_dropped = 3;
+  int64 packet_bytes = 4;
+  double avg_packet_size = 5; // bytes
+
+  // Control message statistics (11-20)
+  int64 control_messages_sent = 11;
+  int64 control_messages_received = 12;
+  int64 control_message_bytes = 13;
+
+  // Message breakdown (21-30)
+  map<string, int64> messages_by_type = 21;
+
+  // Throughput metrics (31-40)
+  double packets_per_second = 31;
+  double bytes_per_second = 32;
+
+  // Quality metrics (41-50)
+  double packet_loss_rate = 41; // percentage
+  double message_delivery_rate = 42; // percentage
+}
+
+// SystemResourceMetrics contains system resource utilization
+message SystemResourceMetrics {
+  // Memory metrics (1-10)
+  int64 memory_usage_bytes = 1;
+  double memory_usage_mb = 2;
+  int64 allocated_memory = 3;
+  int64 gc_pause_time_ns = 4;
+  int32 num_goroutines = 5;
+
+  // CPU metrics (11-20)
+  double cpu_usage_percent = 11;
+
+  // Buffer pool metrics (21-30)
+  int64 buffer_pool_size = 21;
+  int64 buffer_pool_hits = 22;
+  int64 buffer_pool_misses = 23;
+  double buffer_pool_hit_rate = 24; // percentage
+
+  // File descriptor metrics (31-40)
+  int32 open_file_descriptors = 31;
+}
+
+// HistoricalMetrics contains time-series data for trend analysis
+message HistoricalMetrics {
+  // Recent throughput samples (last 60 samples, 1 per minute)
+  repeated ThroughputSample throughput_history = 1;
+
+  // Recent latency samples
+  repeated LatencySample latency_history = 2;
+
+  // Error rate samples
+  repeated ErrorRateSample error_rate_history = 3;
+
+  // Connection health samples
+  repeated HealthSample health_history = 4;
+
+  // Maximum history length
+  int32 max_history_length = 5;
+}
+
+// ThroughputSample represents a throughput measurement at a point in time
+message ThroughputSample {
+  int64 timestamp = 1; // epoch milliseconds
+  double packets_per_sec = 2;
+  double bytes_per_sec = 3;
+  double messages_per_sec = 4;
+}
+
+// LatencySample represents latency measurements at a point in time
+message LatencySample {
+  int64 timestamp = 1; // epoch milliseconds
+  int64 avg_latency_ns = 2;
+  int64 p95_latency_ns = 3;
+  int64 p99_latency_ns = 4;
+  int64 max_latency_ns = 5;
+}
+
+// ErrorRateSample represents error rate at a point in time
+message ErrorRateSample {
+  int64 timestamp = 1; // epoch milliseconds
+  double error_rate = 2; // percentage
+  int64 total_errors = 3;
+}
+
+// HealthSample represents system health at a point in time
+message HealthSample {
+  int64 timestamp = 1; // epoch milliseconds
+  int32 healthy_streams = 2;
+  int32 total_streams = 3;
+  int32 active_connections = 4;
+  double health_score = 5; // percentage
+}
+
+// ProjectRuntimeStats contains real-time project runtime statistics
+message ProjectRuntimeStats {
+  // Runtime identity (1-10)
+  string runtime_id = 1;
+  string runtime_name = 2;
+  string image = 3;
+  string deployment_id = 4;
+
+  // Runtime state (11-20)
+  string status = 11;
+  bool paused = 12;
+  int64 paused_time = 13; // epoch milliseconds, 0 if not paused
+  int64 started_time = 14; // epoch milliseconds
+  int64 restart_count = 15;
+
+  // CPU metrics (21-30)
+  double cpu_usage_percent = 21;
+  uint64 cpu_usage_total_ns = 22;
+  uint64 cpu_usage_kernel_ns = 23;
+  uint64 cpu_usage_user_ns = 24;
+  uint64 cpu_throttled_periods = 25;
+  uint64 cpu_throttled_time_ns = 26;
+  double cpu_limit = 27;
+
+  // Memory metrics (31-40)
+  uint64 memory_usage_bytes = 31;
+  uint64 memory_limit_bytes = 32;
+  double memory_usage_percent = 33;
+  uint64 memory_max_usage_bytes = 34;
+  uint64 memory_cache_bytes = 35;
+  uint64 memory_rss_bytes = 36;
+  uint64 memory_swap_bytes = 37;
+  uint64 memory_swap_limit_bytes = 38;
+  uint64 oom_kills = 39;
+
+  // Network metrics (41-50)
+  uint64 network_rx_bytes = 41;
+  uint64 network_tx_bytes = 42;
+  uint64 network_rx_packets = 43;
+  uint64 network_tx_packets = 44;
+  uint64 network_rx_errors = 45;
+  uint64 network_tx_errors = 46;
+  uint64 network_rx_dropped = 47;
+  uint64 network_tx_dropped = 48;
+
+  // Disk I/O metrics (51-60)
+  uint64 block_io_read_bytes = 51;
+  uint64 block_io_write_bytes = 52;
+  uint64 block_io_read_ops = 53;
+  uint64 block_io_write_ops = 54;
+
+  // Process metrics (61-70)
+  uint64 pids_current = 61;
+  uint64 pids_limit = 62;
+
+  // Network interface information (71-80)
+  string ipv4_address = 71;
+  string ipv6_address = 72;
+  string hostname = 73;
+
+  // Runtime metrics (81-90)
+  int64 inflight_requests = 81;
+
+  // Health and timing (91-100)
+  bool healthy = 91;
+  int64 last_updated = 92; // epoch milliseconds
+}

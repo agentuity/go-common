@@ -52,4 +52,4 @@ gen-protoc:
 	@cd gravity/proto && \
 	protoc --go_out=. --go_opt=paths=source_relative \
 		--go-grpc_out=. --go-grpc_opt=paths=source_relative \
-		gravity.proto gravity_session.proto
+		gravity_metrics.proto gravity_session.proto

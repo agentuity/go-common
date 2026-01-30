@@ -1007,6 +1007,13 @@ func (s *DNSResolver) cacheResponse(cacheKey string, responseBytes []byte, respo
 		// NODATA: Rcode=Success but no answers
 		// NXDOMAIN: Rcode=NameError
 		cacheType = "negative"
+
+		// Skip negative caching for managed domains to allow rapid DNS propagation
+		if s.config.IsManagedDomain(domain) {
+			s.logger.Debug("Skipping negative cache for managed domain: %s", domain)
+			return
+		}
+
 		minTTL = s.getNegativeCacheTTL(response)
 		if minTTL == 0 {
 			// No SOA record found, use configured default

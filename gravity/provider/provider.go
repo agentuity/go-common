@@ -81,6 +81,11 @@ type Provider interface {
 	// Configure will be called to configure the provider with the given configuration
 	Configure(config Configuration) error
 
+	// ProcessInPacket processes an inbound packet from the gravity server
+	ProcessInPacket(payload []byte)
+}
+
+type ProvisioningProvider interface {
 	// Deprovision deprovisions a provisioned resource
 	Deprovision(ctx context.Context, resourceID string, reason DeprovisionReason) error
 
@@ -89,7 +94,4 @@ type Provider interface {
 
 	// SetMetricsCollector sets the metrics collector for runtime stats collection
 	SetMetricsCollector(collector ProjectRuntimeStatsCollector)
-
-	// ProcessInPacket processes an inbound packet from the gravity server
-	ProcessInPacket(payload []byte)
 }

@@ -62,10 +62,10 @@ func benchmarkSimpleStreamAllocation(b *testing.B, strategy StreamAllocationStra
 
 // BenchmarkProtobufSerialization tests protobuf serialization performance
 func BenchmarkProtobufSerialization(b *testing.B) {
-	controlMessage := &pb.ControlMessage{
+	sessionMessage := &pb.SessionMessage{
 		Id:       "test_message",
 		StreamId: "test_stream",
-		MessageType: &pb.ControlMessage_Response{
+		MessageType: &pb.SessionMessage_Response{
 			Response: &pb.ProtocolResponse{
 				Id:      "test_response",
 				Event:   "test_event",
@@ -80,11 +80,11 @@ func BenchmarkProtobufSerialization(b *testing.B) {
 		StreamId: "tunnel_stream",
 	}
 
-	b.Run("ControlMessage_Protobuf", func(b *testing.B) {
+	b.Run("SessionMessage_Protobuf", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			data, _ := proto.Marshal(controlMessage)
-			var unmarshaled pb.ControlMessage
+			data, _ := proto.Marshal(sessionMessage)
+			var unmarshaled pb.SessionMessage
 			_ = proto.Unmarshal(data, &unmarshaled)
 		}
 	})

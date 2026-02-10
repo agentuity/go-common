@@ -176,13 +176,26 @@ func TestSelectOptimalTunnelStreamWithHealthyStreams(t *testing.T) {
 func TestExtractHostnameFromURL(t *testing.T) {
 	var c GravityClient
 	c.logger = logger.NewTestLogger()
-	val, err := extractHostnameFromGravityURL("grpc://127.0.0.1")
+
+	// Default fallback when no custom server name is set
+	val, err := extractHostnameFromGravityURL("grpc://127.0.0.1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if val != "gravity.agentuity.com" {
 		t.Errorf("Expected hostname to be gravity.agentuity.com, got %s", val)
 	}
+
+	// Custom fallback server name for IP addresses
+	val, err = extractHostnameFromGravityURL("grpc://10.0.0.1", "custom-gravity.example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if val != "custom-gravity.example.com" {
+		t.Errorf("Expected hostname to be custom-gravity.example.com, got %s", val)
+	}
+
+	// Hostname URLs should ignore the fallback entirely
 	val, err = c.extractHostnameFromURL("grpc://gravity.agentuity.io")
 	if err != nil {
 		t.Fatal(err)

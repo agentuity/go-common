@@ -168,7 +168,8 @@ type GravityClient struct {
 	textMessages    chan *PooledBuffer
 
 	// agentuity internal certificate
-	caCert string
+	caCert            string
+	defaultServerName string
 
 	// Buffer pool for memory efficiency
 	bufferPool sync.Pool
@@ -291,6 +292,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		cancel:                 cancel,
 		tlsCert:                selfSignedCert,
 		caCert:                 config.CACert,
+		defaultServerName:      config.DefaultServerName,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
 		connectionIDChan:       make(chan string, 1),
 		response:               make(chan *pb.ProtocolResponse, 100),
@@ -354,7 +356,11 @@ func (g *GravityClient) Start() error {
 	}
 
 	g.logger.Debug("loading CA certificate for TLS...")
-	pool := x509.NewCertPool()
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		g.logger.Warn("failed to load system cert pool, using empty pool: %v", err)
+		pool = x509.NewCertPool()
+	}
 	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
 		g.logger.Error("failed to load embedded CA certificate")
 		return fmt.Errorf("failed to load embedded CA certificate")
@@ -1539,7 +1545,7 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 
 // extractHostnameFromURL extracts the hostname (without port) from a gRPC URL for TLS ServerName
 func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) {
-	hostname, err := extractHostnameFromGravityURL(inputURL)
+	hostname, err := extractHostnameFromGravityURL(inputURL, g.defaultServerName)
 	if err != nil {
 		return "", err
 	}
@@ -2151,8 +2157,13 @@ func (g *GravityClient) handleTextMessages() {
 
 // Additional helper functions
 
-// extractHostnameFromGravityURL extracts hostname from URL for TLS configuration
-func extractHostnameFromGravityURL(inputURL string) (string, error) {
+const defaultGravityServerName = "gravity.agentuity.com"
+
+// extractHostnameFromGravityURL extracts hostname from URL for TLS configuration.
+// When the URL contains an IP address instead of a hostname, fallbackServerName
+// is used for TLS SNI verification. If fallbackServerName is empty, it defaults
+// to "gravity.agentuity.com".
+func extractHostnameFromGravityURL(inputURL string, fallbackServerName string) (string, error) {
 	// Parse the URL to extract just the hostname
 	var urlStr string
 	if len(inputURL) >= 7 && inputURL[:7] == "grpc://" {
@@ -2173,7 +2184,11 @@ func extractHostnameFromGravityURL(inputURL string) (string, error) {
 	}
 
 	if net.ParseIP(hostname) != nil {
-		hostname = "gravity.agentuity.com" // in case we provided a hardcoded ip
+		if fallbackServerName != "" {
+			hostname = fallbackServerName
+		} else {
+			hostname = defaultGravityServerName
+		}
 	}
 
 	return hostname, nil

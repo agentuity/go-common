@@ -14,22 +14,44 @@ import (
 	"google.golang.org/grpc/credentials"
 )
 
+// IdentifyConfig contains configuration for the Identify one-shot call.
+type IdentifyConfig struct {
+	GravityURL        string
+	InstanceID        string
+	ECDSAPrivateKey   *ecdsa.PrivateKey
+	CACert            string // Optional: additional CA certificate PEM to trust
+	DefaultServerName string // Optional: fallback TLS ServerName when connecting via IP address
+}
+
 // Identify performs a one-shot authentication to retrieve the org ID.
 // It connects using a self-signed certificate generated from the provided ECDSA private key.
-func Identify(ctx context.Context, gravityURL string, instanceID string, privateKey *ecdsa.PrivateKey, caCert string) (*pb.IdentifyResponse, error) {
-	serverName, err := extractHostnameFromGravityURL(gravityURL)
+func Identify(ctx context.Context, config IdentifyConfig) (*pb.IdentifyResponse, error) {
+	if config.GravityURL == "" {
+		return nil, fmt.Errorf("GravityURL is required")
+	}
+	if config.InstanceID == "" {
+		return nil, fmt.Errorf("InstanceID is required")
+	}
+	if config.ECDSAPrivateKey == nil {
+		return nil, fmt.Errorf("ECDSAPrivateKey is required")
+	}
+
+	serverName, err := extractHostnameFromGravityURL(config.GravityURL, config.DefaultServerName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract serverName from URL: %w", err)
 	}
 
-	selfSignedCert, err := createSelfSignedTLSConfig(privateKey, instanceID)
+	selfSignedCert, err := createSelfSignedTLSConfig(config.ECDSAPrivateKey, config.InstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create self-signed certificate: %w", err)
 	}
 
-	pool := x509.NewCertPool()
-	if ok := pool.AppendCertsFromPEM([]byte(caCert)); !ok {
-		return nil, fmt.Errorf("failed to parse CA certificate")
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		pool = x509.NewCertPool()
+	}
+	if config.CACert != "" {
+		pool.AppendCertsFromPEM([]byte(config.CACert))
 	}
 
 	tlsConfig := &tls.Config{
@@ -43,7 +65,7 @@ func Identify(ctx context.Context, gravityURL string, instanceID string, private
 	}
 	creds := credentials.NewTLS(tlsConfig)
 
-	grpcURL := gravityURL
+	grpcURL := config.GravityURL
 	if strings.HasPrefix(grpcURL, "grpc://") {
 		grpcURL = strings.Replace(grpcURL, "grpc://", "", 1)
 	}
@@ -60,7 +82,7 @@ func Identify(ctx context.Context, gravityURL string, instanceID string, private
 	defer cancel()
 
 	response, err := client.Identify(callCtx, &pb.IdentifyRequest{
-		InstanceId: instanceID,
+		InstanceId: config.InstanceID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to identify: %w", err)

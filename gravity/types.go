@@ -50,4 +50,5 @@ type GravityConfig struct {
 	SkipAutoReconnect    bool
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)
+	DefaultServerName    string   // Fallback TLS ServerName when connecting via IP address (default: "gravity.agentuity.com")
 }

@@ -91,6 +91,18 @@ const (
 	WeightedRoundRobin
 )
 
+// routeSandboxResult wraps a sandbox route response or error
+type routeSandboxResult struct {
+	Response *pb.RouteSandboxResponse
+	Error    string
+}
+
+// routeDeploymentResult wraps a deployment route response or error
+type routeDeploymentResult struct {
+	Response *pb.RouteDeploymentResponse
+	Error    string
+}
+
 // GravityClient implements the provider.Server interface using gRPC transport
 type GravityClient struct {
 	// Configuration
@@ -139,9 +151,10 @@ type GravityClient struct {
 
 	// State management
 	connected        bool
-	reconnecting     bool        // Tracks if reconnection is in progress
-	connectionIDs    []string    // Stores connection IDs from server responses
-	connectionIDChan chan string // Channel to signal when connection ID is received
+	reconnecting     bool          // Tracks if reconnection is in progress
+	connectionIDs    []string      // Stores connection IDs from server responses
+	connectionIDChan chan string   // Channel to signal when connection ID is received
+	sessionReady     chan struct{} // Closed when session is fully authenticated and configured
 	otlpURL          string
 	otlpToken        string
 	apiURL           string
@@ -155,11 +168,11 @@ type GravityClient struct {
 	pendingMu sync.RWMutex
 
 	// Route deployment responses
-	pendingRouteDeployment   map[string]chan *pb.RouteDeploymentResponse
+	pendingRouteDeployment   map[string]chan routeDeploymentResult
 	pendingRouteDeploymentMu sync.RWMutex
 
 	// Route sandbox responses
-	pendingRouteSandbox   map[string]chan *pb.RouteSandboxResponse
+	pendingRouteSandbox   map[string]chan routeSandboxResult
 	pendingRouteSandboxMu sync.RWMutex
 
 	// Packet channels for network device multiplexing
@@ -295,10 +308,11 @@ func New(config GravityConfig) (*GravityClient, error) {
 		defaultServerName:      config.DefaultServerName,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
 		connectionIDChan:       make(chan string, 1),
+		sessionReady:           make(chan struct{}),
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
-		pendingRouteDeployment: make(map[string]chan *pb.RouteDeploymentResponse),
-		pendingRouteSandbox:    make(map[string]chan *pb.RouteSandboxResponse),
+		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
+		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		inboundPackets:         make(chan *PooledBuffer, 1000),
 		outboundPackets:        make(chan []byte, 1000),
 		textMessages:           make(chan *PooledBuffer, 100),
@@ -866,6 +880,15 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 			g.logger.Debug("no existing deployments to synchronize - fresh session established")
 		}
 	}
+
+	g.mu.Lock()
+	select {
+	case <-g.sessionReady:
+		// Already closed
+	default:
+		close(g.sessionReady)
+	}
+	g.mu.Unlock()
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
@@ -892,9 +915,36 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 		case ch <- response:
 		default:
 		}
-	} else {
-		g.logger.Trace("no pending request found for msgID: %s", msgID)
+		return
 	}
+
+	if !response.Success {
+		g.pendingRouteSandboxMu.RLock()
+		rsCh, rsExists := g.pendingRouteSandbox[msgID]
+		g.pendingRouteSandboxMu.RUnlock()
+		if rsExists {
+			g.logger.Warn("received error response for route sandbox request msgID=%s: %s", msgID, response.Error)
+			select {
+			case rsCh <- routeSandboxResult{Error: response.Error}:
+			default:
+			}
+			return
+		}
+
+		g.pendingRouteDeploymentMu.RLock()
+		rdCh, rdExists := g.pendingRouteDeployment[msgID]
+		g.pendingRouteDeploymentMu.RUnlock()
+		if rdExists {
+			g.logger.Warn("received error response for route deployment request msgID=%s: %s", msgID, response.Error)
+			select {
+			case rdCh <- routeDeploymentResult{Error: response.Error}:
+			default:
+			}
+			return
+		}
+	}
+
+	g.logger.Trace("no pending request found for msgID: %s", msgID)
 }
 
 func (g *GravityClient) handleRouteDeploymentResponse(msgID string, response *pb.RouteDeploymentResponse) {
@@ -907,7 +957,7 @@ func (g *GravityClient) handleRouteDeploymentResponse(msgID string, response *pb
 
 	if exists {
 		select {
-		case ch <- response:
+		case ch <- routeDeploymentResult{Response: response}:
 		default:
 		}
 	} else {
@@ -925,7 +975,7 @@ func (g *GravityClient) handleRouteSandboxResponse(msgID string, response *pb.Ro
 
 	if exists {
 		select {
-		case ch <- response:
+		case ch <- routeSandboxResult{Response: response}:
 		default:
 		}
 	} else {
@@ -1209,6 +1259,25 @@ func (g *GravityClient) IsConnected() bool {
 	return g.connected
 }
 
+// WaitForSession blocks until the session is fully authenticated and configured,
+// or the timeout/context expires.
+func (g *GravityClient) WaitForSession(timeout time.Duration) error {
+	// Read sessionReady under lock to avoid racing with reconnection
+	// which replaces the channel.
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+		return nil
+	case <-time.After(timeout):
+		return fmt.Errorf("timeout waiting for session to be ready")
+	case <-g.ctx.Done():
+		return fmt.Errorf("context cancelled while waiting for session ready")
+	}
+}
+
 func (g *GravityClient) stop() error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -1273,6 +1342,7 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 
 	// Mark as disconnected but don't close completely
 	g.connected = false
+	g.sessionReady = make(chan struct{})
 
 	if g.networkInterface != nil {
 		if err := g.networkInterface.UnrouteTraffic(); err != nil {
@@ -1364,6 +1434,7 @@ func (g *GravityClient) reconnect() error {
 	g.mu.Lock()
 	g.connected = false
 	g.closing = false // Reset closing flag to allow reconnection
+	g.sessionReady = make(chan struct{})
 
 	// Clear connection IDs from previous connection
 	g.connectionIDs = make([]string, 0, g.poolConfig.PoolSize)
@@ -1600,10 +1671,25 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 
 // SendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
 func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
+	// Read sessionReady under lock to avoid racing with reconnection
+	// which replaces the channel.
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+		// Session is ready
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for session ready before route deployment request")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for session ready")
+	}
+
 	msgID := generateMessageID()
 
 	// Create response channel
-	responseChan := make(chan *pb.RouteDeploymentResponse, 1)
+	responseChan := make(chan routeDeploymentResult, 1)
 
 	// Register pending request
 	g.pendingRouteDeploymentMu.Lock()
@@ -1635,8 +1721,11 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 
 	// Wait for response with timeout
 	select {
-	case response := <-responseChan:
-		return response, nil
+	case result := <-responseChan:
+		if result.Error != "" {
+			return nil, fmt.Errorf("route deployment request failed: %s", result.Error)
+		}
+		return result.Response, nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("timeout waiting for route deployment response")
 	case <-g.ctx.Done():
@@ -1646,10 +1735,25 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 
 // SendRouteSandboxRequest sends a route sandbox request and waits for response (sync)
 func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
+	// Read sessionReady under lock to avoid racing with reconnection
+	// which replaces the channel.
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+		// Session is ready
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for session ready before route sandbox request")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for session ready")
+	}
+
 	msgID := generateMessageID()
 
 	// Create response channel
-	responseChan := make(chan *pb.RouteSandboxResponse, 1)
+	responseChan := make(chan routeSandboxResult, 1)
 
 	// Register pending request
 	g.pendingRouteSandboxMu.Lock()
@@ -1680,8 +1784,11 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 
 	// Wait for response with timeout
 	select {
-	case response := <-responseChan:
-		return response, nil
+	case result := <-responseChan:
+		if result.Error != "" {
+			return nil, fmt.Errorf("route sandbox request failed: %s", result.Error)
+		}
+		return result.Response, nil
 	case <-time.After(timeout):
 		return nil, fmt.Errorf("timeout waiting for route sandbox response")
 	case <-g.ctx.Done():

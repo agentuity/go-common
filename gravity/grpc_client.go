@@ -163,9 +163,11 @@ type GravityClient struct {
 	once             sync.Once
 
 	// Messaging
-	response  chan *pb.ProtocolResponse
-	pending   map[string]chan *pb.ProtocolResponse
-	pendingMu sync.RWMutex
+	evacuationCallback func()
+	handlerWg          sync.WaitGroup // tracks in-flight checkpoint/restore goroutines
+	response           chan *pb.ProtocolResponse
+	pending            map[string]chan *pb.ProtocolResponse
+	pendingMu          sync.RWMutex
 
 	// Route deployment responses
 	pendingRouteDeployment   map[string]chan routeDeploymentResult
@@ -803,9 +805,20 @@ func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 		g.handleEvent(msg.Id, m.Event)
 	case *pb.SessionMessage_Pong:
 		g.handlePong(msg.Id, m.Pong)
+	case *pb.SessionMessage_EvacuationPlan:
+		g.handleEvacuationPlan(msg.Id, m.EvacuationPlan)
+	case *pb.SessionMessage_RestoreSandboxTask:
+		g.handleRestoreSandboxTask(msg.Id, m.RestoreSandboxTask)
 	default:
 		g.logger.Debug("unhandled session message type: %T", m)
 	}
+}
+
+// SetEvacuationCallback sets the callback called when evacuation plan processing completes.
+func (g *GravityClient) SetEvacuationCallback(cb func()) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.evacuationCallback = cb
 }
 
 // Helper functions
@@ -1132,6 +1145,152 @@ func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.Unpro
 	}
 }
 
+func (g *GravityClient) handleEvacuationPlan(msgID string, plan *pb.EvacuationPlan) {
+	checkpointProvider, ok := g.provider.(provider.CheckpointProvider)
+	supportsCheckpoint := ok && checkpointProvider.SupportsCheckpointRestore()
+
+	if !ok {
+		g.logger.Warn("received evacuation plan but provider does not support checkpoint/restore")
+	} else if !supportsCheckpoint {
+		g.logger.Warn("received evacuation plan but runtime does not support checkpoint/restore")
+	} else {
+		g.logger.Info("received evacuation plan: %d sandboxes to evacuate", len(plan.Sandboxes))
+	}
+	_ = msgID
+
+	g.handlerWg.Add(1)
+	go func() {
+		defer g.handlerWg.Done()
+
+		var results []*pb.SandboxCheckpointed
+
+		if supportsCheckpoint {
+			ctx := context.WithoutCancel(g.context)
+			results = checkpointProvider.HandleEvacuationPlan(ctx, plan.Sandboxes)
+		} else {
+			// Build failure results for every sandbox so Gravity knows none were checkpointed
+			reason := "provider does not support checkpoint/restore"
+			if ok {
+				reason = "runtime does not support checkpoint/restore"
+			}
+			results = make([]*pb.SandboxCheckpointed, len(plan.Sandboxes))
+			for i, s := range plan.Sandboxes {
+				results[i] = &pb.SandboxCheckpointed{
+					SandboxId: s.SandboxId,
+					Success:   false,
+					Error:     reason,
+				}
+			}
+		}
+
+		// Ensure results covers every sandbox in the plan. The provider may
+		// return a shorter slice or leave nil entries; fill gaps with failures.
+		if len(results) < len(plan.Sandboxes) {
+			padded := make([]*pb.SandboxCheckpointed, len(plan.Sandboxes))
+			copy(padded, results)
+			results = padded
+		}
+		for i, result := range results {
+			if result == nil {
+				sandboxID := ""
+				if i < len(plan.Sandboxes) {
+					sandboxID = plan.Sandboxes[i].SandboxId
+				}
+				results[i] = &pb.SandboxCheckpointed{
+					SandboxId: sandboxID,
+					Success:   false,
+					Error:     "checkpoint result missing",
+				}
+			}
+		}
+
+		for _, result := range results {
+			msg := &pb.SessionMessage{
+				Id: generateMessageID(),
+				MessageType: &pb.SessionMessage_SandboxCheckpointed{
+					SandboxCheckpointed: result,
+				},
+			}
+			if err := g.sendSessionMessageAsync(msg); err != nil {
+				g.logger.Error("failed to send SandboxCheckpointed for %s: %v", result.SandboxId, err)
+			}
+		}
+
+		g.mu.RLock()
+		cb := g.evacuationCallback
+		g.mu.RUnlock()
+		if cb != nil {
+			cb()
+		}
+	}()
+}
+
+func (g *GravityClient) handleRestoreSandboxTask(msgID string, task *pb.RestoreSandboxTask) {
+	checkpointProvider, ok := g.provider.(provider.CheckpointProvider)
+	if !ok {
+		result := &pb.SandboxRestored{
+			SandboxId: task.SandboxId,
+			Success:   false,
+			Error:     "provider does not support checkpoint/restore",
+		}
+		msg := &pb.SessionMessage{
+			Id: generateMessageID(),
+			MessageType: &pb.SessionMessage_SandboxRestored{
+				SandboxRestored: result,
+			},
+		}
+		if err := g.sendSessionMessageAsync(msg); err != nil {
+			g.logger.Error("failed to send SandboxRestored for %s: %v", task.SandboxId, err)
+		}
+		return
+	}
+
+	if !checkpointProvider.SupportsCheckpointRestore() {
+		result := &pb.SandboxRestored{
+			SandboxId: task.SandboxId,
+			Success:   false,
+			Error:     "runtime does not support checkpoint/restore",
+		}
+		msg := &pb.SessionMessage{
+			Id: generateMessageID(),
+			MessageType: &pb.SessionMessage_SandboxRestored{
+				SandboxRestored: result,
+			},
+		}
+		if err := g.sendSessionMessageAsync(msg); err != nil {
+			g.logger.Error("failed to send SandboxRestored for %s: %v", task.SandboxId, err)
+		}
+		return
+	}
+
+	g.logger.Info("received restore sandbox task: sandbox=%s checkpoint=%s", task.SandboxId, task.CheckpointId)
+	_ = msgID
+
+	g.handlerWg.Add(1)
+	go func() {
+		defer g.handlerWg.Done()
+
+		ctx := context.WithoutCancel(g.context)
+		result := checkpointProvider.HandleRestoreSandboxTask(ctx, task)
+		if result == nil {
+			result = &pb.SandboxRestored{
+				SandboxId: task.SandboxId,
+				Success:   false,
+				Error:     "restore returned nil result",
+			}
+		}
+		msg := &pb.SessionMessage{
+			Id: generateMessageID(),
+			MessageType: &pb.SessionMessage_SandboxRestored{
+				SandboxRestored: result,
+			},
+		}
+		if err := g.sendSessionMessageAsync(msg); err != nil {
+			g.logger.Error("failed to send SandboxRestored for %s: %v", result.SandboxId, err)
+		}
+	}()
+}
+
 func (g *GravityClient) handlePingRequest(msgID string, request *pb.PingRequest) {
 	g.logger.Debug("received ping request: id=%s", msgID)
 
@@ -1280,13 +1439,18 @@ func (g *GravityClient) WaitForSession(timeout time.Duration) error {
 
 func (g *GravityClient) stop() error {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	if g.closing {
+		g.mu.Unlock()
 		return nil
 	}
-
 	g.closing = true
+	g.mu.Unlock()
+
+	// Wait for in-flight checkpoint/restore handlers to finish so their
+	// response messages reach the server before we tear down streams.
+	g.handlerWg.Wait()
+
+	g.mu.Lock()
 	g.cancel()
 
 	// Update connection status
@@ -1294,6 +1458,7 @@ func (g *GravityClient) stop() error {
 
 	g.cleanup()
 	g.connected = false
+	g.mu.Unlock()
 
 	return nil
 }
@@ -1851,6 +2016,22 @@ func (g *GravityClient) Unprovision(deploymentID string) error {
 		Id: msgID,
 		MessageType: &pb.SessionMessage_Unprovision{
 			Unprovision: req,
+		},
+	}
+
+	return g.sendSessionMessageAsync(msg)
+}
+
+// SendEvacuateRequest sends a request to evacuate sandboxes on this machine.
+func (g *GravityClient) SendEvacuateRequest(machineID, reason string, sandboxes []*pb.SandboxEvacInfo) error {
+	msg := &pb.SessionMessage{
+		Id: generateMessageID(),
+		MessageType: &pb.SessionMessage_EvacuateRequest{
+			EvacuateRequest: &pb.EvacuateRequest{
+				MachineId: machineID,
+				Reason:    reason,
+				Sandboxes: sandboxes,
+			},
 		},
 	}
 

@@ -87,6 +87,10 @@ message SessionMessage {
     SandboxCheckpointed sandbox_checkpointed = 62;
     RestoreSandboxTask restore_sandbox_task = 63;
     SandboxRestored sandbox_restored = 64;
+
+    // Checkpoint URL requests (65-66) — presigned URL generation for suspend/resume
+    CheckpointURLRequest checkpoint_url_request = 65;
+    CheckpointURLResponse checkpoint_url_response = 66;
   }
 }
 
@@ -383,4 +387,29 @@ message SandboxRestored {
   string ipv6_address = 2; // New IPv6 address on destination machine
   bool success = 3;
   string error = 4; // Error message if success=false
+}
+
+// Checkpoint URL operation type
+enum CheckpointURLOperation {
+  CHECKPOINT_URL_UPLOAD = 0;
+  CHECKPOINT_URL_DOWNLOAD = 1;
+}
+
+// CheckpointURLRequest is sent by Hadron to Gravity to request a presigned S3 URL
+// for checkpoint upload (suspend) or download (resume) operations.
+// This enables centralized S3 bucket management — Hadron never needs S3 credentials.
+message CheckpointURLRequest {
+  string sandbox_id = 1;
+  CheckpointURLOperation operation = 2;
+  string checkpoint_key = 3; // For downloads: the S3 key to download. Empty for uploads (Gravity generates key).
+}
+
+// CheckpointURLResponse is sent by Gravity to Hadron with the presigned S3 URL.
+message CheckpointURLResponse {
+  string sandbox_id = 1;
+  string presigned_url = 2;
+  string checkpoint_key = 3; // The S3 object key (for uploads: Gravity-generated; for downloads: echoed back)
+  int64 expiry_seconds = 4;  // How long the presigned URL is valid
+  bool success = 5;
+  string error = 6;          // Error message if success=false
 }

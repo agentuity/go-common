@@ -103,6 +103,12 @@ type routeDeploymentResult struct {
 	Error    string
 }
 
+// checkpointURLResult wraps a checkpoint URL response or error
+type checkpointURLResult struct {
+	Response *pb.CheckpointURLResponse
+	Error    string
+}
+
 // GravityClient implements the provider.Server interface using gRPC transport
 type GravityClient struct {
 	// Configuration
@@ -176,6 +182,10 @@ type GravityClient struct {
 	// Route sandbox responses
 	pendingRouteSandbox   map[string]chan routeSandboxResult
 	pendingRouteSandboxMu sync.RWMutex
+
+	// Checkpoint URL responses
+	pendingCheckpointURL   map[string]chan checkpointURLResult
+	pendingCheckpointURLMu sync.RWMutex
 
 	// Packet channels for network device multiplexing
 	inboundPackets  chan *PooledBuffer
@@ -315,6 +325,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
+		pendingCheckpointURL:   make(map[string]chan checkpointURLResult),
 		inboundPackets:         make(chan *PooledBuffer, 1000),
 		outboundPackets:        make(chan []byte, 1000),
 		textMessages:           make(chan *PooledBuffer, 100),
@@ -809,6 +820,8 @@ func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 		g.handleEvacuationPlan(msg.Id, m.EvacuationPlan)
 	case *pb.SessionMessage_RestoreSandboxTask:
 		g.handleRestoreSandboxTask(msg.Id, m.RestoreSandboxTask)
+	case *pb.SessionMessage_CheckpointUrlResponse:
+		g.handleCheckpointURLResponse(msg.Id, m.CheckpointUrlResponse)
 	default:
 		g.logger.Debug("unhandled session message type: %T", m)
 	}
@@ -955,6 +968,18 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 			}
 			return
 		}
+
+		g.pendingCheckpointURLMu.RLock()
+		cuCh, cuExists := g.pendingCheckpointURL[msgID]
+		g.pendingCheckpointURLMu.RUnlock()
+		if cuExists {
+			g.logger.Warn("received error response for checkpoint URL request msgID=%s: %s", msgID, response.Error)
+			select {
+			case cuCh <- checkpointURLResult{Error: response.Error}:
+			default:
+			}
+			return
+		}
 	}
 
 	g.logger.Trace("no pending request found for msgID: %s", msgID)
@@ -993,6 +1018,25 @@ func (g *GravityClient) handleRouteSandboxResponse(msgID string, response *pb.Ro
 		}
 	} else {
 		g.logger.Debug("handleRouteSandboxResponse: No pending route sandbox request found for msgID: %s", msgID)
+	}
+}
+
+func (g *GravityClient) handleCheckpointURLResponse(msgID string, response *pb.CheckpointURLResponse) {
+	g.logger.Debug("handleCheckpointURLResponse: Received checkpoint URL response for msgID=%s, sandbox=%s, success=%v",
+		msgID, response.SandboxId, response.Success)
+
+	// Find pending request and send response
+	g.pendingCheckpointURLMu.RLock()
+	ch, exists := g.pendingCheckpointURL[msgID]
+	g.pendingCheckpointURLMu.RUnlock()
+
+	if exists {
+		select {
+		case ch <- checkpointURLResult{Response: response}:
+		default:
+		}
+	} else {
+		g.logger.Debug("handleCheckpointURLResponse: No pending checkpoint URL request found for msgID: %s", msgID)
 	}
 }
 
@@ -2036,6 +2080,73 @@ func (g *GravityClient) SendEvacuateRequest(machineID, reason string, sandboxes 
 	}
 
 	return g.sendSessionMessageAsync(msg)
+}
+
+// SendCheckpointURLRequest sends a checkpoint URL request and waits for response (sync).
+// Used by suspend/resume operations to get presigned S3 URLs from Gravity.
+func (g *GravityClient) SendCheckpointURLRequest(sandboxID string, operation pb.CheckpointURLOperation, checkpointKey string, timeout time.Duration) (*pb.CheckpointURLResponse, error) {
+	// Read sessionReady under lock to avoid racing with reconnection
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+		// Session is ready
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for session ready before checkpoint URL request")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for session ready")
+	}
+
+	msgID := generateMessageID()
+
+	// Create response channel
+	responseChan := make(chan checkpointURLResult, 1)
+
+	// Register pending request
+	g.pendingCheckpointURLMu.Lock()
+	g.pendingCheckpointURL[msgID] = responseChan
+	g.pendingCheckpointURLMu.Unlock()
+
+	// Cleanup pending request on exit
+	defer func() {
+		g.pendingCheckpointURLMu.Lock()
+		delete(g.pendingCheckpointURL, msgID)
+		g.pendingCheckpointURLMu.Unlock()
+	}()
+
+	// Create and send the request
+	msg := &pb.SessionMessage{
+		Id: msgID,
+		MessageType: &pb.SessionMessage_CheckpointUrlRequest{
+			CheckpointUrlRequest: &pb.CheckpointURLRequest{
+				SandboxId:     sandboxID,
+				Operation:     operation,
+				CheckpointKey: checkpointKey,
+			},
+		},
+	}
+
+	if err := g.sendSessionMessageAsync(msg); err != nil {
+		return nil, fmt.Errorf("failed to send checkpoint URL request: %w", err)
+	}
+
+	// Wait for response with timeout
+	select {
+	case result := <-responseChan:
+		if result.Error != "" {
+			return nil, fmt.Errorf("checkpoint URL request failed: %s", result.Error)
+		}
+		if !result.Response.Success {
+			return nil, fmt.Errorf("checkpoint URL request failed: %s", result.Response.Error)
+		}
+		return result.Response, nil
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for checkpoint URL response")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for checkpoint URL response")
+	}
 }
 
 // Pause sends a pause event to the gravity server

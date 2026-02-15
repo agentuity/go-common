@@ -80,6 +80,13 @@ message SessionMessage {
     // Generic protocol messages (50-59)
     ProtocolResponse response = 50;
     ProtocolEvent event = 51;
+
+    // Evacuation / live migration (60-69)
+    EvacuateRequest evacuate_request = 60;
+    EvacuationPlan evacuation_plan = 61;
+    SandboxCheckpointed sandbox_checkpointed = 62;
+    RestoreSandboxTask restore_sandbox_task = 63;
+    SandboxRestored sandbox_restored = 64;
   }
 }
 
@@ -314,4 +321,66 @@ message SandboxMetadataResponse {
   string error = 2; // Error message if request failed
   repeated string extra_hosts = 3; // Extra /etc/hosts entries for the sandbox
   string cert_bundle = 4; // PEM certificate bundle (cert, ca, key)
+}
+
+// ================================
+// Evacuation messages (60-69)
+// Used for live migration of sandboxes between machines.
+// ================================
+
+// SandboxEvacInfo describes a sandbox that needs to be evacuated.
+message SandboxEvacInfo {
+  string sandbox_id = 1;
+  string org_id = 2;
+  string project_id = 3;
+  int64 estimated_size = 4; // Estimated checkpoint bundle size in bytes
+}
+
+// EvacuateRequest is sent by Hadron to Gravity when it needs to evacuate sandboxes.
+// Reasons include: machine shutdown, maintenance, or resource pressure.
+message EvacuateRequest {
+  string machine_id = 1;
+  string reason = 2; // "shutdown", "maintenance", "resource_pressure"
+  repeated SandboxEvacInfo sandboxes = 3;
+}
+
+// EvacuateSandboxPlan describes the plan for evacuating a single sandbox.
+message EvacuateSandboxPlan {
+  string sandbox_id = 1;
+  string upload_url = 2; // Presigned S3 URL for uploading checkpoint bundle
+  string destination_machine = 3; // May be empty (Gravity decides after upload)
+}
+
+// EvacuationPlan is sent by Gravity to the source Hadron with upload URLs and destination info.
+message EvacuationPlan {
+  repeated EvacuateSandboxPlan sandboxes = 1;
+}
+
+// SandboxCheckpointed is sent by source Hadron to Gravity after a sandbox has been checkpointed.
+message SandboxCheckpointed {
+  string sandbox_id = 1;
+  string checkpoint_id = 2;
+  string s3_key = 3;
+  int64 bundle_size = 4;
+  bool success = 5;
+  string error = 6; // Error message if success=false
+}
+
+// RestoreSandboxTask is sent by Gravity to the destination Hadron to restore a sandbox.
+message RestoreSandboxTask {
+  string sandbox_id = 1;
+  string checkpoint_id = 2;
+  string download_url = 3; // Presigned S3 URL for downloading checkpoint bundle
+  string network_name = 4;
+  bytes sandbox_spec = 5; // JSON-encoded SandboxSpec
+  string org_id = 6;
+  string project_id = 7;
+}
+
+// SandboxRestored is sent by destination Hadron to Gravity after a sandbox has been restored.
+message SandboxRestored {
+  string sandbox_id = 1;
+  string ipv6_address = 2; // New IPv6 address on destination machine
+  bool success = 3;
+  string error = 4; // Error message if success=false
 }

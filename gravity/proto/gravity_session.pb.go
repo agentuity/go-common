@@ -138,6 +138,11 @@ type SessionMessage struct {
 	//	*SessionMessage_ConfigUpdateResponse
 	//	*SessionMessage_Response
 	//	*SessionMessage_Event
+	//	*SessionMessage_EvacuateRequest
+	//	*SessionMessage_EvacuationPlan
+	//	*SessionMessage_SandboxCheckpointed
+	//	*SessionMessage_RestoreSandboxTask
+	//	*SessionMessage_SandboxRestored
 	MessageType   isSessionMessage_MessageType `protobuf_oneof:"message_type"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -347,6 +352,51 @@ func (x *SessionMessage) GetEvent() *ProtocolEvent {
 	return nil
 }
 
+func (x *SessionMessage) GetEvacuateRequest() *EvacuateRequest {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_EvacuateRequest); ok {
+			return x.EvacuateRequest
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetEvacuationPlan() *EvacuationPlan {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_EvacuationPlan); ok {
+			return x.EvacuationPlan
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetSandboxCheckpointed() *SandboxCheckpointed {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_SandboxCheckpointed); ok {
+			return x.SandboxCheckpointed
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetRestoreSandboxTask() *RestoreSandboxTask {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_RestoreSandboxTask); ok {
+			return x.RestoreSandboxTask
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetSandboxRestored() *SandboxRestored {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_SandboxRestored); ok {
+			return x.SandboxRestored
+		}
+	}
+	return nil
+}
+
 type isSessionMessage_MessageType interface {
 	isSessionMessage_MessageType()
 }
@@ -425,6 +475,27 @@ type SessionMessage_Event struct {
 	Event *ProtocolEvent `protobuf:"bytes,51,opt,name=event,proto3,oneof"`
 }
 
+type SessionMessage_EvacuateRequest struct {
+	// Evacuation / live migration (60-69)
+	EvacuateRequest *EvacuateRequest `protobuf:"bytes,60,opt,name=evacuate_request,json=evacuateRequest,proto3,oneof"`
+}
+
+type SessionMessage_EvacuationPlan struct {
+	EvacuationPlan *EvacuationPlan `protobuf:"bytes,61,opt,name=evacuation_plan,json=evacuationPlan,proto3,oneof"`
+}
+
+type SessionMessage_SandboxCheckpointed struct {
+	SandboxCheckpointed *SandboxCheckpointed `protobuf:"bytes,62,opt,name=sandbox_checkpointed,json=sandboxCheckpointed,proto3,oneof"`
+}
+
+type SessionMessage_RestoreSandboxTask struct {
+	RestoreSandboxTask *RestoreSandboxTask `protobuf:"bytes,63,opt,name=restore_sandbox_task,json=restoreSandboxTask,proto3,oneof"`
+}
+
+type SessionMessage_SandboxRestored struct {
+	SandboxRestored *SandboxRestored `protobuf:"bytes,64,opt,name=sandbox_restored,json=sandboxRestored,proto3,oneof"`
+}
+
 func (*SessionMessage_SessionHello) isSessionMessage_MessageType() {}
 
 func (*SessionMessage_SessionHelloResponse) isSessionMessage_MessageType() {}
@@ -458,6 +529,16 @@ func (*SessionMessage_ConfigUpdateResponse) isSessionMessage_MessageType() {}
 func (*SessionMessage_Response) isSessionMessage_MessageType() {}
 
 func (*SessionMessage_Event) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_EvacuateRequest) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_EvacuationPlan) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_SandboxCheckpointed) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_RestoreSandboxTask) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_SandboxRestored) isSessionMessage_MessageType() {}
 
 // SessionHello is sent by the client as the first message after TLS handshake.
 // The org_id and instance_id are extracted from the client certificate.
@@ -2523,6 +2604,490 @@ func (x *SandboxMetadataResponse) GetCertBundle() string {
 	return ""
 }
 
+// SandboxEvacInfo describes a sandbox that needs to be evacuated.
+type SandboxEvacInfo struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	OrgId         string                 `protobuf:"bytes,2,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,3,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	EstimatedSize int64                  `protobuf:"varint,4,opt,name=estimated_size,json=estimatedSize,proto3" json:"estimated_size,omitempty"` // Estimated checkpoint bundle size in bytes
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxEvacInfo) Reset() {
+	*x = SandboxEvacInfo{}
+	mi := &file_gravity_session_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxEvacInfo) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxEvacInfo) ProtoMessage() {}
+
+func (x *SandboxEvacInfo) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxEvacInfo.ProtoReflect.Descriptor instead.
+func (*SandboxEvacInfo) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *SandboxEvacInfo) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *SandboxEvacInfo) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *SandboxEvacInfo) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+func (x *SandboxEvacInfo) GetEstimatedSize() int64 {
+	if x != nil {
+		return x.EstimatedSize
+	}
+	return 0
+}
+
+// EvacuateRequest is sent by Hadron to Gravity when it needs to evacuate sandboxes.
+// Reasons include: machine shutdown, maintenance, or resource pressure.
+type EvacuateRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MachineId     string                 `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	Reason        string                 `protobuf:"bytes,2,opt,name=reason,proto3" json:"reason,omitempty"` // "shutdown", "maintenance", "resource_pressure"
+	Sandboxes     []*SandboxEvacInfo     `protobuf:"bytes,3,rep,name=sandboxes,proto3" json:"sandboxes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EvacuateRequest) Reset() {
+	*x = EvacuateRequest{}
+	mi := &file_gravity_session_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EvacuateRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EvacuateRequest) ProtoMessage() {}
+
+func (x *EvacuateRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EvacuateRequest.ProtoReflect.Descriptor instead.
+func (*EvacuateRequest) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *EvacuateRequest) GetMachineId() string {
+	if x != nil {
+		return x.MachineId
+	}
+	return ""
+}
+
+func (x *EvacuateRequest) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *EvacuateRequest) GetSandboxes() []*SandboxEvacInfo {
+	if x != nil {
+		return x.Sandboxes
+	}
+	return nil
+}
+
+// EvacuateSandboxPlan describes the plan for evacuating a single sandbox.
+type EvacuateSandboxPlan struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId          string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	UploadUrl          string                 `protobuf:"bytes,2,opt,name=upload_url,json=uploadUrl,proto3" json:"upload_url,omitempty"`                            // Presigned S3 URL for uploading checkpoint bundle
+	DestinationMachine string                 `protobuf:"bytes,3,opt,name=destination_machine,json=destinationMachine,proto3" json:"destination_machine,omitempty"` // May be empty (Gravity decides after upload)
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *EvacuateSandboxPlan) Reset() {
+	*x = EvacuateSandboxPlan{}
+	mi := &file_gravity_session_proto_msgTypes[37]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EvacuateSandboxPlan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EvacuateSandboxPlan) ProtoMessage() {}
+
+func (x *EvacuateSandboxPlan) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[37]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EvacuateSandboxPlan.ProtoReflect.Descriptor instead.
+func (*EvacuateSandboxPlan) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *EvacuateSandboxPlan) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *EvacuateSandboxPlan) GetUploadUrl() string {
+	if x != nil {
+		return x.UploadUrl
+	}
+	return ""
+}
+
+func (x *EvacuateSandboxPlan) GetDestinationMachine() string {
+	if x != nil {
+		return x.DestinationMachine
+	}
+	return ""
+}
+
+// EvacuationPlan is sent by Gravity to the source Hadron with upload URLs and destination info.
+type EvacuationPlan struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sandboxes     []*EvacuateSandboxPlan `protobuf:"bytes,1,rep,name=sandboxes,proto3" json:"sandboxes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EvacuationPlan) Reset() {
+	*x = EvacuationPlan{}
+	mi := &file_gravity_session_proto_msgTypes[38]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EvacuationPlan) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EvacuationPlan) ProtoMessage() {}
+
+func (x *EvacuationPlan) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[38]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EvacuationPlan.ProtoReflect.Descriptor instead.
+func (*EvacuationPlan) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{38}
+}
+
+func (x *EvacuationPlan) GetSandboxes() []*EvacuateSandboxPlan {
+	if x != nil {
+		return x.Sandboxes
+	}
+	return nil
+}
+
+// SandboxCheckpointed is sent by source Hadron to Gravity after a sandbox has been checkpointed.
+type SandboxCheckpointed struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	S3Key         string                 `protobuf:"bytes,3,opt,name=s3_key,json=s3Key,proto3" json:"s3_key,omitempty"`
+	BundleSize    int64                  `protobuf:"varint,4,opt,name=bundle_size,json=bundleSize,proto3" json:"bundle_size,omitempty"`
+	Success       bool                   `protobuf:"varint,5,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"` // Error message if success=false
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxCheckpointed) Reset() {
+	*x = SandboxCheckpointed{}
+	mi := &file_gravity_session_proto_msgTypes[39]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxCheckpointed) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxCheckpointed) ProtoMessage() {}
+
+func (x *SandboxCheckpointed) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[39]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxCheckpointed.ProtoReflect.Descriptor instead.
+func (*SandboxCheckpointed) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *SandboxCheckpointed) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *SandboxCheckpointed) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *SandboxCheckpointed) GetS3Key() string {
+	if x != nil {
+		return x.S3Key
+	}
+	return ""
+}
+
+func (x *SandboxCheckpointed) GetBundleSize() int64 {
+	if x != nil {
+		return x.BundleSize
+	}
+	return 0
+}
+
+func (x *SandboxCheckpointed) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *SandboxCheckpointed) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+// RestoreSandboxTask is sent by Gravity to the destination Hadron to restore a sandbox.
+type RestoreSandboxTask struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	DownloadUrl   string                 `protobuf:"bytes,3,opt,name=download_url,json=downloadUrl,proto3" json:"download_url,omitempty"` // Presigned S3 URL for downloading checkpoint bundle
+	NetworkName   string                 `protobuf:"bytes,4,opt,name=network_name,json=networkName,proto3" json:"network_name,omitempty"`
+	SandboxSpec   []byte                 `protobuf:"bytes,5,opt,name=sandbox_spec,json=sandboxSpec,proto3" json:"sandbox_spec,omitempty"` // JSON-encoded SandboxSpec
+	OrgId         string                 `protobuf:"bytes,6,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`
+	ProjectId     string                 `protobuf:"bytes,7,opt,name=project_id,json=projectId,proto3" json:"project_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RestoreSandboxTask) Reset() {
+	*x = RestoreSandboxTask{}
+	mi := &file_gravity_session_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RestoreSandboxTask) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RestoreSandboxTask) ProtoMessage() {}
+
+func (x *RestoreSandboxTask) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RestoreSandboxTask.ProtoReflect.Descriptor instead.
+func (*RestoreSandboxTask) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *RestoreSandboxTask) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *RestoreSandboxTask) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *RestoreSandboxTask) GetDownloadUrl() string {
+	if x != nil {
+		return x.DownloadUrl
+	}
+	return ""
+}
+
+func (x *RestoreSandboxTask) GetNetworkName() string {
+	if x != nil {
+		return x.NetworkName
+	}
+	return ""
+}
+
+func (x *RestoreSandboxTask) GetSandboxSpec() []byte {
+	if x != nil {
+		return x.SandboxSpec
+	}
+	return nil
+}
+
+func (x *RestoreSandboxTask) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
+	}
+	return ""
+}
+
+func (x *RestoreSandboxTask) GetProjectId() string {
+	if x != nil {
+		return x.ProjectId
+	}
+	return ""
+}
+
+// SandboxRestored is sent by destination Hadron to Gravity after a sandbox has been restored.
+type SandboxRestored struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
+	Ipv6Address   string                 `protobuf:"bytes,2,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"` // New IPv6 address on destination machine
+	Success       bool                   `protobuf:"varint,3,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"` // Error message if success=false
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SandboxRestored) Reset() {
+	*x = SandboxRestored{}
+	mi := &file_gravity_session_proto_msgTypes[41]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SandboxRestored) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SandboxRestored) ProtoMessage() {}
+
+func (x *SandboxRestored) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_session_proto_msgTypes[41]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SandboxRestored.ProtoReflect.Descriptor instead.
+func (*SandboxRestored) Descriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{41}
+}
+
+func (x *SandboxRestored) GetSandboxId() string {
+	if x != nil {
+		return x.SandboxId
+	}
+	return ""
+}
+
+func (x *SandboxRestored) GetIpv6Address() string {
+	if x != nil {
+		return x.Ipv6Address
+	}
+	return ""
+}
+
+func (x *SandboxRestored) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *SandboxRestored) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
 var File_gravity_session_proto protoreflect.FileDescriptor
 
 const file_gravity_session_proto_rawDesc = "" +
@@ -2532,7 +3097,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\")\n" +
 	"\x10IdentifyResponse\x12\x15\n" +
-	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xaa\t\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xa0\f\n" +
 	"\x0eSessionMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x12<\n" +
@@ -2553,7 +3118,12 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\rconfig_update\x18- \x01(\v2\x1c.gravity.ConfigurationUpdateH\x00R\fconfigUpdate\x12\\\n" +
 	"\x16config_update_response\x18. \x01(\v2$.gravity.ConfigurationUpdateResponseH\x00R\x14configUpdateResponse\x127\n" +
 	"\bresponse\x182 \x01(\v2\x19.gravity.ProtocolResponseH\x00R\bresponse\x12.\n" +
-	"\x05event\x183 \x01(\v2\x16.gravity.ProtocolEventH\x00R\x05eventB\x0e\n" +
+	"\x05event\x183 \x01(\v2\x16.gravity.ProtocolEventH\x00R\x05event\x12E\n" +
+	"\x10evacuate_request\x18< \x01(\v2\x18.gravity.EvacuateRequestH\x00R\x0fevacuateRequest\x12B\n" +
+	"\x0fevacuation_plan\x18= \x01(\v2\x17.gravity.EvacuationPlanH\x00R\x0eevacuationPlan\x12Q\n" +
+	"\x14sandbox_checkpointed\x18> \x01(\v2\x1c.gravity.SandboxCheckpointedH\x00R\x13sandboxCheckpointed\x12O\n" +
+	"\x14restore_sandbox_task\x18? \x01(\v2\x1b.gravity.RestoreSandboxTaskH\x00R\x12restoreSandboxTask\x12E\n" +
+	"\x10sandbox_restored\x18@ \x01(\v2\x18.gravity.SandboxRestoredH\x00R\x0fsandboxRestoredB\x0e\n" +
 	"\fmessage_type\"\xd2\x02\n" +
 	"\fSessionHello\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\x05R\x0fprotocolVersion\x12%\n" +
@@ -2718,7 +3288,52 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vextra_hosts\x18\x03 \x03(\tR\n" +
 	"extraHosts\x12\x1f\n" +
 	"\vcert_bundle\x18\x04 \x01(\tR\n" +
-	"certBundle2\xa7\x03\n" +
+	"certBundle\"\x8d\x01\n" +
+	"\x0fSandboxEvacInfo\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x15\n" +
+	"\x06org_id\x18\x02 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\x03 \x01(\tR\tprojectId\x12%\n" +
+	"\x0eestimated_size\x18\x04 \x01(\x03R\restimatedSize\"\x80\x01\n" +
+	"\x0fEvacuateRequest\x12\x1d\n" +
+	"\n" +
+	"machine_id\x18\x01 \x01(\tR\tmachineId\x12\x16\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\x126\n" +
+	"\tsandboxes\x18\x03 \x03(\v2\x18.gravity.SandboxEvacInfoR\tsandboxes\"\x84\x01\n" +
+	"\x13EvacuateSandboxPlan\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
+	"\n" +
+	"upload_url\x18\x02 \x01(\tR\tuploadUrl\x12/\n" +
+	"\x13destination_machine\x18\x03 \x01(\tR\x12destinationMachine\"L\n" +
+	"\x0eEvacuationPlan\x12:\n" +
+	"\tsandboxes\x18\x01 \x03(\v2\x1c.gravity.EvacuateSandboxPlanR\tsandboxes\"\xc1\x01\n" +
+	"\x13SandboxCheckpointed\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12\x15\n" +
+	"\x06s3_key\x18\x03 \x01(\tR\x05s3Key\x12\x1f\n" +
+	"\vbundle_size\x18\x04 \x01(\x03R\n" +
+	"bundleSize\x12\x18\n" +
+	"\asuccess\x18\x05 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\"\xf7\x01\n" +
+	"\x12RestoreSandboxTask\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12!\n" +
+	"\fdownload_url\x18\x03 \x01(\tR\vdownloadUrl\x12!\n" +
+	"\fnetwork_name\x18\x04 \x01(\tR\vnetworkName\x12!\n" +
+	"\fsandbox_spec\x18\x05 \x01(\fR\vsandboxSpec\x12\x15\n" +
+	"\x06org_id\x18\x06 \x01(\tR\x05orgId\x12\x1d\n" +
+	"\n" +
+	"project_id\x18\a \x01(\tR\tprojectId\"\x83\x01\n" +
+	"\x0fSandboxRestored\x12\x1d\n" +
+	"\n" +
+	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12!\n" +
+	"\fipv6_address\x18\x02 \x01(\tR\vipv6Address\x12\x18\n" +
+	"\asuccess\x18\x03 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error2\xa7\x03\n" +
 	"\x15GravitySessionService\x12H\n" +
 	"\x10EstablishSession\x12\x17.gravity.SessionMessage\x1a\x17.gravity.SessionMessage(\x010\x01\x12H\n" +
 	"\x14StreamSessionPackets\x12\x15.gravity.TunnelPacket\x1a\x15.gravity.TunnelPacket(\x010\x01\x12`\n" +
@@ -2738,7 +3353,7 @@ func file_gravity_session_proto_rawDescGZIP() []byte {
 	return file_gravity_session_proto_rawDescData
 }
 
-var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 42)
 var file_gravity_session_proto_goTypes = []any{
 	(*IdentifyRequest)(nil),             // 0: gravity.IdentifyRequest
 	(*IdentifyResponse)(nil),            // 1: gravity.IdentifyResponse
@@ -2775,9 +3390,16 @@ var file_gravity_session_proto_goTypes = []any{
 	(*RouteSandboxResponse)(nil),        // 32: gravity.RouteSandboxResponse
 	(*SandboxMetadataRequest)(nil),      // 33: gravity.SandboxMetadataRequest
 	(*SandboxMetadataResponse)(nil),     // 34: gravity.SandboxMetadataResponse
-	(*ServerMetrics)(nil),               // 35: gravity.ServerMetrics
-	(*timestamppb.Timestamp)(nil),       // 36: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),         // 37: google.protobuf.Duration
+	(*SandboxEvacInfo)(nil),             // 35: gravity.SandboxEvacInfo
+	(*EvacuateRequest)(nil),             // 36: gravity.EvacuateRequest
+	(*EvacuateSandboxPlan)(nil),         // 37: gravity.EvacuateSandboxPlan
+	(*EvacuationPlan)(nil),              // 38: gravity.EvacuationPlan
+	(*SandboxCheckpointed)(nil),         // 39: gravity.SandboxCheckpointed
+	(*RestoreSandboxTask)(nil),          // 40: gravity.RestoreSandboxTask
+	(*SandboxRestored)(nil),             // 41: gravity.SandboxRestored
+	(*ServerMetrics)(nil),               // 42: gravity.ServerMetrics
+	(*timestamppb.Timestamp)(nil),       // 43: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 44: google.protobuf.Duration
 }
 var file_gravity_session_proto_depIdxs = []int32{
 	3,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
@@ -2797,35 +3419,42 @@ var file_gravity_session_proto_depIdxs = []int32{
 	21, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
 	17, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
 	18, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
-	23, // 17: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
-	22, // 18: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
-	7,  // 19: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
-	28, // 20: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
-	35, // 21: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
-	36, // 22: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	36, // 23: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	20, // 24: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
-	36, // 25: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	25, // 26: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
-	26, // 27: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
-	37, // 28: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
-	27, // 29: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	26, // 30: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	2,  // 31: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	6,  // 32: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	29, // 33: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	33, // 34: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	0,  // 35: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
-	2,  // 36: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	6,  // 37: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	30, // 38: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	34, // 39: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	1,  // 40: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
-	36, // [36:41] is the sub-list for method output_type
-	31, // [31:36] is the sub-list for method input_type
-	31, // [31:31] is the sub-list for extension type_name
-	31, // [31:31] is the sub-list for extension extendee
-	0,  // [0:31] is the sub-list for field type_name
+	36, // 17: gravity.SessionMessage.evacuate_request:type_name -> gravity.EvacuateRequest
+	38, // 18: gravity.SessionMessage.evacuation_plan:type_name -> gravity.EvacuationPlan
+	39, // 19: gravity.SessionMessage.sandbox_checkpointed:type_name -> gravity.SandboxCheckpointed
+	40, // 20: gravity.SessionMessage.restore_sandbox_task:type_name -> gravity.RestoreSandboxTask
+	41, // 21: gravity.SessionMessage.sandbox_restored:type_name -> gravity.SandboxRestored
+	23, // 22: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
+	22, // 23: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
+	7,  // 24: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
+	28, // 25: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
+	42, // 26: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	43, // 27: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	43, // 28: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	20, // 29: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	43, // 30: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	25, // 31: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	26, // 32: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
+	44, // 33: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	27, // 34: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	26, // 35: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	35, // 36: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
+	37, // 37: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
+	2,  // 38: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	6,  // 39: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	29, // 40: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	33, // 41: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	0,  // 42: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	2,  // 43: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	6,  // 44: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	30, // 45: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	34, // 46: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	1,  // 47: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	43, // [43:48] is the sub-list for method output_type
+	38, // [38:43] is the sub-list for method input_type
+	38, // [38:38] is the sub-list for extension type_name
+	38, // [38:38] is the sub-list for extension extendee
+	0,  // [0:38] is the sub-list for field type_name
 }
 
 func init() { file_gravity_session_proto_init() }
@@ -2852,6 +3481,11 @@ func file_gravity_session_proto_init() {
 		(*SessionMessage_ConfigUpdateResponse)(nil),
 		(*SessionMessage_Response)(nil),
 		(*SessionMessage_Event)(nil),
+		(*SessionMessage_EvacuateRequest)(nil),
+		(*SessionMessage_EvacuationPlan)(nil),
+		(*SessionMessage_SandboxCheckpointed)(nil),
+		(*SessionMessage_RestoreSandboxTask)(nil),
+		(*SessionMessage_SandboxRestored)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -2859,7 +3493,7 @@ func file_gravity_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_session_proto_rawDesc), len(file_gravity_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   42,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

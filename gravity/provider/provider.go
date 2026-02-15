@@ -95,3 +95,18 @@ type ProvisioningProvider interface {
 	// SetMetricsCollector sets the metrics collector for runtime stats collection
 	SetMetricsCollector(collector ProjectRuntimeStatsCollector)
 }
+
+// CheckpointProvider extends ProvisioningProvider with checkpoint/restore capabilities.
+type CheckpointProvider interface {
+	// HandleEvacuationPlan processes an evacuation plan from Gravity.
+	// For each sandbox, checkpoints and uploads to the presigned URL.
+	// Returns a result for each sandbox (success or failure).
+	HandleEvacuationPlan(ctx context.Context, sandboxes []*pb.EvacuateSandboxPlan) []*pb.SandboxCheckpointed
+
+	// HandleRestoreSandboxTask restores a sandbox from a checkpoint.
+	// Downloads from the presigned URL and restores the sandbox.
+	HandleRestoreSandboxTask(ctx context.Context, task *pb.RestoreSandboxTask) *pb.SandboxRestored
+
+	// SupportsCheckpointRestore reports whether the runtime supports CRIU checkpoint/restore.
+	SupportsCheckpointRestore() bool
+}

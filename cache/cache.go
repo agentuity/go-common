@@ -60,6 +60,11 @@ func Get[T any](c Cache, key string) (bool, T, error) {
 // DefaultExpires is the default TTL used by Exec when CacheConfig.Expires is zero.
 const DefaultExpires = 5 * time.Minute
 
+// DefaultQueryTimeout is the per-operation timeout for cache backends that
+// perform I/O (SQLite, Redis). Prevents indefinite hangs on slow or
+// unresponsive storage.
+const DefaultQueryTimeout = 5 * time.Second
+
 // CacheConfig configures the Exec helper.
 type CacheConfig struct {
 	// Expires is the TTL for cached values. Defaults to DefaultExpires if zero.
@@ -78,17 +83,21 @@ type Invoker[T any] func(ctx context.Context) (T, bool, error)
 // On a cache miss, it calls invoke to produce the value. If invoke returns
 // found=true, the value is stored in the cache and returned with found=true.
 // If invoke returns found=false, nothing is cached and found=false is returned.
-// If invoke returns an error, nothing is cached and the error is propagated.
+// If invoke or the cache returns an error, the error is propagated.
 // If the cache Set fails after a successful invoke, the value is still
 // returned (the Set error is swallowed since the primary operation succeeded).
 func Exec[T any](ctx context.Context, config CacheConfig, c Cache, invoke Invoker[T]) (bool, T, error) {
 	// Try cache first.
 	found, val, err := Get[T](c, config.Key)
-	if err == nil && found {
+	if err != nil {
+		var zero T
+		return false, zero, err
+	}
+	if found {
 		return true, val, nil
 	}
 
-	// Cache miss (or cache read error) — invoke the function.
+	// Cache miss — invoke the function.
 	result, ok, err := invoke(ctx)
 	if err != nil {
 		var zero T

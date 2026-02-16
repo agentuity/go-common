@@ -11,15 +11,22 @@ import (
 )
 
 type sqliteCache struct {
-	db          *sql.DB
-	ctx         context.Context
-	cancel      context.CancelFunc
-	waitGroup   sync.WaitGroup
-	once        sync.Once
-	expiryCheck time.Duration
+	db           *sql.DB
+	ctx          context.Context
+	cancel       context.CancelFunc
+	waitGroup    sync.WaitGroup
+	once         sync.Once
+	expiryCheck  time.Duration
+	queryTimeout time.Duration
 }
 
 var _ Cache = (*sqliteCache)(nil)
+
+// queryCtx returns a context with the per-operation timeout derived from the
+// cache's parent context.
+func (c *sqliteCache) queryCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.ctx, c.queryTimeout)
+}
 
 // NewSQLite returns a new Cache backed by SQLite.
 // If dbPath is empty or ":memory:", an in-memory database is used.
@@ -35,13 +42,13 @@ func NewSQLite(ctx context.Context, dbPath string, expiryCheck time.Duration) (C
 	}
 
 	// Enable WAL mode for better concurrent performance.
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
+	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {
 		db.Close()
 		return nil, err
 	}
 
 	// Create the cache table.
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS cache (
+	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS cache (
 		key TEXT PRIMARY KEY,
 		value BLOB NOT NULL,
 		expires_at INTEGER NOT NULL,
@@ -52,7 +59,7 @@ func NewSQLite(ctx context.Context, dbPath string, expiryCheck time.Duration) (C
 	}
 
 	// Create index on expires_at for efficient cleanup.
-	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_cache_expires_at ON cache(expires_at)`); err != nil {
+	if _, err := db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS idx_cache_expires_at ON cache(expires_at)`); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -60,10 +67,11 @@ func NewSQLite(ctx context.Context, dbPath string, expiryCheck time.Duration) (C
 	childCtx, cancel := context.WithCancel(ctx)
 
 	c := &sqliteCache{
-		db:          db,
-		ctx:         childCtx,
-		cancel:      cancel,
-		expiryCheck: expiryCheck,
+		db:           db,
+		ctx:          childCtx,
+		cancel:       cancel,
+		expiryCheck:  expiryCheck,
+		queryTimeout: DefaultQueryTimeout,
 	}
 	if c.expiryCheck <= 0 {
 		c.expiryCheck = time.Minute
@@ -76,10 +84,12 @@ func NewSQLite(ctx context.Context, dbPath string, expiryCheck time.Duration) (C
 }
 
 func (c *sqliteCache) Get(key string) (bool, any, error) {
+	ctx, cancel := c.queryCtx()
+	defer cancel()
 	now := time.Now().UnixNano()
 	var data []byte
 	var expiresAt int64
-	err := c.db.QueryRow(
+	err := c.db.QueryRowContext(ctx,
 		`SELECT value, expires_at FROM cache WHERE key = ?`, key,
 	).Scan(&data, &expiresAt)
 	if err == sql.ErrNoRows {
@@ -92,12 +102,12 @@ func (c *sqliteCache) Get(key string) (bool, any, error) {
 	// Check if expired.
 	if expiresAt < now {
 		// Lazily delete expired entry.
-		_, _ = c.db.Exec(`DELETE FROM cache WHERE key = ?`, key)
+		_, _ = c.db.ExecContext(ctx, `DELETE FROM cache WHERE key = ?`, key)
 		return false, nil, nil
 	}
 
 	// Increment hits.
-	_, _ = c.db.Exec(`UPDATE cache SET hits = hits + 1 WHERE key = ?`, key)
+	_, _ = c.db.ExecContext(ctx, `UPDATE cache SET hits = hits + 1 WHERE key = ?`, key)
 
 	return true, data, nil
 }
@@ -107,8 +117,10 @@ func (c *sqliteCache) Set(key string, val any, expires time.Duration) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := c.queryCtx()
+	defer cancel()
 	expiresAt := time.Now().Add(expires).UnixNano()
-	_, err = c.db.Exec(
+	_, err = c.db.ExecContext(ctx,
 		`INSERT INTO cache (key, value, expires_at, hits) VALUES (?, ?, ?, 0)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at, hits = 0`,
 		key, data, expiresAt,
@@ -117,8 +129,10 @@ func (c *sqliteCache) Set(key string, val any, expires time.Duration) error {
 }
 
 func (c *sqliteCache) Hits(key string) (bool, int) {
+	ctx, cancel := c.queryCtx()
+	defer cancel()
 	var hits int
-	err := c.db.QueryRow(`SELECT hits FROM cache WHERE key = ?`, key).Scan(&hits)
+	err := c.db.QueryRowContext(ctx, `SELECT hits FROM cache WHERE key = ?`, key).Scan(&hits)
 	if err != nil {
 		return false, 0
 	}
@@ -126,7 +140,9 @@ func (c *sqliteCache) Hits(key string) (bool, int) {
 }
 
 func (c *sqliteCache) Expire(key string) (bool, error) {
-	result, err := c.db.Exec(`DELETE FROM cache WHERE key = ?`, key)
+	ctx, cancel := c.queryCtx()
+	defer cancel()
+	result, err := c.db.ExecContext(ctx, `DELETE FROM cache WHERE key = ?`, key)
 	if err != nil {
 		return false, err
 	}
@@ -156,8 +172,10 @@ func (c *sqliteCache) run() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
+			ctx, cancel := c.queryCtx()
 			now := time.Now().UnixNano()
-			_, _ = c.db.Exec(`DELETE FROM cache WHERE expires_at < ?`, now)
+			_, _ = c.db.ExecContext(ctx, `DELETE FROM cache WHERE expires_at < ?`, now)
+			cancel()
 		}
 	}
 }

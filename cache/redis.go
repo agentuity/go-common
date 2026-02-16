@@ -9,9 +9,10 @@ import (
 )
 
 type redisCache struct {
-	client *redis.Client
-	ctx    context.Context
-	prefix string
+	client       *redis.Client
+	ctx          context.Context
+	prefix       string
+	queryTimeout time.Duration
 }
 
 var _ Cache = (*redisCache)(nil)
@@ -21,10 +22,15 @@ var _ Cache = (*redisCache)(nil)
 // prefix is prepended to all keys for namespacing (can be empty).
 func NewRedis(ctx context.Context, client *redis.Client, prefix string) Cache {
 	return &redisCache{
-		client: client,
-		ctx:    ctx,
-		prefix: prefix,
+		client:       client,
+		ctx:          ctx,
+		prefix:       prefix,
+		queryTimeout: DefaultQueryTimeout,
 	}
+}
+
+func (c *redisCache) queryCtx() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(c.ctx, c.queryTimeout)
 }
 
 func (c *redisCache) prefixKey(key string) string {
@@ -35,8 +41,10 @@ func (c *redisCache) prefixKey(key string) string {
 }
 
 func (c *redisCache) Get(key string) (bool, any, error) {
+	ctx, cancel := c.queryCtx()
+	defer cancel()
 	k := c.prefixKey(key)
-	data, err := c.client.HGet(c.ctx, k, "v").Bytes()
+	data, err := c.client.HGet(ctx, k, "v").Bytes()
 	if err == redis.Nil {
 		return false, nil, nil
 	}
@@ -44,7 +52,7 @@ func (c *redisCache) Get(key string) (bool, any, error) {
 		return false, nil, err
 	}
 	// Increment hits (fire-and-forget, don't fail the Get).
-	c.client.HIncrBy(c.ctx, k, "h", 1)
+	c.client.HIncrBy(ctx, k, "h", 1)
 	return true, data, nil
 }
 
@@ -53,16 +61,20 @@ func (c *redisCache) Set(key string, val any, expires time.Duration) error {
 	if err != nil {
 		return err
 	}
+	ctx, cancel := c.queryCtx()
+	defer cancel()
 	k := c.prefixKey(key)
 	pipe := c.client.Pipeline()
-	pipe.HSet(c.ctx, k, "v", data, "h", 0)
-	pipe.Expire(c.ctx, k, expires)
-	_, err = pipe.Exec(c.ctx)
+	pipe.HSet(ctx, k, "v", data, "h", 0)
+	pipe.Expire(ctx, k, expires)
+	_, err = pipe.Exec(ctx)
 	return err
 }
 
 func (c *redisCache) Hits(key string) (bool, int) {
-	hits, err := c.client.HGet(c.ctx, c.prefixKey(key), "h").Int()
+	ctx, cancel := c.queryCtx()
+	defer cancel()
+	hits, err := c.client.HGet(ctx, c.prefixKey(key), "h").Int()
 	if err != nil {
 		return false, 0
 	}
@@ -70,7 +82,9 @@ func (c *redisCache) Hits(key string) (bool, int) {
 }
 
 func (c *redisCache) Expire(key string) (bool, error) {
-	result, err := c.client.Del(c.ctx, c.prefixKey(key)).Result()
+	ctx, cancel := c.queryCtx()
+	defer cancel()
+	result, err := c.client.Del(ctx, c.prefixKey(key)).Result()
 	if err != nil {
 		return false, err
 	}

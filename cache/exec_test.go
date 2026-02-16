@@ -215,6 +215,33 @@ func TestExecInvokerNotFound(t *testing.T) {
 	assert.False(t, ok)
 }
 
+func TestExecCacheReadError(t *testing.T) {
+	ctx := context.Background()
+	c := &errorCache{err: fmt.Errorf("disk I/O error")}
+
+	invoked := false
+	found, val, err := Exec(ctx, CacheConfig{Key: "key"}, c, func(ctx context.Context) (string, bool, error) {
+		invoked = true
+		return "value", true, nil
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "disk I/O error")
+	assert.False(t, found)
+	assert.Equal(t, "", val)
+	assert.False(t, invoked, "invoker should not be called when cache returns an error")
+}
+
+// errorCache is a test double that always returns an error from Get.
+type errorCache struct {
+	err error
+}
+
+func (e *errorCache) Get(string) (bool, any, error)        { return false, nil, e.err }
+func (e *errorCache) Set(string, any, time.Duration) error { return e.err }
+func (e *errorCache) Hits(string) (bool, int)              { return false, 0 }
+func (e *errorCache) Expire(string) (bool, error)          { return false, e.err }
+func (e *errorCache) Close() error                         { return nil }
+
 func TestExecNotFoundThenFound(t *testing.T) {
 	ctx := context.Background()
 	c := NewInMemory(ctx, time.Minute)

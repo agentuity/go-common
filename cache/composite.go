@@ -89,31 +89,33 @@ func (c *compositeCache) Hits(key string) (bool, int) {
 }
 
 func (c *compositeCache) ExpireContext(ctx context.Context, key string) (bool, error) {
+	var firstErr error
 	anyFound := false
 	for _, cache := range c.caches {
 		found, err := cache.ExpireContext(ctx, key)
-		if err != nil {
-			return anyFound, err
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 		if found {
 			anyFound = true
 		}
 	}
-	return anyFound, nil
+	return anyFound, firstErr
 }
 
 func (c *compositeCache) Expire(key string) (bool, error) {
+	var firstErr error
 	anyFound := false
 	for _, cache := range c.caches {
 		found, err := cache.Expire(key)
-		if err != nil {
-			return anyFound, err
+		if err != nil && firstErr == nil {
+			firstErr = err
 		}
 		if found {
 			anyFound = true
 		}
 	}
-	return anyFound, nil
+	return anyFound, firstErr
 }
 
 func (c *compositeCache) CloseContext(ctx context.Context) error {

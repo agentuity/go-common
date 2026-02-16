@@ -288,6 +288,23 @@ func TestExecNotFoundThenFound(t *testing.T) {
 	assert.Equal(t, 2, callCount) // still 2, not called again
 }
 
+func TestExecEmptyKeyError(t *testing.T) {
+	ctx := context.Background()
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	defer c.Close()
+
+	invoked := false
+	found, val, err := Exec(ctx, CacheConfig{Key: ""}, c, func(ctx context.Context) (string, bool, error) {
+		invoked = true
+		return "value", true, nil
+	})
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "Key is required")
+	assert.False(t, found)
+	assert.Equal(t, "", val)
+	assert.False(t, invoked, "invoker should not be called when key is empty")
+}
+
 func TestExecWithContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately

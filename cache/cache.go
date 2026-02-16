@@ -155,6 +155,11 @@ type Invoker[T any] func(ctx context.Context) (T, bool, error)
 // If the cache Set fails after a successful invoke, the value is still
 // returned (the Set error is swallowed since the primary operation succeeded).
 func Exec[T any](ctx context.Context, config CacheConfig, c Cache, invoke Invoker[T]) (bool, T, error) {
+	if config.Key == "" {
+		var zero T
+		return false, zero, fmt.Errorf("cache: CacheConfig.Key is required")
+	}
+
 	// Try cache first.
 	found, val, err := GetContext[T](ctx, c, config.Key)
 	if err != nil {

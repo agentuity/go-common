@@ -76,7 +76,7 @@ func New(ctx context.Context, logger logger.Logger, config DNSConfig) (*DNSResol
 				return make([]byte, dnsPacketSize)
 			},
 		},
-		cache:      cache.NewInMemory(resolverCtx, 5*time.Minute), // Use resolver context for cache lifecycle
+		cache:      cache.NewInMemory(resolverCtx, cache.WithExpires(5*time.Minute)), // Use resolver context for cache lifecycle
 		requestSem: make(chan struct{}, maxConcurrentRequests),
 	}
 

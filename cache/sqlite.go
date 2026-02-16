@@ -28,16 +28,26 @@ func (c *sqliteCache) queryCtx(parent context.Context) (context.Context, context
 }
 
 // NewSQLite returns a new Cache backed by SQLite.
-// If dbPath is empty or ":memory:", an in-memory database is used.
+// If dbPath is empty or ":memory:", a shared in-memory database is used with a
+// single connection to prevent pooled connections from seeing isolated databases.
 func NewSQLite(ctx context.Context, dbPath string, opts ...Option) (Cache, error) {
 	cfg := applyOptions(opts)
-	if dbPath == "" {
-		dbPath = ":memory:"
+	inMemory := dbPath == "" || dbPath == ":memory:"
+	if inMemory {
+		dbPath = "file::memory:?cache=shared"
 	}
 
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if inMemory {
+		// Force a single connection so all operations share the same
+		// in-memory database rather than each pooled connection getting
+		// its own isolated instance.
+		db.SetMaxOpenConns(1)
+		db.SetMaxIdleConns(1)
 	}
 
 	if _, err := db.ExecContext(ctx, "PRAGMA journal_mode=WAL"); err != nil {

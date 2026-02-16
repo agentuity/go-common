@@ -49,21 +49,23 @@ func (c *compositeCache) Get(key string) (bool, any, error) {
 }
 
 func (c *compositeCache) SetContext(ctx context.Context, key string, val any, expires time.Duration) error {
+	var firstErr error
 	for _, cache := range c.caches {
-		if err := cache.SetContext(ctx, key, val, expires); err != nil {
-			return err
+		if err := cache.SetContext(ctx, key, val, expires); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (c *compositeCache) Set(key string, val any, expires time.Duration) error {
+	var firstErr error
 	for _, cache := range c.caches {
-		if err := cache.Set(key, val, expires); err != nil {
-			return err
+		if err := cache.Set(key, val, expires); err != nil && firstErr == nil {
+			firstErr = err
 		}
 	}
-	return nil
+	return firstErr
 }
 
 func (c *compositeCache) HitsContext(ctx context.Context, key string) (bool, int) {

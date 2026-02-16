@@ -11,7 +11,7 @@ import (
 
 func TestExecCacheMiss(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	invoked := false
@@ -33,7 +33,7 @@ func TestExecCacheMiss(t *testing.T) {
 
 func TestExecCacheHit(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	// Pre-populate.
@@ -52,7 +52,7 @@ func TestExecCacheHit(t *testing.T) {
 
 func TestExecInvokerError(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	expectedErr := fmt.Errorf("invoke failed")
@@ -71,7 +71,7 @@ func TestExecInvokerError(t *testing.T) {
 
 func TestExecDefaultExpires(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	// Expires is zero — should use DefaultExpires and still cache the value.
@@ -89,7 +89,7 @@ func TestExecDefaultExpires(t *testing.T) {
 	assert.Equal(t, 42, cached)
 
 	// Now test with a very short custom Expires to verify expiration works.
-	c2 := NewInMemory(ctx, time.Millisecond*50)
+	c2 := NewInMemory(ctx, WithExpiryCheck(time.Millisecond*50))
 	defer c2.Close()
 
 	found, val, err = Exec(ctx, CacheConfig{Key: "short", Expires: 20 * time.Millisecond}, c2, func(ctx context.Context) (int, bool, error) {
@@ -114,7 +114,7 @@ func TestExecDefaultExpires(t *testing.T) {
 
 func TestExecCustomExpires(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Millisecond*50)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Millisecond*50))
 	defer c.Close()
 
 	found, val, err := Exec(ctx, CacheConfig{Key: "key", Expires: 20 * time.Millisecond}, c, func(ctx context.Context) (string, bool, error) {
@@ -139,7 +139,7 @@ func TestExecCustomExpires(t *testing.T) {
 
 func TestExecWithSQLite(t *testing.T) {
 	ctx := context.Background()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -170,7 +170,7 @@ func TestExecWithSQLite(t *testing.T) {
 
 func TestExecInvokerCalledOnce(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	callCount := 0
@@ -198,7 +198,7 @@ func TestExecInvokerCalledOnce(t *testing.T) {
 
 func TestExecInvokerNotFound(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	// Invoker returns not-found (no error).
@@ -242,9 +242,19 @@ func (e *errorCache) Hits(string) (bool, int)              { return false, 0 }
 func (e *errorCache) Expire(string) (bool, error)          { return false, e.err }
 func (e *errorCache) Close() error                         { return nil }
 
+func (e *errorCache) GetContext(_ context.Context, _ string) (bool, any, error) {
+	return false, nil, e.err
+}
+func (e *errorCache) SetContext(_ context.Context, _ string, _ any, _ time.Duration) error {
+	return e.err
+}
+func (e *errorCache) HitsContext(_ context.Context, _ string) (bool, int)     { return false, 0 }
+func (e *errorCache) ExpireContext(_ context.Context, _ string) (bool, error) { return false, e.err }
+func (e *errorCache) CloseContext(_ context.Context) error                    { return nil }
+
 func TestExecNotFoundThenFound(t *testing.T) {
 	ctx := context.Background()
-	c := NewInMemory(ctx, time.Minute)
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	defer c.Close()
 
 	callCount := 0
@@ -276,4 +286,53 @@ func TestExecNotFoundThenFound(t *testing.T) {
 	assert.True(t, found)
 	assert.Equal(t, "appeared", val)
 	assert.Equal(t, 2, callCount) // still 2, not called again
+}
+
+func TestExecWithContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately
+
+	c, err := NewSQLite(context.Background(), ":memory:", WithExpiryCheck(time.Minute))
+	assert.NoError(t, err)
+	defer c.Close()
+
+	invoked := false
+	_, _, err = Exec(ctx, CacheConfig{Key: "key", Expires: time.Minute}, c, func(ctx context.Context) (string, bool, error) {
+		invoked = true
+		return "value", true, nil
+	})
+	assert.Error(t, err)
+	assert.False(t, invoked, "invoker should not be called when context is cancelled")
+}
+
+func TestGetContextGeneric(t *testing.T) {
+	ctx := context.Background()
+
+	// Test with in-memory (type assertion path).
+	mem := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	defer mem.Close()
+	assert.NoError(t, mem.SetContext(ctx, "str", "hello", time.Minute))
+	found, val, err := GetContext[string](ctx, mem, "str")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "hello", val)
+
+	// Test with SQLite (deserialization path).
+	sq, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
+	assert.NoError(t, err)
+	defer sq.Close()
+
+	type Item struct {
+		Name string `msgpack:"name"`
+	}
+	assert.NoError(t, sq.SetContext(ctx, "item", Item{Name: "widget"}, time.Minute))
+	found2, item, err := GetContext[Item](ctx, sq, "item")
+	assert.NoError(t, err)
+	assert.True(t, found2)
+	assert.Equal(t, Item{Name: "widget"}, item)
+
+	// Test miss.
+	found3, _, err := GetContext[string](ctx, mem, "missing")
+	assert.NoError(t, err)
+	assert.False(t, found3)
 }

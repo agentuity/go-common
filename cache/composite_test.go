@@ -11,8 +11,8 @@ import (
 func TestCompositeSimple(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	assert.NoError(t, c.Close())
 }
@@ -27,8 +27,8 @@ func TestCompositeGetOrder(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 
@@ -47,8 +47,8 @@ func TestCompositeSetAll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 
@@ -71,8 +71,8 @@ func TestCompositeExpireAll(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 
@@ -96,7 +96,7 @@ func TestCompositeExpireNonexistent(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1)
 	defer c.Close()
 
@@ -109,8 +109,8 @@ func TestCompositeHits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 
@@ -130,8 +130,8 @@ func TestCompositeFallthrough(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 
@@ -155,8 +155,8 @@ func TestCompositeMixedCacheTypes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
-	l2, err := NewSQLite(ctx, ":memory:", time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	c := NewComposite(l1, l2)
 	defer c.Close()
@@ -176,11 +176,54 @@ func TestCompositeMixedCacheTypes(t *testing.T) {
 	assert.Equal(t, "sqlite-value", val)
 }
 
+func TestCompositeContextMethods(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	c := NewComposite(l1, l2)
+	defer c.Close()
+
+	// SetContext + GetContext round-trip.
+	assert.NoError(t, c.SetContext(ctx, "key", "ctx-value", time.Minute))
+	found, val, err := c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "ctx-value", val)
+
+	// Verify GetContext checks caches in order.
+	l1.SetContext(ctx, "ordered", "from-l1", time.Minute)
+	l2.SetContext(ctx, "ordered", "from-l2", time.Minute)
+	found, val, err = c.GetContext(ctx, "ordered")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "from-l1", val)
+
+	// HitsContext.
+	c.GetContext(ctx, "key")
+	ok, hits := c.HitsContext(ctx, "key")
+	assert.True(t, ok)
+	assert.Equal(t, 2, hits)
+
+	// ExpireContext removes from all.
+	found2, err := c.ExpireContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found2)
+	found, _, err = c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.False(t, found)
+
+	// CloseContext.
+	c2 := NewComposite(NewInMemory(ctx, WithExpiryCheck(time.Minute)))
+	assert.NoError(t, c2.CloseContext(ctx))
+}
+
 func TestCompositeSingleCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l1 := NewInMemory(ctx, time.Minute)
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	c := NewComposite(l1)
 	defer c.Close()
 

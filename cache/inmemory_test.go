@@ -10,14 +10,14 @@ import (
 
 func TestSimpleCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cache := NewInMemory(ctx, time.Second)
+	cache := NewInMemory(ctx, WithExpiryCheck(time.Second))
 	cache.Close()
 	cancel()
 }
 
 func TestSetGetCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cache := NewInMemory(ctx, time.Minute)
+	cache := NewInMemory(ctx, WithExpiryCheck(time.Minute))
 	found, val, err := cache.Get("test")
 	assert.NoError(t, err)
 	assert.False(t, found)
@@ -44,7 +44,7 @@ func TestSetGetCache(t *testing.T) {
 
 func TestCacheBackgroundExpire(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cache := NewInMemory(ctx, time.Millisecond*100)
+	cache := NewInMemory(ctx, WithExpiryCheck(time.Millisecond*100))
 	found, val, err := cache.Get("test")
 	assert.NoError(t, err)
 	assert.False(t, found)
@@ -65,7 +65,7 @@ func TestCacheBackgroundExpire(t *testing.T) {
 
 func TestCacheExpire(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
-	cache := NewInMemory(ctx, time.Millisecond*100)
+	cache := NewInMemory(ctx, WithExpiryCheck(time.Millisecond*100))
 	found, val, err := cache.Get("test")
 	assert.NoError(t, err)
 	assert.False(t, found)
@@ -82,4 +82,34 @@ func TestCacheExpire(t *testing.T) {
 	assert.Empty(t, c.cache)
 	cache.Close()
 	cancel()
+}
+
+func TestInMemoryContextMethods(t *testing.T) {
+	ctx := context.Background()
+	c := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	defer c.Close()
+
+	// SetContext + GetContext round-trip.
+	assert.NoError(t, c.SetContext(ctx, "key", "ctx-value", time.Minute))
+	found, val, err := c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.Equal(t, "ctx-value", val)
+
+	// HitsContext after GetContext.
+	ok, hits := c.HitsContext(ctx, "key")
+	assert.True(t, ok)
+	assert.Equal(t, 1, hits)
+
+	// ExpireContext removes entry.
+	found, err = c.ExpireContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	found, _, err = c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.False(t, found)
+
+	// CloseContext shuts down cleanly.
+	c2 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	assert.NoError(t, c2.CloseContext(ctx))
 }

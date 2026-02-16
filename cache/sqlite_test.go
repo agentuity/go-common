@@ -12,7 +12,7 @@ import (
 func TestSQLiteSimpleCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Second)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Second))
 	assert.NoError(t, err)
 	assert.NoError(t, c.Close())
 }
@@ -20,7 +20,7 @@ func TestSQLiteSimpleCache(t *testing.T) {
 func TestSQLiteSetGetCache(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -47,7 +47,7 @@ func TestSQLiteSetGetCache(t *testing.T) {
 func TestSQLiteCacheExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -66,7 +66,7 @@ func TestSQLiteCacheExpiry(t *testing.T) {
 func TestSQLiteCacheBackgroundExpiry(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", 100*time.Millisecond)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(100*time.Millisecond))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -87,7 +87,7 @@ func TestSQLiteCacheBackgroundExpiry(t *testing.T) {
 func TestSQLiteCacheExpireMethod(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -109,7 +109,7 @@ func TestSQLiteCacheExpireMethod(t *testing.T) {
 func TestSQLiteCacheHits(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -139,7 +139,7 @@ func TestSQLiteInMemory(t *testing.T) {
 	defer cancel()
 
 	// Empty string should default to :memory:.
-	c, err := NewSQLite(ctx, "", time.Minute)
+	c, err := NewSQLite(ctx, "", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -155,7 +155,7 @@ func TestSQLiteFileBased(t *testing.T) {
 	defer cancel()
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	c, err := NewSQLite(ctx, dbPath, time.Minute)
+	c, err := NewSQLite(ctx, dbPath, WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -169,7 +169,7 @@ func TestSQLiteFileBased(t *testing.T) {
 func TestSQLiteComplexTypes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 
@@ -214,10 +214,64 @@ func TestSQLiteComplexTypes(t *testing.T) {
 	assert.Equal(t, team, gotTeam)
 }
 
+func TestSQLiteContextMethods(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
+	assert.NoError(t, err)
+	defer c.Close()
+
+	// SetContext + GetContext round-trip.
+	assert.NoError(t, c.SetContext(ctx, "key", "ctx-value", time.Minute))
+	found, val, err := c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.NotNil(t, val)
+
+	// Typed retrieval via GetContext[T].
+	ok, str, err := GetContext[string](ctx, c, "key")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "ctx-value", str)
+
+	// HitsContext after GetContext.
+	ok, hits := c.HitsContext(ctx, "key")
+	assert.True(t, ok)
+	// Two GetContext calls above (raw + via GetContext[T]).
+	assert.Equal(t, 2, hits)
+
+	// ExpireContext removes entry.
+	found2, err := c.ExpireContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found2)
+	found, _, err = c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.False(t, found)
+}
+
+func TestSQLiteContextCancellation(t *testing.T) {
+	bgCtx := context.Background()
+	c, err := NewSQLite(bgCtx, ":memory:", WithExpiryCheck(time.Minute))
+	assert.NoError(t, err)
+	defer c.Close()
+
+	// Create a cancelled context.
+	cancelledCtx, cancel := context.WithCancel(bgCtx)
+	cancel()
+
+	// GetContext with cancelled context should return an error.
+	_, _, err = c.GetContext(cancelledCtx, "key")
+	assert.Error(t, err)
+
+	// SetContext with cancelled context should return an error.
+	err = c.SetContext(cancelledCtx, "key", "value", time.Minute)
+	assert.Error(t, err)
+}
+
 func TestSQLiteOverwrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	c, err := NewSQLite(ctx, ":memory:", time.Minute)
+	c, err := NewSQLite(ctx, ":memory:", WithExpiryCheck(time.Minute))
 	assert.NoError(t, err)
 	defer c.Close()
 

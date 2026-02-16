@@ -22,14 +22,14 @@ func newTestRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 func TestRedisSimpleCache(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	assert.NoError(t, c.Close())
 }
 
 func TestRedisSetGetCache(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	// Miss on empty cache.
@@ -55,7 +55,7 @@ func TestRedisSetGetCache(t *testing.T) {
 func TestRedisCacheExpiry(t *testing.T) {
 	mr, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	assert.NoError(t, c.Set("key", "value", 2*time.Second))
@@ -75,7 +75,7 @@ func TestRedisCacheExpiry(t *testing.T) {
 func TestRedisCacheExpireMethod(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	assert.NoError(t, c.Set("key", "value", time.Minute))
@@ -96,7 +96,7 @@ func TestRedisCacheExpireMethod(t *testing.T) {
 func TestRedisCacheHits(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	// No hits for missing key.
@@ -123,7 +123,7 @@ func TestRedisCacheHits(t *testing.T) {
 func TestRedisInMemory(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	assert.NoError(t, c.Set("key", 42, time.Minute))
@@ -136,7 +136,7 @@ func TestRedisInMemory(t *testing.T) {
 func TestRedisComplexTypes(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	// Struct.
@@ -183,7 +183,7 @@ func TestRedisComplexTypes(t *testing.T) {
 func TestRedisOverwrite(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "test")
+	c := NewRedis(context.Background(), client, WithPrefix("test"))
 	defer c.Close()
 
 	assert.NoError(t, c.Set("key", "first", time.Minute))
@@ -214,9 +214,9 @@ func TestRedisPrefix(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
 
-	c1 := NewRedis(context.Background(), client, "ns1")
+	c1 := NewRedis(context.Background(), client, WithPrefix("ns1"))
 	defer c1.Close()
-	c2 := NewRedis(context.Background(), client, "ns2")
+	c2 := NewRedis(context.Background(), client, WithPrefix("ns2"))
 	defer c2.Close()
 
 	// Set same key in different namespaces.
@@ -252,7 +252,7 @@ func TestRedisPrefix(t *testing.T) {
 func TestRedisNoPrefix(t *testing.T) {
 	mr, client := newTestRedis(t)
 	defer client.Close()
-	c := NewRedis(context.Background(), client, "")
+	c := NewRedis(context.Background(), client)
 	defer c.Close()
 
 	assert.NoError(t, c.Set("mykey", "myvalue", time.Minute))
@@ -267,13 +267,70 @@ func TestRedisNoPrefix(t *testing.T) {
 	assert.Equal(t, "myvalue", v)
 }
 
+func TestRedisContextMethods(t *testing.T) {
+	_, client := newTestRedis(t)
+	defer client.Close()
+	ctx := context.Background()
+	c := NewRedis(ctx, client, WithPrefix("ctxtest"))
+	defer c.Close()
+
+	// SetContext + GetContext round-trip.
+	assert.NoError(t, c.SetContext(ctx, "key", "ctx-value", time.Minute))
+	found, val, err := c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found)
+	assert.NotNil(t, val)
+
+	// Typed retrieval via GetContext[T].
+	ok, str, err := GetContext[string](ctx, c, "key")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, "ctx-value", str)
+
+	// HitsContext after GetContext.
+	ok, hits := c.HitsContext(ctx, "key")
+	assert.True(t, ok)
+	// Two GetContext calls above (raw + via GetContext[T]).
+	assert.Equal(t, 2, hits)
+
+	// ExpireContext removes entry.
+	found2, err := c.ExpireContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.True(t, found2)
+	found, _, err = c.GetContext(ctx, "key")
+	assert.NoError(t, err)
+	assert.False(t, found)
+
+	// CloseContext is a no-op.
+	assert.NoError(t, c.CloseContext(ctx))
+}
+
+func TestRedisContextCancellation(t *testing.T) {
+	_, client := newTestRedis(t)
+	defer client.Close()
+	c := NewRedis(context.Background(), client, WithPrefix("canceltest"))
+	defer c.Close()
+
+	// Create a cancelled context.
+	cancelledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// GetContext with cancelled context should return an error.
+	_, _, err := c.GetContext(cancelledCtx, "key")
+	assert.Error(t, err)
+
+	// SetContext with cancelled context should return an error.
+	err = c.SetContext(cancelledCtx, "key", "value", time.Minute)
+	assert.Error(t, err)
+}
+
 func TestRedisComposite(t *testing.T) {
 	_, client := newTestRedis(t)
 	defer client.Close()
 
 	ctx := context.Background()
-	l1 := NewInMemory(ctx, time.Minute)
-	l2 := NewRedis(ctx, client, "composite")
+	l1 := NewInMemory(ctx, WithExpiryCheck(time.Minute))
+	l2 := NewRedis(ctx, client, WithPrefix("composite"))
 	c := NewComposite(l1, l2)
 	defer c.Close()
 

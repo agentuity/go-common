@@ -51,7 +51,9 @@ func (c *TestLogger) With(metadata map[string]interface{}) Logger {
 	if child != nil {
 		child = child.With(metadata)
 	}
-	return &TestLogger{metadata: kv, Logs: c.Logs, child: child}
+	logs := make([]TestLogEntry, len(c.Logs))
+	copy(logs, c.Logs)
+	return &TestLogger{metadata: kv, Logs: logs, child: child}
 }
 
 func (c *TestLogger) Log(level string, msg string, args ...interface{}) {
@@ -116,7 +118,11 @@ func (c *TestLogger) Fatal(msg string, args ...interface{}) {
 }
 
 func (c *TestLogger) Stack(next Logger) Logger {
-	return &TestLogger{c.metadata, c.Logs, next, sync.Mutex{}}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	logs := make([]TestLogEntry, len(c.Logs))
+	copy(logs, c.Logs)
+	return &TestLogger{metadata: c.metadata, Logs: logs, child: next}
 }
 
 func (c *TestLogger) IsLevelEnabled(level LogLevel) bool {

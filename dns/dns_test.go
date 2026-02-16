@@ -10,7 +10,7 @@ import (
 )
 
 func TestDNSIsValidAndCached(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Second))
 	defer c.Close()
 	d := NewResolver(WithCache(c))
 	ok, ip, err := d.Lookup(context.Background(), "app.agentuity.com")
@@ -83,7 +83,7 @@ func TestDNSLocalHost(t *testing.T) {
 }
 
 func TestDNS127(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Second))
 	defer c.Close()
 	d := NewResolver(WithCache(c))
 	ok, ip, err := d.Lookup(context.Background(), "127.0.0.1")
@@ -111,7 +111,7 @@ func TestDNSIPAddressSkipped(t *testing.T) {
 }
 
 func TestDNSPrivateIPSkipped(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Second))
 	defer c.Close()
 	d := NewResolver()
 	ok, ip, err := d.Lookup(context.Background(), "10.8.0.1")
@@ -132,7 +132,7 @@ func TestDNSPrivateIPSkipped(t *testing.T) {
 }
 
 func TestDNSTest(t *testing.T) {
-	c := cache.NewInMemory(context.Background(), time.Second)
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Second))
 	defer c.Close()
 	d := NewResolver(WithFailIfLocal())
 	ok, ip, err := d.Lookup(context.Background(), "customer1.app.localhost.my.company.127.0.0.1.nip.io")
@@ -162,7 +162,7 @@ func TestInvalidDNSEntries(t *testing.T) {
 		{"Docker Host Internal", "host.docker.internal"},
 	}
 
-	c := cache.NewInMemory(context.Background(), time.Second)
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Second))
 	defer c.Close()
 	d := NewResolver()
 	d.isLocal = false

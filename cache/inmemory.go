@@ -7,18 +7,18 @@ import (
 )
 
 type inMemoryCache struct {
-	ctx         context.Context
-	cancel      context.CancelFunc
-	cache       map[string]*value
-	mutex       sync.Mutex
-	waitGroup   sync.WaitGroup
-	once        sync.Once
-	expiryCheck time.Duration
+	ctx       context.Context
+	cancel    context.CancelFunc
+	cache     map[string]*value
+	mutex     sync.Mutex
+	waitGroup sync.WaitGroup
+	once      sync.Once
+	cfg       config
 }
 
 var _ Cache = (*inMemoryCache)(nil)
 
-func (c *inMemoryCache) Get(key string) (bool, any, error) {
+func (c *inMemoryCache) GetContext(_ context.Context, key string) (bool, any, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	val, ok := c.cache[key]
@@ -33,8 +33,11 @@ func (c *inMemoryCache) Get(key string) (bool, any, error) {
 	return true, val.object, nil
 }
 
-// Hits returns the number of times a key has been accessed.
-func (c *inMemoryCache) Hits(key string) (bool, int) {
+func (c *inMemoryCache) Get(key string) (bool, any, error) {
+	return c.GetContext(c.ctx, key)
+}
+
+func (c *inMemoryCache) HitsContext(_ context.Context, key string) (bool, int) {
 	c.mutex.Lock()
 	var val int
 	var found bool
@@ -46,7 +49,14 @@ func (c *inMemoryCache) Hits(key string) (bool, int) {
 	return found, val
 }
 
-func (c *inMemoryCache) Set(key string, val any, expires time.Duration) error {
+func (c *inMemoryCache) Hits(key string) (bool, int) {
+	return c.HitsContext(c.ctx, key)
+}
+
+func (c *inMemoryCache) SetContext(_ context.Context, key string, val any, expires time.Duration) error {
+	if expires <= 0 {
+		expires = c.cfg.defaultExpires
+	}
 	c.mutex.Lock()
 	if v, ok := c.cache[key]; ok {
 		v.hits = 0
@@ -59,7 +69,11 @@ func (c *inMemoryCache) Set(key string, val any, expires time.Duration) error {
 	return nil
 }
 
-func (c *inMemoryCache) Expire(key string) (bool, error) {
+func (c *inMemoryCache) Set(key string, val any, expires time.Duration) error {
+	return c.SetContext(c.ctx, key, val, expires)
+}
+
+func (c *inMemoryCache) ExpireContext(_ context.Context, key string) (bool, error) {
 	c.mutex.Lock()
 	_, ok := c.cache[key]
 	if ok {
@@ -69,7 +83,11 @@ func (c *inMemoryCache) Expire(key string) (bool, error) {
 	return ok, nil
 }
 
-func (c *inMemoryCache) Close() error {
+func (c *inMemoryCache) Expire(key string) (bool, error) {
+	return c.ExpireContext(c.ctx, key)
+}
+
+func (c *inMemoryCache) CloseContext(_ context.Context) error {
 	c.once.Do(func() {
 		c.cancel()
 		c.waitGroup.Wait()
@@ -77,9 +95,13 @@ func (c *inMemoryCache) Close() error {
 	return nil
 }
 
+func (c *inMemoryCache) Close() error {
+	return c.CloseContext(c.ctx)
+}
+
 func (c *inMemoryCache) run() {
 	defer c.waitGroup.Done()
-	ticker := time.NewTicker(c.expiryCheck)
+	ticker := time.NewTicker(c.cfg.expiryCheck)
 	defer ticker.Stop()
 	for {
 		select {
@@ -98,17 +120,15 @@ func (c *inMemoryCache) run() {
 	}
 }
 
-// New returns a new Cache implementation
-func NewInMemory(parent context.Context, expiryCheck time.Duration) Cache {
+// NewInMemory returns a new in-memory Cache implementation.
+func NewInMemory(parent context.Context, opts ...Option) Cache {
+	cfg := applyOptions(opts)
 	ctx, cancel := context.WithCancel(parent)
 	c := &inMemoryCache{
-		ctx:         ctx,
-		cancel:      cancel,
-		cache:       make(map[string]*value),
-		expiryCheck: expiryCheck,
-	}
-	if c.expiryCheck <= 0 {
-		c.expiryCheck = time.Minute
+		ctx:    ctx,
+		cancel: cancel,
+		cache:  make(map[string]*value),
+		cfg:    cfg,
 	}
 	c.waitGroup.Add(1)
 	go c.run()

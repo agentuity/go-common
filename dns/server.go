@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agentuity/go-common/cache"
@@ -49,6 +50,15 @@ type DNSResolver struct {
 	bufferPool   sync.Pool
 	cache        cache.Cache
 	requestSem   chan struct{}
+
+	// Internal nameserver hostname resolution
+	internalNSHostnames []string      // original hostname:port entries (e.g., "ns0.agentuity.com:53")
+	internalNSIPOnly    []string      // entries that are already IPs (no resolution needed)
+	resolvedInternalNS  []string      // currently resolved ip:port entries
+	resolvedNSMu        sync.RWMutex  // protects resolvedInternalNS and lastNSResolve
+	lastNSResolve       time.Time     // for debouncing re-resolution
+	nsResolveInterval   time.Duration // minimum time between re-resolutions
+	refreshInProgress   atomic.Bool   // prevents concurrent refresh operations
 }
 
 // New creates a new DNS resolver instance
@@ -96,6 +106,23 @@ func New(ctx context.Context, logger logger.Logger, config DNSConfig) (*DNSResol
 		var d net.Dialer
 		s.dialer = func(ctx context.Context, network, address string) (net.Conn, error) {
 			return d.DialContext(ctx, network, address)
+		}
+	}
+
+	// Classify internal nameservers into hostname-based vs IP-based
+	s.nsResolveInterval = 30 * time.Second
+	for _, ns := range config.InternalNameservers {
+		host, _, err := net.SplitHostPort(ns)
+		if err != nil {
+			// No port in the address, use as-is for classification
+			host = ns
+		}
+		if net.ParseIP(host) != nil {
+			// Already an IP address, no resolution needed
+			s.internalNSIPOnly = append(s.internalNSIPOnly, ns)
+		} else {
+			// Hostname that needs resolution
+			s.internalNSHostnames = append(s.internalNSHostnames, ns)
 		}
 	}
 
@@ -165,6 +192,16 @@ func (s *DNSResolver) Start() error {
 	go s.handleUDPRequests(s.conn6, "IPv6")
 	go s.handleTCPRequests(s.tcpListener4, "IPv4")
 	go s.handleTCPRequests(s.tcpListener6, "IPv6")
+
+	// Resolve internal nameserver hostnames to IPs at startup
+	if len(s.internalNSHostnames) > 0 {
+		resolved := s.resolveInternalNameservers()
+		if len(resolved) == 0 && len(s.internalNSIPOnly) == 0 {
+			s.logger.Error("failed to resolve any internal nameserver hostnames to IPs, will fall back to original hostnames: %v", s.internalNSHostnames)
+		} else if len(resolved) > 0 {
+			s.logger.Info("resolved internal nameserver hostnames to IPs: %v", resolved)
+		}
+	}
 
 	s.logger.Info("DNS server started on %s (IPv4: %s, IPv6: %s) with TCP support", s.config.ListenAddress, addr4, addr6)
 	s.logger.Info("Managed domains: %v", s.config.ManagedDomains)
@@ -639,20 +676,36 @@ func (s *DNSResolver) selectNameservers(target string) []string {
 	}
 
 	if s.config.IsManagedDomain(target) {
-		if len(s.config.InternalNameservers) > 1 {
+		// Use resolved IPs + IP-only entries for internal nameservers
+		nameservers = s.getResolvedInternalNS()
+
+		if len(nameservers) > 1 {
 			// load balance between internal nameservers
-			nameservers = make([]string, len(s.config.InternalNameservers))
-			copy(nameservers, s.config.InternalNameservers)
 			rand.Shuffle(len(nameservers), func(i, j int) {
 				nameservers[i], nameservers[j] = nameservers[j], nameservers[i]
 			})
-		} else {
-			nameservers = s.config.InternalNameservers
 		}
 	} else {
 		nameservers = s.config.UpstreamNameservers
 	}
 	return nameservers
+}
+
+// getResolvedInternalNS returns the current set of resolved internal nameserver IPs
+// combined with any entries that were already IPs. Falls back to original hostnames
+// if resolution has never succeeded.
+func (s *DNSResolver) getResolvedInternalNS() []string {
+	s.resolvedNSMu.RLock()
+	resolved := make([]string, 0, len(s.resolvedInternalNS)+len(s.internalNSIPOnly))
+	resolved = append(resolved, s.resolvedInternalNS...)
+	resolved = append(resolved, s.internalNSIPOnly...)
+	s.resolvedNSMu.RUnlock()
+
+	if len(resolved) == 0 {
+		// Fallback to original hostnames if resolution never succeeded
+		return s.config.InternalNameservers
+	}
+	return resolved
 }
 
 // isInternalNameserver checks if the target domain matches any of the internal nameserver hostnames.
@@ -834,6 +887,7 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 
 	response, err := s.doQuery(ctx, msg, nameserver, s.protocol)
 	if err != nil {
+		s.triggerNSRefreshIfInternal(nameserver)
 		return nil, fmt.Errorf("failed to query nameserver via %s: %w", strings.ToUpper(s.protocol), err)
 	}
 
@@ -842,6 +896,7 @@ func (s *DNSResolver) queryNameserver(ctx context.Context, request []byte, names
 		// Retry over TCP
 		response, err = s.doQuery(ctx, msg, nameserver, "tcp")
 		if err != nil {
+			s.triggerNSRefreshIfInternal(nameserver)
 			return nil, fmt.Errorf("failed to query nameserver via TCP: %w", err)
 		}
 	}
@@ -1175,4 +1230,113 @@ func (s *DNSResolver) resolveCNAMERecursively(ctx context.Context, domain string
 	}
 
 	return nil, fmt.Errorf("all nameservers failed")
+}
+
+// resolveInternalNameservers resolves internal nameserver hostnames to IP addresses
+// using upstream nameservers (which are already IPs). Returns the resolved ip:port entries.
+// Thread-safe: acquires write lock when updating resolvedInternalNS.
+func (s *DNSResolver) resolveInternalNameservers() []string {
+	if len(s.internalNSHostnames) == 0 {
+		return nil
+	}
+
+	var resolved []string
+
+	for _, ns := range s.internalNSHostnames {
+		host, port, err := net.SplitHostPort(ns)
+		if err != nil {
+			s.logger.Warn("failed to parse internal nameserver address %s: %v", ns, err)
+			continue
+		}
+
+		// Build a DNS A query for the hostname
+		msg := new(dns.Msg)
+		msg.SetQuestion(dns.Fqdn(host), dns.TypeA)
+		msg.RecursionDesired = true
+
+		// Try each upstream nameserver (these are IPs, safe to dial directly)
+		var resolvedIPs []string
+		for _, upstream := range s.config.UpstreamNameservers {
+			ctx, cancel := context.WithTimeout(s.ctx, s.queryTimeout)
+			response, err := s.doQuery(ctx, msg, upstream, s.protocol)
+			cancel()
+
+			if err != nil {
+				s.logger.Debug("failed to resolve %s via upstream %s: %v", host, upstream, err)
+				continue
+			}
+
+			if response == nil || response.Rcode != dns.RcodeSuccess {
+				continue
+			}
+
+			// Extract A records from response
+			for _, answer := range response.Answer {
+				if a, ok := answer.(*dns.A); ok {
+					resolvedIPs = append(resolvedIPs, net.JoinHostPort(a.A.String(), port))
+				}
+			}
+
+			if len(resolvedIPs) > 0 {
+				break // Got IPs from this upstream, no need to try others
+			}
+		}
+
+		if len(resolvedIPs) == 0 {
+			s.logger.Warn("failed to resolve internal nameserver hostname %s to any IP", host)
+		} else {
+			resolved = append(resolved, resolvedIPs...)
+		}
+	}
+
+	// Update the resolved list under write lock
+	s.resolvedNSMu.Lock()
+	if len(resolved) > 0 {
+		s.resolvedInternalNS = resolved
+	}
+	// Even if resolution failed, don't clear old IPs
+	s.lastNSResolve = time.Now()
+	s.resolvedNSMu.Unlock()
+
+	return resolved
+}
+
+// refreshInternalNS re-resolves internal nameserver hostnames with debouncing.
+// It skips re-resolution if called within nsResolveInterval of the last resolution.
+func (s *DNSResolver) refreshInternalNS() {
+	if !s.refreshInProgress.CompareAndSwap(false, true) {
+		return // Another refresh is already in progress
+	}
+	defer s.refreshInProgress.Store(false)
+
+	s.resolvedNSMu.RLock()
+	if time.Since(s.lastNSResolve) < s.nsResolveInterval {
+		s.resolvedNSMu.RUnlock()
+		return
+	}
+	s.resolvedNSMu.RUnlock()
+
+	resolved := s.resolveInternalNameservers()
+	if len(resolved) > 0 {
+		s.logger.Info("re-resolved internal nameserver hostnames to IPs: %v", resolved)
+	}
+}
+
+// triggerNSRefreshIfInternal checks if a failed nameserver is one of the resolved
+// internal NS IPs and triggers an async re-resolution if so.
+func (s *DNSResolver) triggerNSRefreshIfInternal(failedNS string) {
+	s.resolvedNSMu.RLock()
+	isInternal := false
+	for _, ns := range s.resolvedInternalNS {
+		if ns == failedNS {
+			isInternal = true
+			break
+		}
+	}
+	s.resolvedNSMu.RUnlock()
+
+	if isInternal {
+		s.logger.Debug("internal nameserver %s unreachable, triggering re-resolution", failedNS)
+		go s.refreshInternalNS()
+	}
 }

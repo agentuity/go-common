@@ -59,8 +59,9 @@ func DefaultRetryableErrors(err error) bool {
 		return false
 	}
 
-	if errors.Is(err, io.EOF) {
-		return false
+	// EOF and unexpected EOF are typically transient connection errors
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
 	}
 
 	// Retry network and temporary errors by default

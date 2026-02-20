@@ -3,6 +3,8 @@ package resilience
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"testing"
 	"time"
 )
@@ -193,6 +195,10 @@ func TestDefaultRetryableErrors(t *testing.T) {
 		{ErrCircuitBreakerTimeout, false},
 		{context.Canceled, false},
 		{context.DeadlineExceeded, false},
+		{io.EOF, true},
+		{io.ErrUnexpectedEOF, true},
+		{fmt.Errorf("wrapped: %w", io.EOF), true},
+		{fmt.Errorf("wrapped: %w", io.ErrUnexpectedEOF), true},
 	}
 
 	for _, tt := range tests {

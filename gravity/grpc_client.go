@@ -2110,7 +2110,7 @@ func (g *GravityClient) SendEvacuateRequest(machineID, reason string, sandboxes 
 
 // SendCheckpointURLRequest sends a checkpoint URL request and waits for response (sync).
 // Used by suspend/resume operations to get presigned S3 URLs from Gravity.
-func (g *GravityClient) SendCheckpointURLRequest(sandboxID string, operation pb.CheckpointURLOperation, checkpointKey string, timeout time.Duration) (*pb.CheckpointURLResponse, error) {
+func (g *GravityClient) SendCheckpointURLRequest(sandboxID string, operation pb.CheckpointURLOperation, checkpointKey string, orgID string, timeout time.Duration) (*pb.CheckpointURLResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	g.mu.RLock()
 	ready := g.sessionReady
@@ -2150,6 +2150,7 @@ func (g *GravityClient) SendCheckpointURLRequest(sandboxID string, operation pb.
 				SandboxId:     sandboxID,
 				Operation:     operation,
 				CheckpointKey: checkpointKey,
+				OrgId:         orgID,
 			},
 		},
 	}

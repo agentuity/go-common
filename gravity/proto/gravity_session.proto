@@ -403,6 +403,7 @@ message CheckpointURLRequest {
   string sandbox_id = 1;
   CheckpointURLOperation operation = 2;
   string checkpoint_key = 3; // For downloads: the S3 key to download. Empty for uploads (Gravity generates key).
+  string org_id = 4;         // Organization ID for S3 bucket resolution
 }
 
 // CheckpointURLResponse is sent by Gravity to Hadron with the presigned S3 URL.

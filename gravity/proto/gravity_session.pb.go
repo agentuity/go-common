@@ -3184,6 +3184,7 @@ type CheckpointURLRequest struct {
 	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
 	Operation     CheckpointURLOperation `protobuf:"varint,2,opt,name=operation,proto3,enum=gravity.CheckpointURLOperation" json:"operation,omitempty"`
 	CheckpointKey string                 `protobuf:"bytes,3,opt,name=checkpoint_key,json=checkpointKey,proto3" json:"checkpoint_key,omitempty"` // For downloads: the S3 key to download. Empty for uploads (Gravity generates key).
+	OrgId         string                 `protobuf:"bytes,4,opt,name=org_id,json=orgId,proto3" json:"org_id,omitempty"`                         // Organization ID for S3 bucket resolution
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3235,6 +3236,13 @@ func (x *CheckpointURLRequest) GetOperation() CheckpointURLOperation {
 func (x *CheckpointURLRequest) GetCheckpointKey() string {
 	if x != nil {
 		return x.CheckpointKey
+	}
+	return ""
+}
+
+func (x *CheckpointURLRequest) GetOrgId() string {
+	if x != nil {
+		return x.OrgId
 	}
 	return ""
 }
@@ -3572,12 +3580,13 @@ const file_gravity_session_proto_rawDesc = "" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12!\n" +
 	"\fipv6_address\x18\x02 \x01(\tR\vipv6Address\x12\x18\n" +
 	"\asuccess\x18\x03 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x04 \x01(\tR\x05error\"\x9b\x01\n" +
+	"\x05error\x18\x04 \x01(\tR\x05error\"\xb2\x01\n" +
 	"\x14CheckpointURLRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12=\n" +
 	"\toperation\x18\x02 \x01(\x0e2\x1f.gravity.CheckpointURLOperationR\toperation\x12%\n" +
-	"\x0echeckpoint_key\x18\x03 \x01(\tR\rcheckpointKey\"\xd9\x01\n" +
+	"\x0echeckpoint_key\x18\x03 \x01(\tR\rcheckpointKey\x12\x15\n" +
+	"\x06org_id\x18\x04 \x01(\tR\x05orgId\"\xd9\x01\n" +
 	"\x15CheckpointURLResponse\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12#\n" +

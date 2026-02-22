@@ -368,6 +368,7 @@ message SandboxCheckpointed {
   int64 bundle_size = 4;
   bool success = 5;
   string error = 6; // Error message if success=false
+  bytes sandbox_spec = 7; // JSON-encoded SandboxSpec from source machine
 }
 
 // RestoreSandboxTask is sent by Gravity to the destination Hadron to restore a sandbox.

@@ -2929,7 +2929,8 @@ type SandboxCheckpointed struct {
 	S3Key         string                 `protobuf:"bytes,3,opt,name=s3_key,json=s3Key,proto3" json:"s3_key,omitempty"`
 	BundleSize    int64                  `protobuf:"varint,4,opt,name=bundle_size,json=bundleSize,proto3" json:"bundle_size,omitempty"`
 	Success       bool                   `protobuf:"varint,5,opt,name=success,proto3" json:"success,omitempty"`
-	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"` // Error message if success=false
+	Error         string                 `protobuf:"bytes,6,opt,name=error,proto3" json:"error,omitempty"`                                // Error message if success=false
+	SandboxSpec   []byte                 `protobuf:"bytes,7,opt,name=sandbox_spec,json=sandboxSpec,proto3" json:"sandbox_spec,omitempty"` // JSON-encoded SandboxSpec from source machine
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3004,6 +3005,13 @@ func (x *SandboxCheckpointed) GetError() string {
 		return x.Error
 	}
 	return ""
+}
+
+func (x *SandboxCheckpointed) GetSandboxSpec() []byte {
+	if x != nil {
+		return x.SandboxSpec
+	}
+	return nil
 }
 
 // RestoreSandboxTask is sent by Gravity to the destination Hadron to restore a sandbox.
@@ -3538,7 +3546,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"upload_url\x18\x02 \x01(\tR\tuploadUrl\x12/\n" +
 	"\x13destination_machine\x18\x03 \x01(\tR\x12destinationMachine\"L\n" +
 	"\x0eEvacuationPlan\x12:\n" +
-	"\tsandboxes\x18\x01 \x03(\v2\x1c.gravity.EvacuateSandboxPlanR\tsandboxes\"\xc1\x01\n" +
+	"\tsandboxes\x18\x01 \x03(\v2\x1c.gravity.EvacuateSandboxPlanR\tsandboxes\"\xe4\x01\n" +
 	"\x13SandboxCheckpointed\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12#\n" +
@@ -3547,7 +3555,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vbundle_size\x18\x04 \x01(\x03R\n" +
 	"bundleSize\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x06 \x01(\tR\x05error\"\xf7\x01\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error\x12!\n" +
+	"\fsandbox_spec\x18\a \x01(\fR\vsandboxSpec\"\xf7\x01\n" +
 	"\x12RestoreSandboxTask\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12#\n" +

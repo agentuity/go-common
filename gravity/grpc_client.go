@@ -1249,15 +1249,41 @@ func (g *GravityClient) handleEvacuationPlan(msgID string, plan *pb.EvacuationPl
 		}
 
 		for _, result := range results {
+			msgID := generateMessageID()
 			msg := &pb.SessionMessage{
-				Id: generateMessageID(),
+				Id: msgID,
 				MessageType: &pb.SessionMessage_SandboxCheckpointed{
 					SandboxCheckpointed: result,
 				},
 			}
+
+			responseChan := make(chan *pb.ProtocolResponse, 1)
+			g.pendingMu.Lock()
+			g.pending[msgID] = responseChan
+			g.pendingMu.Unlock()
+
 			if err := g.sendSessionMessageAsync(msg); err != nil {
 				g.logger.Error("failed to send SandboxCheckpointed for %s: %v", result.SandboxId, err)
+				g.pendingMu.Lock()
+				delete(g.pending, msgID)
+				g.pendingMu.Unlock()
+				continue
 			}
+
+			select {
+			case resp := <-responseChan:
+				if resp.Success {
+					g.logger.Info("SandboxCheckpointed acknowledged for %s", result.SandboxId)
+				} else {
+					g.logger.Warn("SandboxCheckpointed failed for %s: %s", result.SandboxId, resp.Error)
+				}
+			case <-time.After(10 * time.Second):
+				g.logger.Warn("timeout waiting for SandboxCheckpointed ack for %s", result.SandboxId)
+			}
+
+			g.pendingMu.Lock()
+			delete(g.pending, msgID)
+			g.pendingMu.Unlock()
 		}
 
 		g.mu.RLock()

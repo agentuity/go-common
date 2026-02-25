@@ -32,8 +32,6 @@ var DefaultManagedDomains = []string{
 	"agentuity-us.live.internal",
 	"agentuity.app",
 	"agentuity.app.internal",
-	"agentuity.dev",
-	"agentuity.dev.internal",
 }
 
 // DefaultDNSServers is the default list of internal DNS servers.

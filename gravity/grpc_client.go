@@ -147,13 +147,16 @@ type GravityClient struct {
 	serverMetrics *ServerMetrics
 
 	// Connection management
-	mu                sync.RWMutex
-	closing           bool
-	ctx               context.Context
-	cancel            context.CancelFunc
-	tlsCert           *tls.Certificate
-	skipAutoReconnect bool
-	closed            chan struct{}
+	mu                         sync.RWMutex
+	closing                    bool
+	ctx                        context.Context
+	cancel                     context.CancelFunc
+	tlsCert                    *tls.Certificate
+	skipAutoReconnect          bool
+	closed                     chan struct{}
+	maxReconnectAttempts       int
+	reconnectAttemptTimeout    time.Duration
+	reconnectionFailedCallback func(attempts int, lastErr error)
 
 	// State management
 	connected        bool
@@ -335,13 +338,16 @@ func New(config GravityConfig) (*GravityClient, error) {
 			streamMetrics:      make(map[string]*StreamMetrics),
 			allocationStrategy: poolConfig.AllocationStrategy,
 		},
-		serverMetrics:     NewServerMetrics(),
-		workingDir:        config.WorkingDir,
-		tracePackets:      config.TraceLogPackets,
-		reportStats:       config.ReportStats,
-		skipAutoReconnect: config.SkipAutoReconnect,
-		closed:            make(chan struct{}, 1),
-		tracer:            otel.Tracer("@agentuity/gravity/client"),
+		serverMetrics:              NewServerMetrics(),
+		workingDir:                 config.WorkingDir,
+		tracePackets:               config.TraceLogPackets,
+		reportStats:                config.ReportStats,
+		skipAutoReconnect:          config.SkipAutoReconnect,
+		closed:                     make(chan struct{}, 1),
+		maxReconnectAttempts:       config.MaxReconnectAttempts,
+		reconnectAttemptTimeout:    config.ReconnectAttemptTimeout,
+		reconnectionFailedCallback: config.ReconnectionFailedCallback,
+		tracer:                     otel.Tracer("@agentuity/gravity/client"),
 	}
 
 	if config.TraceLogPackets {
@@ -1622,7 +1628,11 @@ func (g *GravityClient) disconnectStreams() {
 	}
 }
 
-// attemptReconnection attempts to reconnect to gravity servers with backoff
+// attemptReconnection attempts to reconnect to gravity servers with backoff.
+// Each attempt is bounded by a timeout to prevent indefinite hanging (e.g. when
+// Gravity is unreachable and gRPC blocks without a deadline). After exhausting
+// the configured maximum attempts, ReconnectionFailedCallback is invoked —
+// typically to crash the process so a supervisor (systemd) can restart it.
 func (g *GravityClient) attemptReconnection(reason string) {
 	defer func() {
 		g.mu.Lock()
@@ -1637,15 +1647,37 @@ func (g *GravityClient) attemptReconnection(reason string) {
 	maxBackoff := 30 * time.Second
 	attempts := 0
 
+	maxAttempts := g.maxReconnectAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 10 // Default: 10 attempts
+	}
+
+	attemptTimeout := g.reconnectAttemptTimeout
+	if attemptTimeout <= 0 {
+		attemptTimeout = 2 * time.Minute // Default: 2 minutes per attempt
+	}
+
 	for !g.closing {
 		attempts++
-		g.logger.Info("reconnection attempt %d (backoff: %v)", attempts, backoff)
+		g.logger.Info("reconnection attempt %d/%d (backoff: %v, timeout: %v)", attempts, maxAttempts, backoff, attemptTimeout)
 
-		// Try to reconnect
-		if err := g.reconnect(); err != nil {
-			g.logger.Error("reconnection attempt %d failed: %v", attempts, err)
+		// Each reconnection attempt has a timeout to prevent indefinite hanging.
+		// Without this, Start() can block forever when Gravity is unreachable
+		// because gRPC stream establishment has no inherent deadline.
+		if err := g.reconnectWithTimeout(attemptTimeout); err != nil {
+			g.logger.Error("reconnection attempt %d/%d failed: %v", attempts, maxAttempts, err)
 
-			// Wait before next attempt
+			// Check if we've exhausted all attempts
+			if attempts >= maxAttempts {
+				g.logger.Error("exhausted all %d reconnection attempts (last error: %v)", maxAttempts, err)
+				if g.reconnectionFailedCallback != nil {
+					g.reconnectionFailedCallback(attempts, err)
+				}
+				// If callback didn't terminate the process, stop reconnecting
+				return
+			}
+
+			// Wait before next attempt with exponential backoff
 			select {
 			case <-time.After(backoff):
 				// Increase backoff exponentially, capped at maxBackoff
@@ -1661,6 +1693,47 @@ func (g *GravityClient) attemptReconnection(reason string) {
 	}
 
 	g.logger.Info("reconnection stopped due to client shutdown")
+}
+
+// reconnectWithTimeout wraps reconnect() with a timeout to prevent indefinite
+// hanging. When Gravity is unreachable, gRPC stream establishment can block
+// forever because the client context has no deadline. This method ensures each
+// attempt is bounded: if reconnect() does not complete within the timeout,
+// in-progress connections are cleaned up and an error is returned so the retry
+// loop can advance to the next attempt.
+func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
+	done := make(chan error, 1)
+
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				done <- fmt.Errorf("reconnection panicked: %v", r)
+			}
+		}()
+		done <- g.reconnect()
+	}()
+
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		g.logger.Warn("reconnection attempt timed out after %v, cleaning up stale connections", timeout)
+		// Cancel in-progress stream contexts and close connections to unblock
+		// the gRPC operations inside Start(). This causes EstablishSession,
+		// StreamSessionPackets, etc. to return with errors, allowing the
+		// background goroutine to exit.
+		g.cleanup()
+		// Wait for the goroutine to finish after cleanup
+		select {
+		case <-done:
+			// Goroutine exited after cleanup — good
+		case <-time.After(10 * time.Second):
+			g.logger.Warn("reconnection goroutine did not exit promptly after cleanup")
+		}
+		return fmt.Errorf("reconnection attempt timed out after %v", timeout)
+	case <-g.ctx.Done():
+		return g.ctx.Err()
+	}
 }
 
 // reconnect resets connection state and attempts to start a new connection

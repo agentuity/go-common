@@ -19,32 +19,32 @@ func TestNewTestLogger(t *testing.T) {
 func TestTestLoggerMethods(t *testing.T) {
 	logger := NewTestLogger()
 
-	logger.Trace("Trace message", 1)
-	logger.Debug("Debug message", 2)
-	logger.Info("Info message", 3)
-	logger.Warn("Warn message", 4)
-	logger.Error("Error message", 5)
+	logger.Trace("Trace message %v", 1)
+	logger.Debug("Debug message %v", 2)
+	logger.Info("Info message %v", 3)
+	logger.Warn("Warn message %v", 4)
+	logger.Error("Error message %v", 5)
 
 	assert.Len(t, logger.Logs, 5)
 
 	assert.Equal(t, "TRACE", logger.Logs[0].Severity)
-	assert.Equal(t, "Trace message", logger.Logs[0].Message)
+	assert.Equal(t, "Trace message %v", logger.Logs[0].Message)
 	assert.Equal(t, []interface{}{1}, logger.Logs[0].Arguments)
 
 	assert.Equal(t, "DEBUG", logger.Logs[1].Severity)
-	assert.Equal(t, "Debug message", logger.Logs[1].Message)
+	assert.Equal(t, "Debug message %v", logger.Logs[1].Message)
 	assert.Equal(t, []interface{}{2}, logger.Logs[1].Arguments)
 
 	assert.Equal(t, "INFO", logger.Logs[2].Severity)
-	assert.Equal(t, "Info message", logger.Logs[2].Message)
+	assert.Equal(t, "Info message %v", logger.Logs[2].Message)
 	assert.Equal(t, []interface{}{3}, logger.Logs[2].Arguments)
 
 	assert.Equal(t, "WARNING", logger.Logs[3].Severity)
-	assert.Equal(t, "Warn message", logger.Logs[3].Message)
+	assert.Equal(t, "Warn message %v", logger.Logs[3].Message)
 	assert.Equal(t, []interface{}{4}, logger.Logs[3].Arguments)
 
 	assert.Equal(t, "ERROR", logger.Logs[4].Severity)
-	assert.Equal(t, "Error message", logger.Logs[4].Message)
+	assert.Equal(t, "Error message %v", logger.Logs[4].Message)
 	assert.Equal(t, []interface{}{5}, logger.Logs[4].Arguments)
 }
 

@@ -321,13 +321,13 @@ func TestConsoleLoggerSinkErrorLevel(t *testing.T) {
 
 func TestConsoleLoggerIsLevelEnabled(t *testing.T) {
 	tests := []struct {
-		name           string
-		logLevel       LogLevel
-		traceEnabled   bool
-		debugEnabled   bool
-		infoEnabled    bool
-		warnEnabled    bool
-		errorEnabled   bool
+		name         string
+		logLevel     LogLevel
+		traceEnabled bool
+		debugEnabled bool
+		infoEnabled  bool
+		warnEnabled  bool
+		errorEnabled bool
 	}{
 		{
 			name:         "trace level enables all",

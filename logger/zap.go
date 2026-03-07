@@ -46,22 +46,22 @@ func (z *zapBridge) Write(entry zapcore.Entry, fields []zapcore.Field) error {
 
 	switch entry.Level {
 	case zapcore.DebugLevel:
-		logger.Debug(entry.Message)
+		logger.Debug("%s", entry.Message)
 	case zapcore.InfoLevel:
-		logger.Info(entry.Message)
+		logger.Info("%s", entry.Message)
 	case zapcore.WarnLevel:
-		logger.Warn(entry.Message)
+		logger.Warn("%s", entry.Message)
 	case zapcore.ErrorLevel:
-		logger.Error(entry.Message)
+		logger.Error("%s", entry.Message)
 	case zapcore.DPanicLevel:
-		logger.Error(entry.Message)
+		logger.Error("%s", entry.Message)
 	case zapcore.PanicLevel:
-		logger.Error(entry.Message)
+		logger.Error("%s", entry.Message)
 		panic(entry.Message)
 	case zapcore.FatalLevel:
-		logger.Fatal(entry.Message)
+		logger.Fatal("%s", entry.Message)
 	default:
-		logger.Trace(entry.Message)
+		logger.Trace("%s", entry.Message)
 	}
 
 	return nil

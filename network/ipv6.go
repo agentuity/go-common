@@ -157,10 +157,10 @@ var Regions = map[string]Region{
 	"eu-north-1":   RegionEUEast3, // Stockholm
 
 	// Azure Europe regions
-	"westeurope":  RegionEUWest1, // Netherlands
-	"northeurope": RegionEUWest2, // Ireland
-	"uksouth":     RegionEUWest2, // UK South
-	"ukwest":      RegionEUWest3, // UK West
+	"westeurope":         RegionEUWest1, // Netherlands
+	"northeurope":        RegionEUWest2, // Ireland
+	"uksouth":            RegionEUWest2, // UK South
+	"ukwest":             RegionEUWest3, // UK West
 	"germanywestcentral": RegionEUEast1, // Frankfurt
 	"swedencentral":      RegionEUEast2, // Sweden
 	"norwayeast":         RegionEUEast3, // Norway

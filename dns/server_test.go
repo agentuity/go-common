@@ -94,9 +94,9 @@ func TestDNSResolver_selectNameservers_avoidsLoop(t *testing.T) {
 	}
 
 	tests := []struct {
-		target           string
-		expectUpstream   bool
-		description      string
+		target         string
+		expectUpstream bool
+		description    string
 	}{
 		{"aether", true, "internal nameserver hostname should use upstream"},
 		{"app.agentuity.internal", false, "managed domain should use internal"},

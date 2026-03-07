@@ -4,7 +4,6 @@ package gravity;
 
 import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
-import "gravity_metrics.proto"; // Import shared types
 import "gravity_monitor.proto";
 
 option go_package = "github.com/agentuity/go-common/gravity/proto";
@@ -68,7 +67,7 @@ message SessionMessage {
     // Health and monitoring (30-39)
     PingRequest ping = 30;
     PongResponse pong = 31;
-    ReportRequest report = 32;             // DEPRECATED: Legacy metrics report. Use monitor_report (field 33) instead.
+    // Field 32 reserved (was: ReportRequest report, deprecated and removed)
     NodeMonitorReport monitor_report = 33; // Node monitoring report (hadron → gravity)
     MonitorCommand monitor_command = 34;   // Monitoring commands (gravity → hadron)
 
@@ -149,7 +148,7 @@ message ClientCapabilities {
 
 message RouteDeploymentRequest {
   string deployment_id = 1; // Unique identifier for the deployment
-  string hostname = 2; // Deprecated: unused and will be removed
+  reserved 2; // was: hostname (deprecated and removed)
   string virtual_ip = 3; // Hadron virtual IP for the deployment
 }
 
@@ -160,12 +159,6 @@ message RouteDeploymentResponse {
 // Unprovision request
 message UnprovisionRequest {
   string deployment_id = 1; // Unique identifier of deployment to remove
-}
-
-// Deprecated: Use NodeMonitorReport from gravity_monitor.proto instead.
-// Retained for wire compatibility with older hadron versions.
-message ReportRequest {
-  ServerMetrics metrics = 1;
 }
 
 // Ping request for health checking
@@ -256,11 +249,6 @@ message ExistingDeployment {
   google.protobuf.Duration pausedDuration = 10;
   bool on_demand = 11;
   string cert = 12; // PEM certificate that was issued (just cert, ca + key not required)
-}
-
-message DeploymentSpec {
-  // Deprecated but removing DeploymentSpec breaks wire compat
-  option deprecated = true;
 }
 
 message ResourceRequirements {

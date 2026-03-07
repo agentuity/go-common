@@ -271,7 +271,6 @@ func TestSessionReadiness_Timeout(t *testing.T) {
 func TestSessionReadiness_ResetOnReconnect(t *testing.T) {
 	client := &GravityClient{
 		logger:            logger.NewTestLogger(),
-		serverMetrics:     NewServerMetrics(),
 		sessionReady:      make(chan struct{}),
 		streamManager:     &StreamManager{},
 		skipAutoReconnect: true,

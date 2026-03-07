@@ -126,7 +126,6 @@ type GravityClient struct {
 	capabilities       *pb.ClientCapabilities
 	hostInfo           *pb.HostInfo
 	workingDir         string
-	reportStats        bool
 
 	// Session response fields
 	machineID string
@@ -142,9 +141,6 @@ type GravityClient struct {
 	// Fault tolerance
 	retryConfig     RetryConfig
 	circuitBreakers []*CircuitBreaker // One per connection
-
-	// Performance monitoring - optional
-	serverMetrics *ServerMetrics
 
 	// Connection management
 	mu                sync.RWMutex
@@ -202,9 +198,6 @@ type GravityClient struct {
 
 	// heartbeat configuration
 	pingInterval time.Duration
-
-	// report delivery configuration
-	reportInterval time.Duration
 
 	// otel
 	tracer trace.Tracer
@@ -331,15 +324,12 @@ func New(config GravityConfig) (*GravityClient, error) {
 		outboundPackets:        make(chan []byte, 1000),
 		textMessages:           make(chan *PooledBuffer, 100),
 		pingInterval:           config.PingInterval,
-		reportInterval:         config.ReportInterval,
 		streamManager: &StreamManager{
 			streamMetrics:      make(map[string]*StreamMetrics),
 			allocationStrategy: poolConfig.AllocationStrategy,
 		},
-		serverMetrics:     NewServerMetrics(),
 		workingDir:        config.WorkingDir,
 		tracePackets:      config.TraceLogPackets,
-		reportStats:       config.ReportStats,
 		skipAutoReconnect: config.SkipAutoReconnect,
 		closed:            make(chan struct{}, 1),
 		tracer:            otel.Tracer("@agentuity/gravity/client"),
@@ -507,19 +497,11 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("tunnel streams established successfully")
 
-	// Metrics collector is now hadron-specific and handled externally
-
-	// Set up stats collection if provider supports it
-	// All providers should have these methods based on the Provider interface
-	g.logger.Debug("configuring stats collection for provider")
-	// Note: SetMetricsCollector will be called externally by hadron
-
 	// Re-acquire mutex for final state updates
 	g.mu.Lock()
 	g.connected = true
 	g.mu.Unlock()
 
-	g.serverMetrics.UpdateConnection(true)
 	g.logger.Debug("connected to Gravity server via gRPC: %s", grpcURL)
 
 	g.logger.Debug("starting background goroutines...")
@@ -531,9 +513,6 @@ func (g *GravityClient) Start() error {
 	go g.monitorConnectionHealth()
 	go g.handlePingHeartbeat()
 
-	if g.reportStats {
-		go g.handleReportDelivery()
-	}
 	g.logger.Debug("all background goroutines started successfully")
 
 	g.logger.Debug("gRPC Gravity client startup completed successfully")
@@ -801,8 +780,6 @@ func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 		g.handleRouteSandboxResponse(msg.Id, m.RouteSandboxResponse)
 	case *pb.SessionMessage_Unprovision:
 		g.handleUnprovisionRequest(msg.Id, m.Unprovision)
-	case *pb.SessionMessage_Report:
-		// this is a server method
 	case *pb.SessionMessage_Ping:
 		g.handlePingRequest(msg.Id, m.Ping)
 	case *pb.SessionMessage_SessionClose:
@@ -1549,9 +1526,6 @@ func (g *GravityClient) stop() error {
 	g.mu.Lock()
 	g.cancel()
 
-	// Update connection status
-	g.serverMetrics.UpdateConnection(false)
-
 	g.cleanup()
 	g.connected = false
 	g.mu.Unlock()
@@ -1615,9 +1589,6 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 
 	// Clean up current connections without full shutdown
 	g.disconnectStreams()
-
-	// Update connection status
-	g.serverMetrics.UpdateConnection(false)
 
 	if wasConnected && g.skipAutoReconnect {
 		g.logger.Debug("client is configured to skip auto-reconnect")
@@ -1731,95 +1702,6 @@ func (g *GravityClient) reconnect() error {
 	return g.Start()
 }
 
-// GetServerMetrics returns current server metrics with performance data
-func (g *GravityClient) GetServerMetrics(reset bool) *pb.ServerMetrics {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-
-	// Update system metrics
-	g.serverMetrics.UpdateSystemMetrics()
-
-	// Update performance metrics from collector
-
-	// Update gRPC-specific metrics
-	grpcMetrics := g.getGRPCMetrics()
-	g.serverMetrics.UpdateGRPCMetrics(grpcMetrics)
-
-	// Add historical sample
-	g.serverMetrics.AddHistoricalSample()
-
-	res := g.serverMetrics.GetSnapshot()
-
-	if reset {
-		g.serverMetrics.Reset()
-	}
-
-	return res
-}
-
-// getGRPCMetrics collects current gRPC connection and stream metrics
-func (g *GravityClient) getGRPCMetrics() *GRPCConnectionMetrics {
-	metrics := &GRPCConnectionMetrics{
-		PoolSize:              int32(len(g.connections)),
-		ActiveConnections:     int32(len(g.connections)), // Simplified - all are considered active
-		IdleConnections:       0,
-		FailedConnections:     0,
-		ConnectionStates:      make([]string, len(g.connections)),
-		ProtocolVersion:       "HTTP/2",
-		CompressionEnabled:    true,
-		TlsVersion:            "TLS 1.3", // Simplified
-		LastHealthCheck:       time.Now().UnixMilli(),
-		HealthCheckIntervalNs: int64(g.poolConfig.HealthCheckInterval),
-		StreamAllocation:      g.getStreamAllocationStrategyName(),
-	}
-
-	// Get stream information
-	if g.streamManager != nil {
-		g.streamManager.tunnelMu.RLock()
-		metrics.TotalStreams = int32(len(g.streamManager.tunnelStreams))
-		healthyCount := 0
-		activeCount := 0
-		unhealthyStreams := make([]string, 0)
-
-		for _, streamInfo := range g.streamManager.tunnelStreams {
-			if streamInfo.isHealthy {
-				healthyCount++
-				if streamInfo.loadCount > 0 {
-					activeCount++
-				}
-			} else {
-				unhealthyStreams = append(unhealthyStreams, streamInfo.streamID)
-			}
-		}
-
-		metrics.HealthyStreams = int32(healthyCount)
-		metrics.ActiveStreams = int32(activeCount)
-		metrics.TunnelStreams = int32(len(g.streamManager.tunnelStreams))
-		metrics.UnhealthyStreams = unhealthyStreams
-		g.streamManager.tunnelMu.RUnlock()
-
-		g.streamManager.controlMu.RLock()
-		metrics.ControlStreams = int32(len(g.streamManager.controlStreams))
-		g.streamManager.controlMu.RUnlock()
-	}
-
-	// Set connection states (simplified)
-	for i := range metrics.ConnectionStates {
-		if i < len(g.circuitBreakers) {
-			cbState := g.circuitBreakers[i].State()
-			if cbState == StateClosed {
-				metrics.ConnectionStates[i] = "HEALTHY"
-			} else {
-				metrics.ConnectionStates[i] = cbState.String()
-			}
-		} else {
-			metrics.ConnectionStates[i] = "HEALTHY"
-		}
-	}
-
-	return metrics
-}
-
 // getStreamAllocationStrategyName returns the name of the current allocation strategy
 func (g *GravityClient) getStreamAllocationStrategyName() string {
 	switch g.poolConfig.AllocationStrategy {
@@ -1834,11 +1716,6 @@ func (g *GravityClient) getStreamAllocationStrategyName() string {
 	default:
 		return "Unknown"
 	}
-}
-
-// GetHealthScore returns the overall health score (0-100)
-func (g *GravityClient) GetHealthScore() float64 {
-	return g.serverMetrics.GetHealthScore()
 }
 
 // Helper functions
@@ -1931,7 +1808,7 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 }
 
 // SendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
-func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
+func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	// which replaces the channel.
 	g.mu.RLock()
@@ -1970,7 +1847,6 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, hostname, virtu
 		MessageType: &pb.SessionMessage_RouteDeployment{
 			RouteDeployment: &pb.RouteDeploymentRequest{
 				DeploymentId: deploymentID,
-				Hostname:     hostname,
 				VirtualIp:    virtualIP,
 			},
 		},
@@ -2749,54 +2625,6 @@ func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 		g.logger.Debug("monitor report send timed out, dropping")
 		return nil
 	}
-}
-
-// Deprecated: handleReportDelivery is deprecated. Monitor reports are now sent by hadron's monitor package via SendMonitorReport.
-func (g *GravityClient) handleReportDelivery() {
-	ticker := time.NewTicker(g.reportInterval)
-	defer ticker.Stop()
-	g.sendReport()
-	for {
-		select {
-		case <-g.ctx.Done():
-			return
-		case <-ticker.C:
-			g.logger.Debug("sending report to gravity server")
-			g.sendReport()
-		}
-	}
-}
-
-// Deprecated: sendReport is deprecated. Use SendMonitorReport for new monitoring data.
-func (g *GravityClient) sendReport() {
-	g.streamManager.controlMu.RLock()
-	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
-		g.streamManager.controlMu.RUnlock()
-		g.logger.Debug("no control streams available for ping")
-		return
-	}
-	controlStream := g.streamManager.controlStreams[0]
-	g.streamManager.controlMu.RUnlock()
-
-	started := time.Now()
-	reportID := generateMessageID()
-
-	reportMsg := &pb.SessionMessage{
-		Id: reportID,
-		MessageType: &pb.SessionMessage_Report{
-			Report: &pb.ReportRequest{
-				Metrics: g.GetServerMetrics(true),
-			},
-		},
-	}
-
-	err := controlStream.Send(reportMsg)
-	if err != nil {
-		g.logger.Error("failed to send report: %v", err)
-		return
-	}
-
-	g.logger.Trace("sent report message: id=%s, took=%v", reportID, time.Since(started))
 }
 
 // handlePingHeartbeat sends periodic ping messages to maintain connection health

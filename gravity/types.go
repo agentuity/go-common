@@ -41,12 +41,10 @@ type GravityConfig struct {
 	ClientName           string
 	Capabilities         *pb.ClientCapabilities
 	PingInterval         time.Duration
-	ReportInterval       time.Duration
 	WorkingDir           string
 	TraceLogPackets      bool
 	NetworkInterface     network.NetworkInterface
 	ConnectionPoolConfig *ConnectionPoolConfig
-	ReportStats          bool
 	SkipAutoReconnect    bool
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)

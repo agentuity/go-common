@@ -68,14 +68,6 @@ const (
 	DeprovisionReasonUnprovision DeprovisionReason = "unprovision"
 )
 
-// ProjectRuntimeStatsCollector interface for collecting project runtime statistics
-type ProjectRuntimeStatsCollector interface {
-	UpdateRuntimeStats(deploymentID string, stats interface{})
-	RemoveRuntimeStats(deploymentID string)
-	PauseRuntimeStats(deploymentID string)
-	UnpauseRuntimeStats(deploymentID string)
-}
-
 // Provider interface defines the minimal set of methods required by the gravity client
 type Provider interface {
 	// Configure will be called to configure the provider with the given configuration
@@ -91,9 +83,6 @@ type ProvisioningProvider interface {
 
 	// Resources returns a list of all resources regardless of state
 	Resources() []*pb.ExistingDeployment
-
-	// SetMetricsCollector sets the metrics collector for runtime stats collection
-	SetMetricsCollector(collector ProjectRuntimeStatsCollector)
 }
 
 // CheckpointProvider extends ProvisioningProvider with checkpoint/restore capabilities.

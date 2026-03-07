@@ -1,0 +1,192 @@
+syntax = "proto3";
+
+package gravity;
+
+option go_package = "github.com/agentuity/go-common/gravity/proto";
+
+// ===== Node Monitor Report (hadron → gravity) =====
+
+message NodeMonitorReport {
+  string machine_id = 1;
+  int64 reported_at_us = 2;
+  uint64 seq = 3;
+  HostMetrics host = 4;
+  repeated ContainerMetrics containers = 5;
+  CapacitySummary capacity = 6;
+  repeated NodeEvent events = 7;
+  int32 report_interval_seconds = 8;
+}
+
+// ===== Host Metrics =====
+
+message HostMetrics {
+  CpuMetrics cpu = 1;
+  MemoryMetrics memory = 2;
+  repeated DiskMetrics disks = 3;
+  repeated NetworkInterfaceMetrics network_interfaces = 4;
+  SystemInfo system = 5;
+}
+
+message CpuMetrics {
+  double usage_percent = 1;
+  repeated double core_usage_percent = 2;
+  double load_avg_1 = 3;
+  double load_avg_5 = 4;
+  double load_avg_15 = 5;
+  int32 core_count = 6;
+}
+
+message MemoryMetrics {
+  uint64 total_bytes = 1;
+  uint64 used_bytes = 2;
+  uint64 available_bytes = 3;
+  uint64 cached_bytes = 4;
+  uint64 buffers_bytes = 5;
+  uint64 swap_total_bytes = 6;
+  uint64 swap_used_bytes = 7;
+  double usage_percent = 8;
+}
+
+message DiskMetrics {
+  string mount_point = 1;
+  string device = 2;
+  string fs_type = 3;
+  uint64 total_bytes = 4;
+  uint64 used_bytes = 5;
+  uint64 available_bytes = 6;
+  double usage_percent = 7;
+  uint64 inodes_total = 8;
+  uint64 inodes_used = 9;
+  uint64 read_bytes_delta = 10;
+  uint64 write_bytes_delta = 11;
+  uint64 read_ops_delta = 12;
+  uint64 write_ops_delta = 13;
+}
+
+message NetworkInterfaceMetrics {
+  string name = 1;
+  uint64 rx_bytes_delta = 2;
+  uint64 tx_bytes_delta = 3;
+  uint64 rx_packets_delta = 4;
+  uint64 tx_packets_delta = 5;
+  uint64 rx_errors_delta = 6;
+  uint64 tx_errors_delta = 7;
+  uint64 rx_drops_delta = 8;
+  uint64 tx_drops_delta = 9;
+  string link_state = 10;
+  uint64 speed_mbps = 11;
+}
+
+message SystemInfo {
+  string hostname = 1;
+  string kernel_version = 2;
+  string os = 3;
+  string arch = 4;
+  uint64 uptime_seconds = 5;
+  int32 cpu_count = 6;
+  uint64 total_memory_bytes = 7;
+}
+
+// ===== Container Metrics =====
+
+message ContainerMetrics {
+  string entity_id = 1;  // deployment ID or sandbox ID — identifies what the container runs
+  string container_id = 2;
+  string image = 3;
+  string state = 4;
+
+  // CPU
+  double cpu_usage_percent = 5;
+  uint64 cpu_throttled_periods = 6;
+  uint64 cpu_total_periods = 7;
+  int32 cpu_limit_millicores = 8;
+
+  // Memory
+  uint64 memory_usage_bytes = 9;
+  uint64 memory_limit_bytes = 10;
+  uint64 memory_rss_bytes = 11;
+  uint64 memory_cache_bytes = 12;
+  uint64 memory_swap_bytes = 13;
+  uint32 oom_kill_count = 14;
+
+  // Network (deltas)
+  uint64 net_rx_bytes_delta = 15;
+  uint64 net_tx_bytes_delta = 16;
+  uint64 net_rx_packets_delta = 17;
+  uint64 net_tx_packets_delta = 18;
+
+  // Block I/O (deltas)
+  uint64 blkio_read_bytes_delta = 19;
+  uint64 blkio_write_bytes_delta = 20;
+
+  // Process
+  uint32 pid_count = 21;
+
+  // Health/Identity
+  bool healthy = 22;
+  uint32 inflight_requests = 23;
+  int64 started_at_us = 24;
+  int64 last_updated_us = 25;
+  string ipv4_address = 26;
+  string ipv6_address = 27;
+}
+
+// ===== Capacity Summary =====
+
+message CapacitySummary {
+  double cpu_pressure = 1;
+  double memory_pressure = 2;
+  double disk_pressure = 3;
+  double network_pressure = 4;
+  double composite_score = 5;
+  int32 total_containers = 6;
+  int32 running_containers = 7;
+}
+
+// ===== Events =====
+
+enum NodeEventLevel {
+  NODE_EVENT_LEVEL_UNSPECIFIED = 0;
+  NODE_EVENT_LEVEL_INFO = 1;
+  NODE_EVENT_LEVEL_WARN = 2;
+  NODE_EVENT_LEVEL_ERROR = 3;
+  NODE_EVENT_LEVEL_CRITICAL = 4;
+}
+
+enum NodeEventType {
+  NODE_EVENT_TYPE_UNSPECIFIED = 0;
+  NODE_EVENT_TYPE_CONTAINER_START = 1;
+  NODE_EVENT_TYPE_CONTAINER_STOP = 2;
+  NODE_EVENT_TYPE_CONTAINER_OOM = 3;
+  NODE_EVENT_TYPE_CONTAINER_HEALTH_CHANGE = 4;
+  NODE_EVENT_TYPE_PRESSURE_THRESHOLD = 5;
+  NODE_EVENT_TYPE_DISK_NEARLY_FULL = 6;
+  NODE_EVENT_TYPE_COLLECTOR_ERROR = 7;
+  NODE_EVENT_TYPE_PRESSURE_ALERT = 8;
+  NODE_EVENT_TYPE_HEALTH_ALERT = 9;
+}
+
+message NodeEvent {
+  int64 timestamp_us = 1;
+  NodeEventLevel level = 2;
+  NodeEventType type = 3;
+  string message = 4;
+  map<string, string> metadata = 5;
+}
+
+// ===== Monitor Commands (gravity → hadron) =====
+
+message MonitorCommand {
+  oneof command {
+    AdjustMonitorInterval adjust_interval = 1;
+    RequestMonitorSnapshot request_snapshot = 2;
+  }
+}
+
+message AdjustMonitorInterval {
+  int32 interval_seconds = 1;
+}
+
+message RequestMonitorSnapshot {
+  // Triggers immediate out-of-cycle collection
+}

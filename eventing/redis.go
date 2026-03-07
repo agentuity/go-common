@@ -357,7 +357,7 @@ func (c *redisEventingClient) receiveMessage(ctx context.Context, queueSubject s
 
 	msg, err := c.decodeMessage(queueSubject, payload)
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Error("%s", err.Error())
 		return
 	}
 	// extract the trace context from the headers
@@ -611,7 +611,7 @@ func (c *redisEventingClient) queueFetchMessages(ctx context.Context, subject, q
 		// Process the message
 		msg, err := c.decodeMessage(subject, []byte(payload))
 		if err != nil {
-			c.logger.Error(err.Error())
+			c.logger.Error("%s", err.Error())
 			continue
 		}
 		msgSet.msgs = append(msgSet.msgs, &msg)

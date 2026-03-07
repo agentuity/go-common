@@ -68,7 +68,9 @@ const (
 	DeprovisionReasonUnprovision DeprovisionReason = "unprovision"
 )
 
-// ProjectRuntimeStatsCollector interface for collecting project runtime statistics
+// Deprecated: ProjectRuntimeStatsCollector is deprecated.
+// New monitoring uses NodeMonitorReport from gravity/proto/gravity_monitor.proto.
+// This interface is retained for backward compatibility during the transition period.
 type ProjectRuntimeStatsCollector interface {
 	UpdateRuntimeStats(deploymentID string, stats interface{})
 	RemoveRuntimeStats(deploymentID string)

@@ -179,6 +179,8 @@ type SessionMessage struct {
 	//	*SessionMessage_Ping
 	//	*SessionMessage_Pong
 	//	*SessionMessage_Report
+	//	*SessionMessage_MonitorReport
+	//	*SessionMessage_MonitorCommand
 	//	*SessionMessage_Pause
 	//	*SessionMessage_Resume
 	//	*SessionMessage_ConfigUpdate
@@ -342,6 +344,24 @@ func (x *SessionMessage) GetReport() *ReportRequest {
 	if x != nil {
 		if x, ok := x.MessageType.(*SessionMessage_Report); ok {
 			return x.Report
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetMonitorReport() *NodeMonitorReport {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_MonitorReport); ok {
+			return x.MonitorReport
+		}
+	}
+	return nil
+}
+
+func (x *SessionMessage) GetMonitorCommand() *MonitorCommand {
+	if x != nil {
+		if x, ok := x.MessageType.(*SessionMessage_MonitorCommand); ok {
+			return x.MonitorCommand
 		}
 	}
 	return nil
@@ -512,7 +532,15 @@ type SessionMessage_Pong struct {
 }
 
 type SessionMessage_Report struct {
-	Report *ReportRequest `protobuf:"bytes,32,opt,name=report,proto3,oneof"`
+	Report *ReportRequest `protobuf:"bytes,32,opt,name=report,proto3,oneof"` // DEPRECATED: Legacy metrics report. Use monitor_report (field 33) instead.
+}
+
+type SessionMessage_MonitorReport struct {
+	MonitorReport *NodeMonitorReport `protobuf:"bytes,33,opt,name=monitor_report,json=monitorReport,proto3,oneof"` // Node monitoring report (hadron → gravity)
+}
+
+type SessionMessage_MonitorCommand struct {
+	MonitorCommand *MonitorCommand `protobuf:"bytes,34,opt,name=monitor_command,json=monitorCommand,proto3,oneof"` // Monitoring commands (gravity → hadron)
 }
 
 type SessionMessage_Pause struct {
@@ -593,6 +621,10 @@ func (*SessionMessage_Ping) isSessionMessage_MessageType() {}
 func (*SessionMessage_Pong) isSessionMessage_MessageType() {}
 
 func (*SessionMessage_Report) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_MonitorReport) isSessionMessage_MessageType() {}
+
+func (*SessionMessage_MonitorCommand) isSessionMessage_MessageType() {}
 
 func (*SessionMessage_Pause) isSessionMessage_MessageType() {}
 
@@ -1172,10 +1204,11 @@ func (x *UnprovisionRequest) GetDeploymentId() string {
 	return ""
 }
 
-// Report request for metrics
+// Deprecated: Use NodeMonitorReport from gravity_monitor.proto instead.
+// Retained for wire compatibility with older hadron versions.
 type ReportRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Metrics       *ServerMetrics         `protobuf:"bytes,1,opt,name=metrics,proto3" json:"metrics,omitempty"` // Comprehensive server metrics and performance data
+	Metrics       *ServerMetrics         `protobuf:"bytes,1,opt,name=metrics,proto3" json:"metrics,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3336,12 +3369,12 @@ var File_gravity_session_proto protoreflect.FileDescriptor
 
 const file_gravity_session_proto_rawDesc = "" +
 	"\n" +
-	"\x15gravity_session.proto\x12\agravity\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15gravity_metrics.proto\"2\n" +
+	"\x15gravity_session.proto\x12\agravity\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x15gravity_metrics.proto\x1a\x15gravity_monitor.proto\"2\n" +
 	"\x0fIdentifyRequest\x12\x1f\n" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\")\n" +
 	"\x10IdentifyResponse\x12\x15\n" +
-	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xd1\r\n" +
+	"\x06org_id\x18\x01 \x01(\tR\x05orgId\"\xda\x0e\n" +
 	"\x0eSessionMessage\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1b\n" +
 	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x12<\n" +
@@ -3356,7 +3389,9 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x16route_sandbox_response\x18\x1b \x01(\v2\x1d.gravity.RouteSandboxResponseH\x00R\x14routeSandboxResponse\x12*\n" +
 	"\x04ping\x18\x1e \x01(\v2\x14.gravity.PingRequestH\x00R\x04ping\x12+\n" +
 	"\x04pong\x18\x1f \x01(\v2\x15.gravity.PongResponseH\x00R\x04pong\x120\n" +
-	"\x06report\x18  \x01(\v2\x16.gravity.ReportRequestH\x00R\x06report\x12-\n" +
+	"\x06report\x18  \x01(\v2\x16.gravity.ReportRequestH\x00R\x06report\x12C\n" +
+	"\x0emonitor_report\x18! \x01(\v2\x1a.gravity.NodeMonitorReportH\x00R\rmonitorReport\x12B\n" +
+	"\x0fmonitor_command\x18\" \x01(\v2\x17.gravity.MonitorCommandH\x00R\x0emonitorCommand\x12-\n" +
 	"\x05pause\x18( \x01(\v2\x15.gravity.PauseRequestH\x00R\x05pause\x120\n" +
 	"\x06resume\x18) \x01(\v2\x16.gravity.ResumeRequestH\x00R\x06resume\x12C\n" +
 	"\rconfig_update\x18- \x01(\v2\x1c.gravity.ConfigurationUpdateH\x00R\fconfigUpdate\x12\\\n" +
@@ -3665,9 +3700,11 @@ var file_gravity_session_proto_goTypes = []any{
 	(*SandboxRestored)(nil),             // 42: gravity.SandboxRestored
 	(*CheckpointURLRequest)(nil),        // 43: gravity.CheckpointURLRequest
 	(*CheckpointURLResponse)(nil),       // 44: gravity.CheckpointURLResponse
-	(*ServerMetrics)(nil),               // 45: gravity.ServerMetrics
-	(*timestamppb.Timestamp)(nil),       // 46: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),         // 47: google.protobuf.Duration
+	(*NodeMonitorReport)(nil),           // 45: gravity.NodeMonitorReport
+	(*MonitorCommand)(nil),              // 46: gravity.MonitorCommand
+	(*ServerMetrics)(nil),               // 47: gravity.ServerMetrics
+	(*timestamppb.Timestamp)(nil),       // 48: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 49: google.protobuf.Duration
 }
 var file_gravity_session_proto_depIdxs = []int32{
 	4,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
@@ -3681,51 +3718,53 @@ var file_gravity_session_proto_depIdxs = []int32{
 	13, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
 	14, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
 	12, // 10: gravity.SessionMessage.report:type_name -> gravity.ReportRequest
-	16, // 11: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
-	17, // 12: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
-	20, // 13: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	22, // 14: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	18, // 15: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
-	19, // 16: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
-	37, // 17: gravity.SessionMessage.evacuate_request:type_name -> gravity.EvacuateRequest
-	39, // 18: gravity.SessionMessage.evacuation_plan:type_name -> gravity.EvacuationPlan
-	40, // 19: gravity.SessionMessage.sandbox_checkpointed:type_name -> gravity.SandboxCheckpointed
-	41, // 20: gravity.SessionMessage.restore_sandbox_task:type_name -> gravity.RestoreSandboxTask
-	42, // 21: gravity.SessionMessage.sandbox_restored:type_name -> gravity.SandboxRestored
-	43, // 22: gravity.SessionMessage.checkpoint_url_request:type_name -> gravity.CheckpointURLRequest
-	44, // 23: gravity.SessionMessage.checkpoint_url_response:type_name -> gravity.CheckpointURLResponse
-	24, // 24: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
-	23, // 25: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
-	8,  // 26: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
-	29, // 27: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
-	45, // 28: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
-	46, // 29: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	46, // 30: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	21, // 31: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
-	46, // 32: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	26, // 33: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
-	27, // 34: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
-	47, // 35: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
-	28, // 36: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	27, // 37: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	36, // 38: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
-	38, // 39: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
-	0,  // 40: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
-	3,  // 41: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	7,  // 42: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	30, // 43: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	34, // 44: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	1,  // 45: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
-	3,  // 46: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	7,  // 47: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	31, // 48: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	35, // 49: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	2,  // 50: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
-	46, // [46:51] is the sub-list for method output_type
-	41, // [41:46] is the sub-list for method input_type
-	41, // [41:41] is the sub-list for extension type_name
-	41, // [41:41] is the sub-list for extension extendee
-	0,  // [0:41] is the sub-list for field type_name
+	45, // 11: gravity.SessionMessage.monitor_report:type_name -> gravity.NodeMonitorReport
+	46, // 12: gravity.SessionMessage.monitor_command:type_name -> gravity.MonitorCommand
+	16, // 13: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
+	17, // 14: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
+	20, // 15: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	22, // 16: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	18, // 17: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
+	19, // 18: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
+	37, // 19: gravity.SessionMessage.evacuate_request:type_name -> gravity.EvacuateRequest
+	39, // 20: gravity.SessionMessage.evacuation_plan:type_name -> gravity.EvacuationPlan
+	40, // 21: gravity.SessionMessage.sandbox_checkpointed:type_name -> gravity.SandboxCheckpointed
+	41, // 22: gravity.SessionMessage.restore_sandbox_task:type_name -> gravity.RestoreSandboxTask
+	42, // 23: gravity.SessionMessage.sandbox_restored:type_name -> gravity.SandboxRestored
+	43, // 24: gravity.SessionMessage.checkpoint_url_request:type_name -> gravity.CheckpointURLRequest
+	44, // 25: gravity.SessionMessage.checkpoint_url_response:type_name -> gravity.CheckpointURLResponse
+	24, // 26: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
+	23, // 27: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
+	8,  // 28: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
+	29, // 29: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
+	47, // 30: gravity.ReportRequest.metrics:type_name -> gravity.ServerMetrics
+	48, // 31: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	48, // 32: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	21, // 33: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	48, // 34: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	26, // 35: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	27, // 36: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
+	49, // 37: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	28, // 38: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	27, // 39: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	36, // 40: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
+	38, // 41: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
+	0,  // 42: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
+	3,  // 43: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	7,  // 44: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	30, // 45: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	34, // 46: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	1,  // 47: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	3,  // 48: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	7,  // 49: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	31, // 50: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	35, // 51: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	2,  // 52: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	48, // [48:53] is the sub-list for method output_type
+	43, // [43:48] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_gravity_session_proto_init() }
@@ -3734,6 +3773,7 @@ func file_gravity_session_proto_init() {
 		return
 	}
 	file_gravity_metrics_proto_init()
+	file_gravity_monitor_proto_init()
 	file_gravity_session_proto_msgTypes[2].OneofWrappers = []any{
 		(*SessionMessage_SessionHello)(nil),
 		(*SessionMessage_SessionHelloResponse)(nil),
@@ -3746,6 +3786,8 @@ func file_gravity_session_proto_init() {
 		(*SessionMessage_Ping)(nil),
 		(*SessionMessage_Pong)(nil),
 		(*SessionMessage_Report)(nil),
+		(*SessionMessage_MonitorReport)(nil),
+		(*SessionMessage_MonitorCommand)(nil),
 		(*SessionMessage_Pause)(nil),
 		(*SessionMessage_Resume)(nil),
 		(*SessionMessage_ConfigUpdate)(nil),

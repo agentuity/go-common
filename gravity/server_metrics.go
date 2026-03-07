@@ -10,8 +10,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// ServerMetrics represents enhanced server performance metrics with gRPC-specific data
-// This wraps the protobuf ServerMetrics with a mutex for thread safety
+// Deprecated: ServerMetrics is deprecated. Use NodeMonitorReport from gravity/proto for new monitoring.
+// This type is retained for backward compatibility with existing code.
 type ServerMetrics struct {
 	mu sync.RWMutex
 	pb *pb.ServerMetrics
@@ -30,7 +30,7 @@ type (
 	HealthSample          = pb.HealthSample
 )
 
-// NewServerMetrics creates a new ServerMetrics instance
+// Deprecated: NewServerMetrics is deprecated. Use NodeMonitorReport from gravity/proto for new monitoring.
 func NewServerMetrics() *ServerMetrics {
 	return &ServerMetrics{
 		pb: &pb.ServerMetrics{
@@ -248,7 +248,7 @@ func (sm *ServerMetrics) addToHistory(history interface{}, sample interface{}) {
 	}
 }
 
-// GetSnapshot returns a read-only snapshot of current metrics
+// Deprecated: GetSnapshot is deprecated. Use NodeMonitorReport from gravity/proto for new monitoring.
 func (sm *ServerMetrics) GetSnapshot() *pb.ServerMetrics {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()

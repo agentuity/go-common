@@ -4,7 +4,12 @@ package gravity;
 
 option go_package = "github.com/agentuity/go-common/gravity/proto";
 
-// Enhanced ServerMetrics with comprehensive performance and health data
+// DEPRECATED: All messages in this file are deprecated.
+// Use messages from gravity_monitor.proto instead.
+// These definitions are retained for wire compatibility with older hadron versions
+// and will be removed once all machines are upgraded.
+
+// Deprecated: Use NodeMonitorReport instead.
 message ServerMetrics {
   // Basic server metrics (1-10)
   int64 start_time = 1; // epoch milliseconds
@@ -27,7 +32,7 @@ message ServerMetrics {
   HistoricalMetrics historical_data = 41;
 }
 
-// GRPCConnectionMetrics contains gRPC-specific connection metrics
+// Deprecated: Use NodeMonitorReport instead.
 message GRPCConnectionMetrics {
   // Connection pool information (1-10)
   int32 pool_size = 1;
@@ -55,7 +60,7 @@ message GRPCConnectionMetrics {
   repeated string unhealthy_streams = 33;
 }
 
-// PerformanceMetrics contains performance data from MetricsCollector
+// Deprecated: Use NodeMonitorReport instead.
 message PerformanceMetrics {
   // Latency metrics (1-10) - all in nanoseconds
   int64 avg_packet_latency_ns = 1;
@@ -119,7 +124,7 @@ message PerformanceMetrics {
   map<string, ProjectRuntimeStats> runtime_stats = 101;
 }
 
-// MessageStatistics contains detailed message flow statistics
+// Deprecated: Use NodeMonitorReport instead.
 message MessageStatistics {
   // Packet statistics (1-10)
   int64 packets_sent = 1;
@@ -145,7 +150,7 @@ message MessageStatistics {
   double message_delivery_rate = 42; // percentage
 }
 
-// SystemResourceMetrics contains system resource utilization
+// Deprecated: Use NodeMonitorReport instead.
 message SystemResourceMetrics {
   // Memory metrics (1-10)
   int64 memory_usage_bytes = 1;
@@ -167,7 +172,7 @@ message SystemResourceMetrics {
   int32 open_file_descriptors = 31;
 }
 
-// HistoricalMetrics contains time-series data for trend analysis
+// Deprecated: Use NodeMonitorReport instead.
 message HistoricalMetrics {
   // Recent throughput samples (last 60 samples, 1 per minute)
   repeated ThroughputSample throughput_history = 1;
@@ -185,7 +190,7 @@ message HistoricalMetrics {
   int32 max_history_length = 5;
 }
 
-// ThroughputSample represents a throughput measurement at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 message ThroughputSample {
   int64 timestamp = 1; // epoch milliseconds
   double packets_per_sec = 2;
@@ -193,7 +198,7 @@ message ThroughputSample {
   double messages_per_sec = 4;
 }
 
-// LatencySample represents latency measurements at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 message LatencySample {
   int64 timestamp = 1; // epoch milliseconds
   int64 avg_latency_ns = 2;
@@ -202,14 +207,14 @@ message LatencySample {
   int64 max_latency_ns = 5;
 }
 
-// ErrorRateSample represents error rate at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 message ErrorRateSample {
   int64 timestamp = 1; // epoch milliseconds
   double error_rate = 2; // percentage
   int64 total_errors = 3;
 }
 
-// HealthSample represents system health at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 message HealthSample {
   int64 timestamp = 1; // epoch milliseconds
   int32 healthy_streams = 2;
@@ -218,7 +223,7 @@ message HealthSample {
   double health_score = 5; // percentage
 }
 
-// ProjectRuntimeStats contains real-time project runtime statistics
+// Deprecated: Use NodeMonitorReport instead.
 message ProjectRuntimeStats {
   // Runtime identity (1-10)
   string runtime_id = 1;

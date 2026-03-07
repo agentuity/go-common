@@ -21,7 +21,7 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Enhanced ServerMetrics with comprehensive performance and health data
+// Deprecated: Use NodeMonitorReport instead.
 type ServerMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Basic server metrics (1-10)
@@ -158,7 +158,7 @@ func (x *ServerMetrics) GetHistoricalData() *HistoricalMetrics {
 	return nil
 }
 
-// GRPCConnectionMetrics contains gRPC-specific connection metrics
+// Deprecated: Use NodeMonitorReport instead.
 type GRPCConnectionMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Connection pool information (1-10)
@@ -335,7 +335,7 @@ func (x *GRPCConnectionMetrics) GetUnhealthyStreams() []string {
 	return nil
 }
 
-// PerformanceMetrics contains performance data from MetricsCollector
+// Deprecated: Use NodeMonitorReport instead.
 type PerformanceMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Latency metrics (1-10) - all in nanoseconds
@@ -695,7 +695,7 @@ func (x *PerformanceMetrics) GetRuntimeStats() map[string]*ProjectRuntimeStats {
 	return nil
 }
 
-// MessageStatistics contains detailed message flow statistics
+// Deprecated: Use NodeMonitorReport instead.
 type MessageStatistics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Packet statistics (1-10)
@@ -841,7 +841,7 @@ func (x *MessageStatistics) GetMessageDeliveryRate() float64 {
 	return 0
 }
 
-// SystemResourceMetrics contains system resource utilization
+// Deprecated: Use NodeMonitorReport instead.
 type SystemResourceMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Memory metrics (1-10)
@@ -970,7 +970,7 @@ func (x *SystemResourceMetrics) GetOpenFileDescriptors() int32 {
 	return 0
 }
 
-// HistoricalMetrics contains time-series data for trend analysis
+// Deprecated: Use NodeMonitorReport instead.
 type HistoricalMetrics struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Recent throughput samples (last 60 samples, 1 per minute)
@@ -1052,7 +1052,7 @@ func (x *HistoricalMetrics) GetMaxHistoryLength() int32 {
 	return 0
 }
 
-// ThroughputSample represents a throughput measurement at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 type ThroughputSample struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp      int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // epoch milliseconds
@@ -1121,7 +1121,7 @@ func (x *ThroughputSample) GetMessagesPerSec() float64 {
 	return 0
 }
 
-// LatencySample represents latency measurements at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 type LatencySample struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // epoch milliseconds
@@ -1198,7 +1198,7 @@ func (x *LatencySample) GetMaxLatencyNs() int64 {
 	return 0
 }
 
-// ErrorRateSample represents error rate at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 type ErrorRateSample struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp     int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"`                   // epoch milliseconds
@@ -1259,7 +1259,7 @@ func (x *ErrorRateSample) GetTotalErrors() int64 {
 	return 0
 }
 
-// HealthSample represents system health at a point in time
+// Deprecated: Use NodeMonitorReport instead.
 type HealthSample struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	Timestamp         int64                  `protobuf:"varint,1,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // epoch milliseconds
@@ -1336,7 +1336,7 @@ func (x *HealthSample) GetHealthScore() float64 {
 	return 0
 }
 
-// ProjectRuntimeStats contains real-time project runtime statistics
+// Deprecated: Use NodeMonitorReport instead.
 type ProjectRuntimeStats struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Runtime identity (1-10)

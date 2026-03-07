@@ -169,11 +169,12 @@ type GravityClient struct {
 	once             sync.Once
 
 	// Messaging
-	evacuationCallback func()
-	handlerWg          sync.WaitGroup // tracks in-flight checkpoint/restore goroutines
-	response           chan *pb.ProtocolResponse
-	pending            map[string]chan *pb.ProtocolResponse
-	pendingMu          sync.RWMutex
+	evacuationCallback    func()
+	monitorCommandHandler func(cmd *pb.MonitorCommand) // Monitor command handler (set via SetMonitorCommandHandler)
+	handlerWg             sync.WaitGroup               // tracks in-flight checkpoint/restore goroutines
+	response              chan *pb.ProtocolResponse
+	pending               map[string]chan *pb.ProtocolResponse
+	pendingMu             sync.RWMutex
 
 	// Route deployment responses
 	pendingRouteDeployment   map[string]chan routeDeploymentResult
@@ -822,9 +823,27 @@ func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 		g.handleRestoreSandboxTask(msg.Id, m.RestoreSandboxTask)
 	case *pb.SessionMessage_CheckpointUrlResponse:
 		g.handleCheckpointURLResponse(msg.Id, m.CheckpointUrlResponse)
+	case *pb.SessionMessage_MonitorCommand:
+		g.mu.RLock()
+		h := g.monitorCommandHandler
+		g.mu.RUnlock()
+		if h != nil {
+			h(m.MonitorCommand)
+		}
+	case *pb.SessionMessage_MonitorReport:
+		// Server should not send monitor reports to client — ignore
+		g.logger.Debug("received unexpected monitor report from server, ignoring")
 	default:
 		g.logger.Debug("unhandled session message type: %T", m)
 	}
+}
+
+// SetMonitorCommandHandler registers a callback for incoming MonitorCommand messages
+// from the gravity server (e.g., interval adjustments, snapshot requests).
+func (g *GravityClient) SetMonitorCommandHandler(handler func(cmd *pb.MonitorCommand)) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.monitorCommandHandler = handler
 }
 
 // SetEvacuationCallback sets the callback called when evacuation plan processing completes.
@@ -2686,6 +2705,33 @@ func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 	}, nil
 }
 
+// SendMonitorReport sends a NodeMonitorReport to the gravity server via the control stream.
+// This is fire-and-forget — no response is expected. If the stream is unavailable,
+// the report is silently dropped (stale data is worse than missing data).
+func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
+	g.streamManager.controlMu.RLock()
+	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
+		g.streamManager.controlMu.RUnlock()
+		return nil // silently drop if no stream available
+	}
+	controlStream := g.streamManager.controlStreams[0]
+	g.streamManager.controlMu.RUnlock()
+
+	msg := &pb.SessionMessage{
+		Id: generateMessageID(),
+		MessageType: &pb.SessionMessage_MonitorReport{
+			MonitorReport: report,
+		},
+	}
+
+	if err := controlStream.Send(msg); err != nil {
+		g.logger.Debug("failed to send monitor report: %v", err)
+		return err
+	}
+	return nil
+}
+
+// Deprecated: handleReportDelivery is deprecated. Monitor reports are now sent by hadron's monitor package via SendMonitorReport.
 func (g *GravityClient) handleReportDelivery() {
 	ticker := time.NewTicker(g.reportInterval)
 	defer ticker.Stop()
@@ -2701,7 +2747,7 @@ func (g *GravityClient) handleReportDelivery() {
 	}
 }
 
-// sendReport sends a report message to the server
+// Deprecated: sendReport is deprecated. Use SendMonitorReport for new monitoring data.
 func (g *GravityClient) sendReport() {
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {

@@ -51,4 +51,19 @@ type GravityConfig struct {
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)
 	DefaultServerName    string   // Fallback TLS ServerName when connecting via IP address (default: "gravity.agentuity.com")
+
+	// MaxReconnectAttempts is the maximum number of reconnection attempts before
+	// invoking ReconnectionFailedCallback. Default: 10
+	MaxReconnectAttempts int
+
+	// ReconnectAttemptTimeout is the timeout for each individual reconnection
+	// attempt. If a single attempt takes longer than this, it is cancelled and
+	// the next attempt begins. Default: 2 minutes
+	ReconnectAttemptTimeout time.Duration
+
+	// ReconnectionFailedCallback is invoked when all reconnection attempts are
+	// exhausted. This is typically used to crash the process so a supervisor
+	// (e.g. systemd) can perform a clean restart. If nil, the client simply
+	// stops reconnecting.
+	ReconnectionFailedCallback func(attempts int, lastErr error)
 }

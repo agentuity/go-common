@@ -251,13 +251,14 @@ func (sm *ServerMetrics) addToHistory(history interface{}, sample interface{}) {
 // Deprecated: GetSnapshot is deprecated. Use NodeMonitorReport from gravity/proto for new monitoring.
 func (sm *ServerMetrics) GetSnapshot() *pb.ServerMetrics {
 	sm.mu.RLock()
-	defer sm.mu.RUnlock()
+	snapshot := proto.Clone(sm.pb).(*pb.ServerMetrics)
+	sm.mu.RUnlock()
 
-	// Update uptime and return a deep copy of the protobuf metrics
+	// Compute uptime on the cloned snapshot — never mutate shared state under RLock
 	now := time.Now().UnixMilli()
-	sm.pb.Uptime = uint64(now - sm.pb.StartTime)
+	snapshot.Uptime = uint64(now - snapshot.StartTime)
 
-	return proto.Clone(sm.pb).(*pb.ServerMetrics)
+	return snapshot
 }
 
 // Reset resets all metrics to initial state

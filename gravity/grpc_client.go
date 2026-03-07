@@ -828,7 +828,14 @@ func (g *GravityClient) processSessionMessage(msg *pb.SessionMessage) {
 		h := g.monitorCommandHandler
 		g.mu.RUnlock()
 		if h != nil {
-			h(m.MonitorCommand)
+			go func(cmd *pb.MonitorCommand) {
+				defer func() {
+					if r := recover(); r != nil {
+						g.logger.Error("panic in monitor command handler: %v", r)
+					}
+				}()
+				h(cmd)
+			}(m.MonitorCommand)
 		}
 	case *pb.SessionMessage_MonitorReport:
 		// Server should not send monitor reports to client — ignore
@@ -2708,6 +2715,7 @@ func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 // SendMonitorReport sends a NodeMonitorReport to the gravity server via the control stream.
 // This is fire-and-forget — no response is expected. If the stream is unavailable,
 // the report is silently dropped (stale data is worse than missing data).
+// The send is bounded by a short timeout so it cannot block the monitor loop.
 func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
@@ -2724,11 +2732,23 @@ func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 		},
 	}
 
-	if err := controlStream.Send(msg); err != nil {
-		g.logger.Debug("failed to send monitor report: %v", err)
-		return err
+	// Use a bounded send so controlStream.Send cannot block indefinitely.
+	done := make(chan error, 1)
+	go func() {
+		done <- controlStream.Send(msg)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			g.logger.Debug("failed to send monitor report: %v", err)
+			return err
+		}
+		return nil
+	case <-time.After(5 * time.Second):
+		g.logger.Debug("monitor report send timed out, dropping")
+		return nil
 	}
-	return nil
 }
 
 // Deprecated: handleReportDelivery is deprecated. Monitor reports are now sent by hadron's monitor package via SendMonitorReport.

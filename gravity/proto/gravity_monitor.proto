@@ -90,7 +90,7 @@ message SystemInfo {
 // ===== Container Metrics =====
 
 message ContainerMetrics {
-  string deployment_id = 1;
+  string entity_id = 1;  // deployment ID or sandbox ID — identifies what the container runs
   string container_id = 2;
   string image = 3;
   string state = 4;

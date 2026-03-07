@@ -863,11 +863,11 @@ func (x *SystemInfo) GetTotalMemoryBytes() uint64 {
 }
 
 type ContainerMetrics struct {
-	state        protoimpl.MessageState `protogen:"open.v1"`
-	DeploymentId string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"`
-	ContainerId  string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
-	Image        string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
-	State        string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	EntityId    string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"` // deployment ID or sandbox ID — identifies what the container runs
+	ContainerId string                 `protobuf:"bytes,2,opt,name=container_id,json=containerId,proto3" json:"container_id,omitempty"`
+	Image       string                 `protobuf:"bytes,3,opt,name=image,proto3" json:"image,omitempty"`
+	State       string                 `protobuf:"bytes,4,opt,name=state,proto3" json:"state,omitempty"`
 	// CPU
 	CpuUsagePercent     float64 `protobuf:"fixed64,5,opt,name=cpu_usage_percent,json=cpuUsagePercent,proto3" json:"cpu_usage_percent,omitempty"`
 	CpuThrottledPeriods uint64  `protobuf:"varint,6,opt,name=cpu_throttled_periods,json=cpuThrottledPeriods,proto3" json:"cpu_throttled_periods,omitempty"`
@@ -931,9 +931,9 @@ func (*ContainerMetrics) Descriptor() ([]byte, []int) {
 	return file_gravity_monitor_proto_rawDescGZIP(), []int{7}
 }
 
-func (x *ContainerMetrics) GetDeploymentId() string {
+func (x *ContainerMetrics) GetEntityId() string {
 	if x != nil {
-		return x.DeploymentId
+		return x.EntityId
 	}
 	return ""
 }
@@ -1537,9 +1537,9 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12%\n" +
 	"\x0euptime_seconds\x18\x05 \x01(\x04R\ruptimeSeconds\x12\x1b\n" +
 	"\tcpu_count\x18\x06 \x01(\x05R\bcpuCount\x12,\n" +
-	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\xe8\b\n" +
-	"\x10ContainerMetrics\x12#\n" +
-	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12!\n" +
+	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\xe0\b\n" +
+	"\x10ContainerMetrics\x12\x1b\n" +
+	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
 	"\x05image\x18\x03 \x01(\tR\x05image\x12\x14\n" +
 	"\x05state\x18\x04 \x01(\tR\x05state\x12*\n" +

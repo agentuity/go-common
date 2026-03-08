@@ -109,15 +109,25 @@ message ContainerMetrics {
   uint64 memory_swap_bytes = 13;
   uint32 oom_kill_count = 14;
 
-  // Network (deltas)
+  // Network (deltas per report interval)
   uint64 net_rx_bytes_delta = 15;
   uint64 net_tx_bytes_delta = 16;
   uint64 net_rx_packets_delta = 17;
   uint64 net_tx_packets_delta = 18;
 
-  // Block I/O (deltas)
+  // Block I/O (deltas per report interval)
   uint64 blkio_read_bytes_delta = 19;
   uint64 blkio_write_bytes_delta = 20;
+
+  // Network (cumulative totals from container start)
+  uint64 net_rx_bytes_total = 37;
+  uint64 net_tx_bytes_total = 38;
+  uint64 net_rx_packets_total = 39;
+  uint64 net_tx_packets_total = 40;
+
+  // Block I/O (cumulative totals from container start)
+  uint64 blkio_read_bytes_total = 41;
+  uint64 blkio_write_bytes_total = 42;
 
   // Process
   uint32 pid_count = 21;

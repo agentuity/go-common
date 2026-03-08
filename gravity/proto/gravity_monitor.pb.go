@@ -880,14 +880,22 @@ type ContainerMetrics struct {
 	MemoryCacheBytes uint64 `protobuf:"varint,12,opt,name=memory_cache_bytes,json=memoryCacheBytes,proto3" json:"memory_cache_bytes,omitempty"`
 	MemorySwapBytes  uint64 `protobuf:"varint,13,opt,name=memory_swap_bytes,json=memorySwapBytes,proto3" json:"memory_swap_bytes,omitempty"`
 	OomKillCount     uint32 `protobuf:"varint,14,opt,name=oom_kill_count,json=oomKillCount,proto3" json:"oom_kill_count,omitempty"`
-	// Network (deltas)
+	// Network (deltas per report interval)
 	NetRxBytesDelta   uint64 `protobuf:"varint,15,opt,name=net_rx_bytes_delta,json=netRxBytesDelta,proto3" json:"net_rx_bytes_delta,omitempty"`
 	NetTxBytesDelta   uint64 `protobuf:"varint,16,opt,name=net_tx_bytes_delta,json=netTxBytesDelta,proto3" json:"net_tx_bytes_delta,omitempty"`
 	NetRxPacketsDelta uint64 `protobuf:"varint,17,opt,name=net_rx_packets_delta,json=netRxPacketsDelta,proto3" json:"net_rx_packets_delta,omitempty"`
 	NetTxPacketsDelta uint64 `protobuf:"varint,18,opt,name=net_tx_packets_delta,json=netTxPacketsDelta,proto3" json:"net_tx_packets_delta,omitempty"`
-	// Block I/O (deltas)
+	// Block I/O (deltas per report interval)
 	BlkioReadBytesDelta  uint64 `protobuf:"varint,19,opt,name=blkio_read_bytes_delta,json=blkioReadBytesDelta,proto3" json:"blkio_read_bytes_delta,omitempty"`
 	BlkioWriteBytesDelta uint64 `protobuf:"varint,20,opt,name=blkio_write_bytes_delta,json=blkioWriteBytesDelta,proto3" json:"blkio_write_bytes_delta,omitempty"`
+	// Network (cumulative totals from container start)
+	NetRxBytesTotal   uint64 `protobuf:"varint,37,opt,name=net_rx_bytes_total,json=netRxBytesTotal,proto3" json:"net_rx_bytes_total,omitempty"`
+	NetTxBytesTotal   uint64 `protobuf:"varint,38,opt,name=net_tx_bytes_total,json=netTxBytesTotal,proto3" json:"net_tx_bytes_total,omitempty"`
+	NetRxPacketsTotal uint64 `protobuf:"varint,39,opt,name=net_rx_packets_total,json=netRxPacketsTotal,proto3" json:"net_rx_packets_total,omitempty"`
+	NetTxPacketsTotal uint64 `protobuf:"varint,40,opt,name=net_tx_packets_total,json=netTxPacketsTotal,proto3" json:"net_tx_packets_total,omitempty"`
+	// Block I/O (cumulative totals from container start)
+	BlkioReadBytesTotal  uint64 `protobuf:"varint,41,opt,name=blkio_read_bytes_total,json=blkioReadBytesTotal,proto3" json:"blkio_read_bytes_total,omitempty"`
+	BlkioWriteBytesTotal uint64 `protobuf:"varint,42,opt,name=blkio_write_bytes_total,json=blkioWriteBytesTotal,proto3" json:"blkio_write_bytes_total,omitempty"`
 	// Process
 	PidCount uint32 `protobuf:"varint,21,opt,name=pid_count,json=pidCount,proto3" json:"pid_count,omitempty"`
 	// Health/Identity
@@ -1080,6 +1088,48 @@ func (x *ContainerMetrics) GetBlkioReadBytesDelta() uint64 {
 func (x *ContainerMetrics) GetBlkioWriteBytesDelta() uint64 {
 	if x != nil {
 		return x.BlkioWriteBytesDelta
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetNetRxBytesTotal() uint64 {
+	if x != nil {
+		return x.NetRxBytesTotal
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetNetTxBytesTotal() uint64 {
+	if x != nil {
+		return x.NetTxBytesTotal
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetNetRxPacketsTotal() uint64 {
+	if x != nil {
+		return x.NetRxPacketsTotal
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetNetTxPacketsTotal() uint64 {
+	if x != nil {
+		return x.NetTxPacketsTotal
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetBlkioReadBytesTotal() uint64 {
+	if x != nil {
+		return x.BlkioReadBytesTotal
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetBlkioWriteBytesTotal() uint64 {
+	if x != nil {
+		return x.BlkioWriteBytesTotal
 	}
 	return 0
 }
@@ -1827,7 +1877,7 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12%\n" +
 	"\x0euptime_seconds\x18\x05 \x01(\x04R\ruptimeSeconds\x12\x1b\n" +
 	"\tcpu_count\x18\x06 \x01(\x05R\bcpuCount\x12,\n" +
-	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\x93\f\n" +
+	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\xbb\x0e\n" +
 	"\x10ContainerMetrics\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -1849,7 +1899,13 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\x14net_rx_packets_delta\x18\x11 \x01(\x04R\x11netRxPacketsDelta\x12/\n" +
 	"\x14net_tx_packets_delta\x18\x12 \x01(\x04R\x11netTxPacketsDelta\x123\n" +
 	"\x16blkio_read_bytes_delta\x18\x13 \x01(\x04R\x13blkioReadBytesDelta\x125\n" +
-	"\x17blkio_write_bytes_delta\x18\x14 \x01(\x04R\x14blkioWriteBytesDelta\x12\x1b\n" +
+	"\x17blkio_write_bytes_delta\x18\x14 \x01(\x04R\x14blkioWriteBytesDelta\x12+\n" +
+	"\x12net_rx_bytes_total\x18% \x01(\x04R\x0fnetRxBytesTotal\x12+\n" +
+	"\x12net_tx_bytes_total\x18& \x01(\x04R\x0fnetTxBytesTotal\x12/\n" +
+	"\x14net_rx_packets_total\x18' \x01(\x04R\x11netRxPacketsTotal\x12/\n" +
+	"\x14net_tx_packets_total\x18( \x01(\x04R\x11netTxPacketsTotal\x123\n" +
+	"\x16blkio_read_bytes_total\x18) \x01(\x04R\x13blkioReadBytesTotal\x125\n" +
+	"\x17blkio_write_bytes_total\x18* \x01(\x04R\x14blkioWriteBytesTotal\x12\x1b\n" +
 	"\tpid_count\x18\x15 \x01(\rR\bpidCount\x12\x18\n" +
 	"\ahealthy\x18\x16 \x01(\bR\ahealthy\x12+\n" +
 	"\x11inflight_requests\x18\x17 \x01(\rR\x10inflightRequests\x12\"\n" +

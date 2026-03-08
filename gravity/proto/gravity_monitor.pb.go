@@ -1278,6 +1278,7 @@ type DurationStats struct {
 	P50Ms         float64                `protobuf:"fixed64,3,opt,name=p50_ms,json=p50Ms,proto3" json:"p50_ms,omitempty"`
 	P95Ms         float64                `protobuf:"fixed64,4,opt,name=p95_ms,json=p95Ms,proto3" json:"p95_ms,omitempty"`
 	P99Ms         float64                `protobuf:"fixed64,5,opt,name=p99_ms,json=p99Ms,proto3" json:"p99_ms,omitempty"`
+	MinMs         float64                `protobuf:"fixed64,6,opt,name=min_ms,json=minMs,proto3" json:"min_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1343,6 +1344,13 @@ func (x *DurationStats) GetP95Ms() float64 {
 func (x *DurationStats) GetP99Ms() float64 {
 	if x != nil {
 		return x.P99Ms
+	}
+	return 0
+}
+
+func (x *DurationStats) GetMinMs() float64 {
+	if x != nil {
+		return x.MinMs
 	}
 	return 0
 }
@@ -1867,13 +1875,14 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\n" +
 	"status_4xx\x18\x04 \x01(\x04R\tstatus4xx\x12\x1d\n" +
 	"\n" +
-	"status_5xx\x18\x05 \x01(\x04R\tstatus5xx\"\x82\x01\n" +
+	"status_5xx\x18\x05 \x01(\x04R\tstatus5xx\"\x99\x01\n" +
 	"\rDurationStats\x12\x15\n" +
 	"\x06avg_ms\x18\x01 \x01(\x01R\x05avgMs\x12\x15\n" +
 	"\x06max_ms\x18\x02 \x01(\x01R\x05maxMs\x12\x15\n" +
 	"\x06p50_ms\x18\x03 \x01(\x01R\x05p50Ms\x12\x15\n" +
 	"\x06p95_ms\x18\x04 \x01(\x01R\x05p95Ms\x12\x15\n" +
-	"\x06p99_ms\x18\x05 \x01(\x01R\x05p99Ms\"C\n" +
+	"\x06p99_ms\x18\x05 \x01(\x01R\x05p99Ms\x12\x15\n" +
+	"\x06min_ms\x18\x06 \x01(\x01R\x05minMs\"C\n" +
 	"\tByteStats\x12\x19\n" +
 	"\bin_bytes\x18\x01 \x01(\x04R\ainBytes\x12\x1b\n" +
 	"\tout_bytes\x18\x02 \x01(\x04R\boutBytes\"\xb0\x02\n" +

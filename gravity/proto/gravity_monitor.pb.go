@@ -892,20 +892,26 @@ type ContainerMetrics struct {
 	PidCount uint32 `protobuf:"varint,21,opt,name=pid_count,json=pidCount,proto3" json:"pid_count,omitempty"`
 	// Health/Identity
 	Healthy          bool   `protobuf:"varint,22,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	InflightRequests uint32 `protobuf:"varint,23,opt,name=inflight_requests,json=inflightRequests,proto3" json:"inflight_requests,omitempty"`
+	InflightRequests uint32 `protobuf:"varint,23,opt,name=inflight_requests,json=inflightRequests,proto3" json:"inflight_requests,omitempty"` // point-in-time gauge: requests currently being processed
 	StartedAtUs      int64  `protobuf:"varint,24,opt,name=started_at_us,json=startedAtUs,proto3" json:"started_at_us,omitempty"`
 	LastUpdatedUs    int64  `protobuf:"varint,25,opt,name=last_updated_us,json=lastUpdatedUs,proto3" json:"last_updated_us,omitempty"`
 	Ipv4Address      string `protobuf:"bytes,26,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"`
 	Ipv6Address      string `protobuf:"bytes,27,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"`
-	// Traffic / Request Stats
-	UptimeSeconds      float64           `protobuf:"fixed64,28,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	TotalRequests      uint64            `protobuf:"varint,29,opt,name=total_requests,json=totalRequests,proto3" json:"total_requests,omitempty"`
-	InProgressRequests uint32            `protobuf:"varint,30,opt,name=in_progress_requests,json=inProgressRequests,proto3" json:"in_progress_requests,omitempty"`
-	StatusCodes        *StatusCodeCounts `protobuf:"bytes,31,opt,name=status_codes,json=statusCodes,proto3" json:"status_codes,omitempty"`
-	Duration           *DurationStats    `protobuf:"bytes,32,opt,name=duration,proto3" json:"duration,omitempty"`
-	TrafficBytes       *ByteStats        `protobuf:"bytes,33,opt,name=traffic_bytes,json=trafficBytes,proto3" json:"traffic_bytes,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Traffic / Request Stats — cumulative lifetime counters
+	UptimeSeconds float64           `protobuf:"fixed64,28,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"` // seconds since container started (gauge)
+	TotalRequests uint64            `protobuf:"varint,29,opt,name=total_requests,json=totalRequests,proto3" json:"total_requests,omitempty"`  // cumulative lifetime request count
+	StatusCodes   *StatusCodeCounts `protobuf:"bytes,31,opt,name=status_codes,json=statusCodes,proto3" json:"status_codes,omitempty"`         // cumulative lifetime counts by HTTP status class
+	TrafficBytes  *ByteStats        `protobuf:"bytes,33,opt,name=traffic_bytes,json=trafficBytes,proto3" json:"traffic_bytes,omitempty"`      // cumulative lifetime byte counts
+	// Traffic / Request Stats — per-report-interval deltas (since last report)
+	RequestsDelta     uint64            `protobuf:"varint,34,opt,name=requests_delta,json=requestsDelta,proto3" json:"requests_delta,omitempty"`              // requests completed in this report interval
+	StatusCodesDelta  *StatusCodeCounts `protobuf:"bytes,35,opt,name=status_codes_delta,json=statusCodesDelta,proto3" json:"status_codes_delta,omitempty"`    // status code counts in this report interval
+	TrafficBytesDelta *ByteStats        `protobuf:"bytes,36,opt,name=traffic_bytes_delta,json=trafficBytesDelta,proto3" json:"traffic_bytes_delta,omitempty"` // bytes transferred in this report interval
+	// Latency distribution — computed over the current report interval.
+	// Percentiles are calculated locally by the reporting node over all
+	// requests completed since the previous report.
+	Duration      *DurationStats `protobuf:"bytes,32,opt,name=duration,proto3" json:"duration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ContainerMetrics) Reset() {
@@ -1141,23 +1147,9 @@ func (x *ContainerMetrics) GetTotalRequests() uint64 {
 	return 0
 }
 
-func (x *ContainerMetrics) GetInProgressRequests() uint32 {
-	if x != nil {
-		return x.InProgressRequests
-	}
-	return 0
-}
-
 func (x *ContainerMetrics) GetStatusCodes() *StatusCodeCounts {
 	if x != nil {
 		return x.StatusCodes
-	}
-	return nil
-}
-
-func (x *ContainerMetrics) GetDuration() *DurationStats {
-	if x != nil {
-		return x.Duration
 	}
 	return nil
 }
@@ -1169,11 +1161,44 @@ func (x *ContainerMetrics) GetTrafficBytes() *ByteStats {
 	return nil
 }
 
+func (x *ContainerMetrics) GetRequestsDelta() uint64 {
+	if x != nil {
+		return x.RequestsDelta
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetStatusCodesDelta() *StatusCodeCounts {
+	if x != nil {
+		return x.StatusCodesDelta
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetTrafficBytesDelta() *ByteStats {
+	if x != nil {
+		return x.TrafficBytesDelta
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetDuration() *DurationStats {
+	if x != nil {
+		return x.Duration
+	}
+	return nil
+}
+
+// StatusCodeCounts breaks down request counts by HTTP status class.
+// Used for both cumulative lifetime totals (status_codes) and
+// per-report-interval deltas (status_codes_delta).
 type StatusCodeCounts struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Status_2Xx    uint64                 `protobuf:"varint,1,opt,name=status_2xx,json=status2xx,proto3" json:"status_2xx,omitempty"`
-	Status_4Xx    uint64                 `protobuf:"varint,2,opt,name=status_4xx,json=status4xx,proto3" json:"status_4xx,omitempty"`
-	Status_5Xx    uint64                 `protobuf:"varint,3,opt,name=status_5xx,json=status5xx,proto3" json:"status_5xx,omitempty"`
+	Status_1Xx    uint64                 `protobuf:"varint,1,opt,name=status_1xx,json=status1xx,proto3" json:"status_1xx,omitempty"` // informational
+	Status_2Xx    uint64                 `protobuf:"varint,2,opt,name=status_2xx,json=status2xx,proto3" json:"status_2xx,omitempty"` // success
+	Status_3Xx    uint64                 `protobuf:"varint,3,opt,name=status_3xx,json=status3xx,proto3" json:"status_3xx,omitempty"` // redirection
+	Status_4Xx    uint64                 `protobuf:"varint,4,opt,name=status_4xx,json=status4xx,proto3" json:"status_4xx,omitempty"` // client error
+	Status_5Xx    uint64                 `protobuf:"varint,5,opt,name=status_5xx,json=status5xx,proto3" json:"status_5xx,omitempty"` // server error
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1208,9 +1233,23 @@ func (*StatusCodeCounts) Descriptor() ([]byte, []int) {
 	return file_gravity_monitor_proto_rawDescGZIP(), []int{8}
 }
 
+func (x *StatusCodeCounts) GetStatus_1Xx() uint64 {
+	if x != nil {
+		return x.Status_1Xx
+	}
+	return 0
+}
+
 func (x *StatusCodeCounts) GetStatus_2Xx() uint64 {
 	if x != nil {
 		return x.Status_2Xx
+	}
+	return 0
+}
+
+func (x *StatusCodeCounts) GetStatus_3Xx() uint64 {
+	if x != nil {
+		return x.Status_3Xx
 	}
 	return 0
 }
@@ -1229,6 +1268,9 @@ func (x *StatusCodeCounts) GetStatus_5Xx() uint64 {
 	return 0
 }
 
+// DurationStats captures request latency distribution for the current
+// report interval. Percentiles are computed locally by the reporting
+// node over all requests completed since the previous report.
 type DurationStats struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	AvgMs         float64                `protobuf:"fixed64,1,opt,name=avg_ms,json=avgMs,proto3" json:"avg_ms,omitempty"`
@@ -1305,6 +1347,9 @@ func (x *DurationStats) GetP99Ms() float64 {
 	return 0
 }
 
+// ByteStats captures inbound and outbound byte counts.
+// Used for both cumulative lifetime totals (traffic_bytes) and
+// per-report-interval deltas (traffic_bytes_delta).
 type ByteStats struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InBytes       uint64                 `protobuf:"varint,1,opt,name=in_bytes,json=inBytes,proto3" json:"in_bytes,omitempty"`
@@ -1774,7 +1819,7 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12%\n" +
 	"\x0euptime_seconds\x18\x05 \x01(\x04R\ruptimeSeconds\x12\x1b\n" +
 	"\tcpu_count\x18\x06 \x01(\x05R\bcpuCount\x12,\n" +
-	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\x8b\v\n" +
+	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\x93\f\n" +
 	"\x10ContainerMetrics\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -1805,18 +1850,24 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\fipv4_address\x18\x1a \x01(\tR\vipv4Address\x12!\n" +
 	"\fipv6_address\x18\x1b \x01(\tR\vipv6Address\x12%\n" +
 	"\x0euptime_seconds\x18\x1c \x01(\x01R\ruptimeSeconds\x12%\n" +
-	"\x0etotal_requests\x18\x1d \x01(\x04R\rtotalRequests\x120\n" +
-	"\x14in_progress_requests\x18\x1e \x01(\rR\x12inProgressRequests\x12<\n" +
-	"\fstatus_codes\x18\x1f \x01(\v2\x19.gravity.StatusCodeCountsR\vstatusCodes\x122\n" +
-	"\bduration\x18  \x01(\v2\x16.gravity.DurationStatsR\bduration\x127\n" +
-	"\rtraffic_bytes\x18! \x01(\v2\x12.gravity.ByteStatsR\ftrafficBytes\"o\n" +
+	"\x0etotal_requests\x18\x1d \x01(\x04R\rtotalRequests\x12<\n" +
+	"\fstatus_codes\x18\x1f \x01(\v2\x19.gravity.StatusCodeCountsR\vstatusCodes\x127\n" +
+	"\rtraffic_bytes\x18! \x01(\v2\x12.gravity.ByteStatsR\ftrafficBytes\x12%\n" +
+	"\x0erequests_delta\x18\" \x01(\x04R\rrequestsDelta\x12G\n" +
+	"\x12status_codes_delta\x18# \x01(\v2\x19.gravity.StatusCodeCountsR\x10statusCodesDelta\x12B\n" +
+	"\x13traffic_bytes_delta\x18$ \x01(\v2\x12.gravity.ByteStatsR\x11trafficBytesDelta\x122\n" +
+	"\bduration\x18  \x01(\v2\x16.gravity.DurationStatsR\bdurationJ\x04\b\x1e\x10\x1f\"\xad\x01\n" +
 	"\x10StatusCodeCounts\x12\x1d\n" +
 	"\n" +
-	"status_2xx\x18\x01 \x01(\x04R\tstatus2xx\x12\x1d\n" +
+	"status_1xx\x18\x01 \x01(\x04R\tstatus1xx\x12\x1d\n" +
 	"\n" +
-	"status_4xx\x18\x02 \x01(\x04R\tstatus4xx\x12\x1d\n" +
+	"status_2xx\x18\x02 \x01(\x04R\tstatus2xx\x12\x1d\n" +
 	"\n" +
-	"status_5xx\x18\x03 \x01(\x04R\tstatus5xx\"\x82\x01\n" +
+	"status_3xx\x18\x03 \x01(\x04R\tstatus3xx\x12\x1d\n" +
+	"\n" +
+	"status_4xx\x18\x04 \x01(\x04R\tstatus4xx\x12\x1d\n" +
+	"\n" +
+	"status_5xx\x18\x05 \x01(\x04R\tstatus5xx\"\x82\x01\n" +
 	"\rDurationStats\x12\x15\n" +
 	"\x06avg_ms\x18\x01 \x01(\x01R\x05avgMs\x12\x15\n" +
 	"\x06max_ms\x18\x02 \x01(\x01R\x05maxMs\x12\x15\n" +
@@ -1914,18 +1965,20 @@ var file_gravity_monitor_proto_depIdxs = []int32{
 	7,  // 7: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
 	8,  // 8: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
 	10, // 9: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
-	11, // 10: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
-	12, // 11: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
-	0,  // 12: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
-	1,  // 13: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
-	18, // 14: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
-	16, // 15: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
-	17, // 16: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
-	17, // [17:17] is the sub-list for method output_type
-	17, // [17:17] is the sub-list for method input_type
-	17, // [17:17] is the sub-list for extension type_name
-	17, // [17:17] is the sub-list for extension extendee
-	0,  // [0:17] is the sub-list for field type_name
+	12, // 10: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
+	10, // 11: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
+	12, // 12: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
+	11, // 13: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
+	0,  // 14: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
+	1,  // 15: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
+	18, // 16: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
+	16, // 17: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
+	17, // 18: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_gravity_monitor_proto_init() }

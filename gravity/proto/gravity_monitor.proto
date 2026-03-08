@@ -124,27 +124,44 @@ message ContainerMetrics {
 
   // Health/Identity
   bool healthy = 22;
-  uint32 inflight_requests = 23;
+  uint32 inflight_requests = 23;  // point-in-time gauge: requests currently being processed
   int64 started_at_us = 24;
   int64 last_updated_us = 25;
   string ipv4_address = 26;
   string ipv6_address = 27;
 
-  // Traffic / Request Stats
-  double uptime_seconds = 28;
-  uint64 total_requests = 29;
-  uint32 in_progress_requests = 30;
-  StatusCodeCounts status_codes = 31;
+  // Traffic / Request Stats — cumulative lifetime counters
+  double uptime_seconds = 28;              // seconds since container started (gauge)
+  uint64 total_requests = 29;              // cumulative lifetime request count
+  reserved 30;                             // removed: in_progress_requests (use inflight_requests, field 23)
+  StatusCodeCounts status_codes = 31;      // cumulative lifetime counts by HTTP status class
+  ByteStats traffic_bytes = 33;            // cumulative lifetime byte counts
+
+  // Traffic / Request Stats — per-report-interval deltas (since last report)
+  uint64 requests_delta = 34;              // requests completed in this report interval
+  StatusCodeCounts status_codes_delta = 35;// status code counts in this report interval
+  ByteStats traffic_bytes_delta = 36;      // bytes transferred in this report interval
+
+  // Latency distribution — computed over the current report interval.
+  // Percentiles are calculated locally by the reporting node over all
+  // requests completed since the previous report.
   DurationStats duration = 32;
-  ByteStats traffic_bytes = 33;
 }
 
+// StatusCodeCounts breaks down request counts by HTTP status class.
+// Used for both cumulative lifetime totals (status_codes) and
+// per-report-interval deltas (status_codes_delta).
 message StatusCodeCounts {
-  uint64 status_2xx = 1;
-  uint64 status_4xx = 2;
-  uint64 status_5xx = 3;
+  uint64 status_1xx = 1;  // informational
+  uint64 status_2xx = 2;  // success
+  uint64 status_3xx = 3;  // redirection
+  uint64 status_4xx = 4;  // client error
+  uint64 status_5xx = 5;  // server error
 }
 
+// DurationStats captures request latency distribution for the current
+// report interval. Percentiles are computed locally by the reporting
+// node over all requests completed since the previous report.
 message DurationStats {
   double avg_ms = 1;
   double max_ms = 2;
@@ -153,6 +170,9 @@ message DurationStats {
   double p99_ms = 5;
 }
 
+// ByteStats captures inbound and outbound byte counts.
+// Used for both cumulative lifetime totals (traffic_bytes) and
+// per-report-interval deltas (traffic_bytes_delta).
 message ByteStats {
   uint64 in_bytes = 1;
   uint64 out_bytes = 2;

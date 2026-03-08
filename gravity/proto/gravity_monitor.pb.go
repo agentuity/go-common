@@ -892,13 +892,26 @@ type ContainerMetrics struct {
 	PidCount uint32 `protobuf:"varint,21,opt,name=pid_count,json=pidCount,proto3" json:"pid_count,omitempty"`
 	// Health/Identity
 	Healthy          bool   `protobuf:"varint,22,opt,name=healthy,proto3" json:"healthy,omitempty"`
-	InflightRequests uint32 `protobuf:"varint,23,opt,name=inflight_requests,json=inflightRequests,proto3" json:"inflight_requests,omitempty"`
+	InflightRequests uint32 `protobuf:"varint,23,opt,name=inflight_requests,json=inflightRequests,proto3" json:"inflight_requests,omitempty"` // point-in-time gauge: requests currently being processed
 	StartedAtUs      int64  `protobuf:"varint,24,opt,name=started_at_us,json=startedAtUs,proto3" json:"started_at_us,omitempty"`
 	LastUpdatedUs    int64  `protobuf:"varint,25,opt,name=last_updated_us,json=lastUpdatedUs,proto3" json:"last_updated_us,omitempty"`
 	Ipv4Address      string `protobuf:"bytes,26,opt,name=ipv4_address,json=ipv4Address,proto3" json:"ipv4_address,omitempty"`
 	Ipv6Address      string `protobuf:"bytes,27,opt,name=ipv6_address,json=ipv6Address,proto3" json:"ipv6_address,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Traffic / Request Stats — cumulative lifetime counters
+	UptimeSeconds float64           `protobuf:"fixed64,28,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"` // seconds since container started (gauge)
+	TotalRequests uint64            `protobuf:"varint,29,opt,name=total_requests,json=totalRequests,proto3" json:"total_requests,omitempty"`  // cumulative lifetime request count
+	StatusCodes   *StatusCodeCounts `protobuf:"bytes,31,opt,name=status_codes,json=statusCodes,proto3" json:"status_codes,omitempty"`         // cumulative lifetime counts by HTTP status class
+	TrafficBytes  *ByteStats        `protobuf:"bytes,33,opt,name=traffic_bytes,json=trafficBytes,proto3" json:"traffic_bytes,omitempty"`      // cumulative lifetime byte counts
+	// Traffic / Request Stats — per-report-interval deltas (since last report)
+	RequestsDelta     uint64            `protobuf:"varint,34,opt,name=requests_delta,json=requestsDelta,proto3" json:"requests_delta,omitempty"`              // requests completed in this report interval
+	StatusCodesDelta  *StatusCodeCounts `protobuf:"bytes,35,opt,name=status_codes_delta,json=statusCodesDelta,proto3" json:"status_codes_delta,omitempty"`    // status code counts in this report interval
+	TrafficBytesDelta *ByteStats        `protobuf:"bytes,36,opt,name=traffic_bytes_delta,json=trafficBytesDelta,proto3" json:"traffic_bytes_delta,omitempty"` // bytes transferred in this report interval
+	// Latency distribution — computed over the current report interval.
+	// Percentiles are calculated locally by the reporting node over all
+	// requests completed since the previous report.
+	Duration      *DurationStats `protobuf:"bytes,32,opt,name=duration,proto3" json:"duration,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ContainerMetrics) Reset() {
@@ -1120,6 +1133,283 @@ func (x *ContainerMetrics) GetIpv6Address() string {
 	return ""
 }
 
+func (x *ContainerMetrics) GetUptimeSeconds() float64 {
+	if x != nil {
+		return x.UptimeSeconds
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetTotalRequests() uint64 {
+	if x != nil {
+		return x.TotalRequests
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetStatusCodes() *StatusCodeCounts {
+	if x != nil {
+		return x.StatusCodes
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetTrafficBytes() *ByteStats {
+	if x != nil {
+		return x.TrafficBytes
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetRequestsDelta() uint64 {
+	if x != nil {
+		return x.RequestsDelta
+	}
+	return 0
+}
+
+func (x *ContainerMetrics) GetStatusCodesDelta() *StatusCodeCounts {
+	if x != nil {
+		return x.StatusCodesDelta
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetTrafficBytesDelta() *ByteStats {
+	if x != nil {
+		return x.TrafficBytesDelta
+	}
+	return nil
+}
+
+func (x *ContainerMetrics) GetDuration() *DurationStats {
+	if x != nil {
+		return x.Duration
+	}
+	return nil
+}
+
+// StatusCodeCounts breaks down request counts by HTTP status class.
+// Used for both cumulative lifetime totals (status_codes) and
+// per-report-interval deltas (status_codes_delta).
+type StatusCodeCounts struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Status_1Xx    uint64                 `protobuf:"varint,1,opt,name=status_1xx,json=status1xx,proto3" json:"status_1xx,omitempty"` // informational
+	Status_2Xx    uint64                 `protobuf:"varint,2,opt,name=status_2xx,json=status2xx,proto3" json:"status_2xx,omitempty"` // success
+	Status_3Xx    uint64                 `protobuf:"varint,3,opt,name=status_3xx,json=status3xx,proto3" json:"status_3xx,omitempty"` // redirection
+	Status_4Xx    uint64                 `protobuf:"varint,4,opt,name=status_4xx,json=status4xx,proto3" json:"status_4xx,omitempty"` // client error
+	Status_5Xx    uint64                 `protobuf:"varint,5,opt,name=status_5xx,json=status5xx,proto3" json:"status_5xx,omitempty"` // server error
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StatusCodeCounts) Reset() {
+	*x = StatusCodeCounts{}
+	mi := &file_gravity_monitor_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StatusCodeCounts) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StatusCodeCounts) ProtoMessage() {}
+
+func (x *StatusCodeCounts) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StatusCodeCounts.ProtoReflect.Descriptor instead.
+func (*StatusCodeCounts) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *StatusCodeCounts) GetStatus_1Xx() uint64 {
+	if x != nil {
+		return x.Status_1Xx
+	}
+	return 0
+}
+
+func (x *StatusCodeCounts) GetStatus_2Xx() uint64 {
+	if x != nil {
+		return x.Status_2Xx
+	}
+	return 0
+}
+
+func (x *StatusCodeCounts) GetStatus_3Xx() uint64 {
+	if x != nil {
+		return x.Status_3Xx
+	}
+	return 0
+}
+
+func (x *StatusCodeCounts) GetStatus_4Xx() uint64 {
+	if x != nil {
+		return x.Status_4Xx
+	}
+	return 0
+}
+
+func (x *StatusCodeCounts) GetStatus_5Xx() uint64 {
+	if x != nil {
+		return x.Status_5Xx
+	}
+	return 0
+}
+
+// DurationStats captures request latency distribution for the current
+// report interval. Percentiles are computed locally by the reporting
+// node over all requests completed since the previous report.
+type DurationStats struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AvgMs         float64                `protobuf:"fixed64,1,opt,name=avg_ms,json=avgMs,proto3" json:"avg_ms,omitempty"`
+	MaxMs         float64                `protobuf:"fixed64,2,opt,name=max_ms,json=maxMs,proto3" json:"max_ms,omitempty"`
+	P50Ms         float64                `protobuf:"fixed64,3,opt,name=p50_ms,json=p50Ms,proto3" json:"p50_ms,omitempty"`
+	P95Ms         float64                `protobuf:"fixed64,4,opt,name=p95_ms,json=p95Ms,proto3" json:"p95_ms,omitempty"`
+	P99Ms         float64                `protobuf:"fixed64,5,opt,name=p99_ms,json=p99Ms,proto3" json:"p99_ms,omitempty"`
+	MinMs         float64                `protobuf:"fixed64,6,opt,name=min_ms,json=minMs,proto3" json:"min_ms,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DurationStats) Reset() {
+	*x = DurationStats{}
+	mi := &file_gravity_monitor_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DurationStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DurationStats) ProtoMessage() {}
+
+func (x *DurationStats) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DurationStats.ProtoReflect.Descriptor instead.
+func (*DurationStats) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *DurationStats) GetAvgMs() float64 {
+	if x != nil {
+		return x.AvgMs
+	}
+	return 0
+}
+
+func (x *DurationStats) GetMaxMs() float64 {
+	if x != nil {
+		return x.MaxMs
+	}
+	return 0
+}
+
+func (x *DurationStats) GetP50Ms() float64 {
+	if x != nil {
+		return x.P50Ms
+	}
+	return 0
+}
+
+func (x *DurationStats) GetP95Ms() float64 {
+	if x != nil {
+		return x.P95Ms
+	}
+	return 0
+}
+
+func (x *DurationStats) GetP99Ms() float64 {
+	if x != nil {
+		return x.P99Ms
+	}
+	return 0
+}
+
+func (x *DurationStats) GetMinMs() float64 {
+	if x != nil {
+		return x.MinMs
+	}
+	return 0
+}
+
+// ByteStats captures inbound and outbound byte counts.
+// Used for both cumulative lifetime totals (traffic_bytes) and
+// per-report-interval deltas (traffic_bytes_delta).
+type ByteStats struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InBytes       uint64                 `protobuf:"varint,1,opt,name=in_bytes,json=inBytes,proto3" json:"in_bytes,omitempty"`
+	OutBytes      uint64                 `protobuf:"varint,2,opt,name=out_bytes,json=outBytes,proto3" json:"out_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ByteStats) Reset() {
+	*x = ByteStats{}
+	mi := &file_gravity_monitor_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ByteStats) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ByteStats) ProtoMessage() {}
+
+func (x *ByteStats) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ByteStats.ProtoReflect.Descriptor instead.
+func (*ByteStats) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *ByteStats) GetInBytes() uint64 {
+	if x != nil {
+		return x.InBytes
+	}
+	return 0
+}
+
+func (x *ByteStats) GetOutBytes() uint64 {
+	if x != nil {
+		return x.OutBytes
+	}
+	return 0
+}
+
 type CapacitySummary struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	CpuPressure       float64                `protobuf:"fixed64,1,opt,name=cpu_pressure,json=cpuPressure,proto3" json:"cpu_pressure,omitempty"`
@@ -1135,7 +1425,7 @@ type CapacitySummary struct {
 
 func (x *CapacitySummary) Reset() {
 	*x = CapacitySummary{}
-	mi := &file_gravity_monitor_proto_msgTypes[8]
+	mi := &file_gravity_monitor_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1147,7 +1437,7 @@ func (x *CapacitySummary) String() string {
 func (*CapacitySummary) ProtoMessage() {}
 
 func (x *CapacitySummary) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[8]
+	mi := &file_gravity_monitor_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1160,7 +1450,7 @@ func (x *CapacitySummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapacitySummary.ProtoReflect.Descriptor instead.
 func (*CapacitySummary) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{8}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *CapacitySummary) GetCpuPressure() float64 {
@@ -1225,7 +1515,7 @@ type NodeEvent struct {
 
 func (x *NodeEvent) Reset() {
 	*x = NodeEvent{}
-	mi := &file_gravity_monitor_proto_msgTypes[9]
+	mi := &file_gravity_monitor_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1237,7 +1527,7 @@ func (x *NodeEvent) String() string {
 func (*NodeEvent) ProtoMessage() {}
 
 func (x *NodeEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[9]
+	mi := &file_gravity_monitor_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1250,7 +1540,7 @@ func (x *NodeEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeEvent.ProtoReflect.Descriptor instead.
 func (*NodeEvent) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{9}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *NodeEvent) GetTimestampUs() int64 {
@@ -1301,7 +1591,7 @@ type MonitorCommand struct {
 
 func (x *MonitorCommand) Reset() {
 	*x = MonitorCommand{}
-	mi := &file_gravity_monitor_proto_msgTypes[10]
+	mi := &file_gravity_monitor_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1313,7 +1603,7 @@ func (x *MonitorCommand) String() string {
 func (*MonitorCommand) ProtoMessage() {}
 
 func (x *MonitorCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[10]
+	mi := &file_gravity_monitor_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1326,7 +1616,7 @@ func (x *MonitorCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MonitorCommand.ProtoReflect.Descriptor instead.
 func (*MonitorCommand) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{10}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *MonitorCommand) GetCommand() isMonitorCommand_Command {
@@ -1379,7 +1669,7 @@ type AdjustMonitorInterval struct {
 
 func (x *AdjustMonitorInterval) Reset() {
 	*x = AdjustMonitorInterval{}
-	mi := &file_gravity_monitor_proto_msgTypes[11]
+	mi := &file_gravity_monitor_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1391,7 +1681,7 @@ func (x *AdjustMonitorInterval) String() string {
 func (*AdjustMonitorInterval) ProtoMessage() {}
 
 func (x *AdjustMonitorInterval) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[11]
+	mi := &file_gravity_monitor_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1404,7 +1694,7 @@ func (x *AdjustMonitorInterval) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdjustMonitorInterval.ProtoReflect.Descriptor instead.
 func (*AdjustMonitorInterval) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{11}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *AdjustMonitorInterval) GetIntervalSeconds() int32 {
@@ -1422,7 +1712,7 @@ type RequestMonitorSnapshot struct {
 
 func (x *RequestMonitorSnapshot) Reset() {
 	*x = RequestMonitorSnapshot{}
-	mi := &file_gravity_monitor_proto_msgTypes[12]
+	mi := &file_gravity_monitor_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1434,7 +1724,7 @@ func (x *RequestMonitorSnapshot) String() string {
 func (*RequestMonitorSnapshot) ProtoMessage() {}
 
 func (x *RequestMonitorSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[12]
+	mi := &file_gravity_monitor_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1447,7 +1737,7 @@ func (x *RequestMonitorSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestMonitorSnapshot.ProtoReflect.Descriptor instead.
 func (*RequestMonitorSnapshot) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{12}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{15}
 }
 
 var File_gravity_monitor_proto protoreflect.FileDescriptor
@@ -1537,7 +1827,7 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\x04arch\x18\x04 \x01(\tR\x04arch\x12%\n" +
 	"\x0euptime_seconds\x18\x05 \x01(\x04R\ruptimeSeconds\x12\x1b\n" +
 	"\tcpu_count\x18\x06 \x01(\x05R\bcpuCount\x12,\n" +
-	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\xe0\b\n" +
+	"\x12total_memory_bytes\x18\a \x01(\x04R\x10totalMemoryBytes\"\x93\f\n" +
 	"\x10ContainerMetrics\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12!\n" +
 	"\fcontainer_id\x18\x02 \x01(\tR\vcontainerId\x12\x14\n" +
@@ -1566,7 +1856,36 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\rstarted_at_us\x18\x18 \x01(\x03R\vstartedAtUs\x12&\n" +
 	"\x0flast_updated_us\x18\x19 \x01(\x03R\rlastUpdatedUs\x12!\n" +
 	"\fipv4_address\x18\x1a \x01(\tR\vipv4Address\x12!\n" +
-	"\fipv6_address\x18\x1b \x01(\tR\vipv6Address\"\xb0\x02\n" +
+	"\fipv6_address\x18\x1b \x01(\tR\vipv6Address\x12%\n" +
+	"\x0euptime_seconds\x18\x1c \x01(\x01R\ruptimeSeconds\x12%\n" +
+	"\x0etotal_requests\x18\x1d \x01(\x04R\rtotalRequests\x12<\n" +
+	"\fstatus_codes\x18\x1f \x01(\v2\x19.gravity.StatusCodeCountsR\vstatusCodes\x127\n" +
+	"\rtraffic_bytes\x18! \x01(\v2\x12.gravity.ByteStatsR\ftrafficBytes\x12%\n" +
+	"\x0erequests_delta\x18\" \x01(\x04R\rrequestsDelta\x12G\n" +
+	"\x12status_codes_delta\x18# \x01(\v2\x19.gravity.StatusCodeCountsR\x10statusCodesDelta\x12B\n" +
+	"\x13traffic_bytes_delta\x18$ \x01(\v2\x12.gravity.ByteStatsR\x11trafficBytesDelta\x122\n" +
+	"\bduration\x18  \x01(\v2\x16.gravity.DurationStatsR\bdurationJ\x04\b\x1e\x10\x1f\"\xad\x01\n" +
+	"\x10StatusCodeCounts\x12\x1d\n" +
+	"\n" +
+	"status_1xx\x18\x01 \x01(\x04R\tstatus1xx\x12\x1d\n" +
+	"\n" +
+	"status_2xx\x18\x02 \x01(\x04R\tstatus2xx\x12\x1d\n" +
+	"\n" +
+	"status_3xx\x18\x03 \x01(\x04R\tstatus3xx\x12\x1d\n" +
+	"\n" +
+	"status_4xx\x18\x04 \x01(\x04R\tstatus4xx\x12\x1d\n" +
+	"\n" +
+	"status_5xx\x18\x05 \x01(\x04R\tstatus5xx\"\x99\x01\n" +
+	"\rDurationStats\x12\x15\n" +
+	"\x06avg_ms\x18\x01 \x01(\x01R\x05avgMs\x12\x15\n" +
+	"\x06max_ms\x18\x02 \x01(\x01R\x05maxMs\x12\x15\n" +
+	"\x06p50_ms\x18\x03 \x01(\x01R\x05p50Ms\x12\x15\n" +
+	"\x06p95_ms\x18\x04 \x01(\x01R\x05p95Ms\x12\x15\n" +
+	"\x06p99_ms\x18\x05 \x01(\x01R\x05p99Ms\x12\x15\n" +
+	"\x06min_ms\x18\x06 \x01(\x01R\x05minMs\"C\n" +
+	"\tByteStats\x12\x19\n" +
+	"\bin_bytes\x18\x01 \x01(\x04R\ainBytes\x12\x1b\n" +
+	"\tout_bytes\x18\x02 \x01(\x04R\boutBytes\"\xb0\x02\n" +
 	"\x0fCapacitySummary\x12!\n" +
 	"\fcpu_pressure\x18\x01 \x01(\x01R\vcpuPressure\x12'\n" +
 	"\x0fmemory_pressure\x18\x02 \x01(\x01R\x0ememoryPressure\x12#\n" +
@@ -1622,7 +1941,7 @@ func file_gravity_monitor_proto_rawDescGZIP() []byte {
 }
 
 var file_gravity_monitor_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_gravity_monitor_proto_goTypes = []any{
 	(NodeEventLevel)(0),             // 0: gravity.NodeEventLevel
 	(NodeEventType)(0),              // 1: gravity.NodeEventType
@@ -1634,33 +1953,41 @@ var file_gravity_monitor_proto_goTypes = []any{
 	(*NetworkInterfaceMetrics)(nil), // 7: gravity.NetworkInterfaceMetrics
 	(*SystemInfo)(nil),              // 8: gravity.SystemInfo
 	(*ContainerMetrics)(nil),        // 9: gravity.ContainerMetrics
-	(*CapacitySummary)(nil),         // 10: gravity.CapacitySummary
-	(*NodeEvent)(nil),               // 11: gravity.NodeEvent
-	(*MonitorCommand)(nil),          // 12: gravity.MonitorCommand
-	(*AdjustMonitorInterval)(nil),   // 13: gravity.AdjustMonitorInterval
-	(*RequestMonitorSnapshot)(nil),  // 14: gravity.RequestMonitorSnapshot
-	nil,                             // 15: gravity.NodeEvent.MetadataEntry
+	(*StatusCodeCounts)(nil),        // 10: gravity.StatusCodeCounts
+	(*DurationStats)(nil),           // 11: gravity.DurationStats
+	(*ByteStats)(nil),               // 12: gravity.ByteStats
+	(*CapacitySummary)(nil),         // 13: gravity.CapacitySummary
+	(*NodeEvent)(nil),               // 14: gravity.NodeEvent
+	(*MonitorCommand)(nil),          // 15: gravity.MonitorCommand
+	(*AdjustMonitorInterval)(nil),   // 16: gravity.AdjustMonitorInterval
+	(*RequestMonitorSnapshot)(nil),  // 17: gravity.RequestMonitorSnapshot
+	nil,                             // 18: gravity.NodeEvent.MetadataEntry
 }
 var file_gravity_monitor_proto_depIdxs = []int32{
 	3,  // 0: gravity.NodeMonitorReport.host:type_name -> gravity.HostMetrics
 	9,  // 1: gravity.NodeMonitorReport.containers:type_name -> gravity.ContainerMetrics
-	10, // 2: gravity.NodeMonitorReport.capacity:type_name -> gravity.CapacitySummary
-	11, // 3: gravity.NodeMonitorReport.events:type_name -> gravity.NodeEvent
+	13, // 2: gravity.NodeMonitorReport.capacity:type_name -> gravity.CapacitySummary
+	14, // 3: gravity.NodeMonitorReport.events:type_name -> gravity.NodeEvent
 	4,  // 4: gravity.HostMetrics.cpu:type_name -> gravity.CpuMetrics
 	5,  // 5: gravity.HostMetrics.memory:type_name -> gravity.MemoryMetrics
 	6,  // 6: gravity.HostMetrics.disks:type_name -> gravity.DiskMetrics
 	7,  // 7: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
 	8,  // 8: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
-	0,  // 9: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
-	1,  // 10: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
-	15, // 11: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
-	13, // 12: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
-	14, // 13: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	10, // 9: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
+	12, // 10: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
+	10, // 11: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
+	12, // 12: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
+	11, // 13: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
+	0,  // 14: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
+	1,  // 15: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
+	18, // 16: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
+	16, // 17: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
+	17, // 18: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
+	19, // [19:19] is the sub-list for method output_type
+	19, // [19:19] is the sub-list for method input_type
+	19, // [19:19] is the sub-list for extension type_name
+	19, // [19:19] is the sub-list for extension extendee
+	0,  // [0:19] is the sub-list for field type_name
 }
 
 func init() { file_gravity_monitor_proto_init() }
@@ -1668,7 +1995,7 @@ func file_gravity_monitor_proto_init() {
 	if File_gravity_monitor_proto != nil {
 		return
 	}
-	file_gravity_monitor_proto_msgTypes[10].OneofWrappers = []any{
+	file_gravity_monitor_proto_msgTypes[13].OneofWrappers = []any{
 		(*MonitorCommand_AdjustInterval)(nil),
 		(*MonitorCommand_RequestSnapshot)(nil),
 	}
@@ -1678,7 +2005,7 @@ func file_gravity_monitor_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_monitor_proto_rawDesc), len(file_gravity_monitor_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   14,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

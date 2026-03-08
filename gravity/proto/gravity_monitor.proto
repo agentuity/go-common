@@ -129,6 +129,33 @@ message ContainerMetrics {
   int64 last_updated_us = 25;
   string ipv4_address = 26;
   string ipv6_address = 27;
+
+  // Traffic / Request Stats
+  double uptime_seconds = 28;
+  uint64 total_requests = 29;
+  uint32 in_progress_requests = 30;
+  StatusCodeCounts status_codes = 31;
+  DurationStats duration = 32;
+  ByteStats traffic_bytes = 33;
+}
+
+message StatusCodeCounts {
+  uint64 status_2xx = 1;
+  uint64 status_4xx = 2;
+  uint64 status_5xx = 3;
+}
+
+message DurationStats {
+  double avg_ms = 1;
+  double max_ms = 2;
+  double p50_ms = 3;
+  double p95_ms = 4;
+  double p99_ms = 5;
+}
+
+message ByteStats {
+  uint64 in_bytes = 1;
+  uint64 out_bytes = 2;
 }
 
 // ===== Capacity Summary =====

@@ -33,6 +33,28 @@ func ErrorResponseWithHTML(w http.ResponseWriter, title string, htmlMessage stri
 	return err
 }
 
+func ErrorResponseWithRetry(w http.ResponseWriter, title string, msg string, details string, statusCode int, refreshSeconds int) error {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(statusCode)
+
+	data := TemplateData{
+		Title:        title,
+		Description:  "Deploy, run, and scale autonomous agents on infrastructure designed for the future, not the past.",
+		HeaderTitle:  title,
+		Message:      msg,
+		ShowDetails:  details != "",
+		ErrorDetails: details,
+		AutoRefresh:  refreshSeconds,
+	}
+	html, err := RenderHTML(data)
+	if err != nil {
+		return err
+	}
+
+	_, err = io.WriteString(w, html)
+	return err
+}
+
 func NotFoundResponse(w http.ResponseWriter) error {
 	return ErrorResponse(w, "Page not found", "The page you are looking for does not exist.", "", http.StatusNotFound)
 }

@@ -636,7 +636,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 
 // sendSessionHello sends the initial session hello message
 func (g *GravityClient) sendSessionHello() error {
-	g.logger.Debug("sendSessionHello")
+	g.logger.Debug("sendSessionHello called")
 	// Convert existing deployments to protobuf format
 	var existingDeployments []*pb.ExistingDeployment
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
@@ -695,7 +695,7 @@ func (g *GravityClient) sendSessionHello() error {
 
 // handleControlStream processes messages from a control stream
 func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySessionService_EstablishSessionClient) {
-	g.logger.Debug("handleControlStream %d", streamIndex)
+	g.logger.Debug("handleControlStream %d called", streamIndex)
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("control stream %d panic: %v", streamIndex, r)
@@ -732,7 +732,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 
 // handleTunnelStream processes packets from a tunnel stream
 func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient) {
-	g.logger.Debug("handleTunnelStream %d", streamIndex)
+	g.logger.Debug("handleTunnelStream %d called", streamIndex)
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
@@ -771,7 +771,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		select {
 		case g.inboundPackets <- pooledBuf:
 		default:
-			g.logger.Warn("tunnel stream %d is full and dropping packets!", streamIndex)
+			g.logger.Error("tunnel stream %d is full and dropping packets!", streamIndex)
 			// Channel full, drop packet
 			g.returnBuffer(pooledBuf)
 		}

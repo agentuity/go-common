@@ -636,6 +636,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 
 // sendSessionHello sends the initial session hello message
 func (g *GravityClient) sendSessionHello() error {
+	g.logger.Debug("sendSessionHello")
 	// Convert existing deployments to protobuf format
 	var existingDeployments []*pb.ExistingDeployment
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
@@ -694,6 +695,7 @@ func (g *GravityClient) sendSessionHello() error {
 
 // handleControlStream processes messages from a control stream
 func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySessionService_EstablishSessionClient) {
+	g.logger.Debug("handleControlStream %d", streamIndex)
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("control stream %d panic: %v", streamIndex, r)
@@ -730,6 +732,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 
 // handleTunnelStream processes packets from a tunnel stream
 func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient) {
+	g.logger.Debug("handleTunnelStream %d", streamIndex)
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
@@ -768,6 +771,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		select {
 		case g.inboundPackets <- pooledBuf:
 		default:
+			g.logger.Warn("tunnel stream %d is full and dropping packets!", streamIndex)
 			// Channel full, drop packet
 			g.returnBuffer(pooledBuf)
 		}
@@ -1151,11 +1155,11 @@ func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
 }
 
 func (g *GravityClient) handleUnprovisionRequest(msgID string, request *pb.UnprovisionRequest) {
+	g.logger.Debug("received unprovision request: deployment_id=%s", request.DeploymentId)
 	provisioningProvider, ok := g.provider.(provider.ProvisioningProvider)
 	if !ok {
 		return
 	}
-	g.logger.Debug("received unprovision request: deployment_id=%s", request.DeploymentId)
 
 	// Call provider to deprovision the deployment
 	ctx := context.WithoutCancel(g.context)
@@ -1517,6 +1521,7 @@ func (g *GravityClient) WaitForSession(timeout time.Duration) error {
 }
 
 func (g *GravityClient) stop() error {
+	g.logger.Debug("stop called")
 	g.mu.Lock()
 	if g.closing {
 		g.mu.Unlock()
@@ -1541,6 +1546,7 @@ func (g *GravityClient) stop() error {
 
 // Close will shutdown the client
 func (g *GravityClient) Close() error {
+	g.logger.Debug("close called")
 	var err error
 	g.once.Do(func() {
 		err = g.stop()
@@ -1610,6 +1616,7 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 
 // disconnectStreams closes all streams but keeps the client ready for reconnection
 func (g *GravityClient) disconnectStreams() {
+	g.logger.Debug("disconnectStreams called")
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {
 		if cancel != nil {
@@ -1631,6 +1638,7 @@ func (g *GravityClient) disconnectStreams() {
 // the configured maximum attempts, ReconnectionFailedCallback is invoked —
 // typically to crash the process so a supervisor (systemd) can restart it.
 func (g *GravityClient) attemptReconnection(reason string) {
+	g.logger.Debug("attemptReconnection called: %s", reason)
 	defer func() {
 		g.mu.Lock()
 		g.reconnecting = false
@@ -1699,6 +1707,7 @@ func (g *GravityClient) attemptReconnection(reason string) {
 // in-progress connections are cleaned up and an error is returned so the retry
 // loop can advance to the next attempt.
 func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
+	g.logger.Debug("reconnectWithTimeout called: %s", timeout)
 	done := make(chan error, 1)
 
 	go func() {
@@ -1712,6 +1721,7 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 
 	select {
 	case err := <-done:
+		g.logger.Debug("reconnectWithTimeout is done")
 		return err
 	case <-time.After(timeout):
 		g.logger.Warn("reconnection attempt timed out after %v, cleaning up stale connections", timeout)
@@ -1735,6 +1745,7 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 
 // reconnect resets connection state and attempts to start a new connection
 func (g *GravityClient) reconnect() error {
+	g.logger.Debug("reconnect called")
 	// Reset connection state without holding lock during Start()
 	g.mu.Lock()
 	g.connected = false
@@ -1773,22 +1784,6 @@ func (g *GravityClient) reconnect() error {
 
 	// Start new connection
 	return g.Start()
-}
-
-// getStreamAllocationStrategyName returns the name of the current allocation strategy
-func (g *GravityClient) getStreamAllocationStrategyName() string {
-	switch g.poolConfig.AllocationStrategy {
-	case RoundRobin:
-		return "RoundRobin"
-	case HashBased:
-		return "HashBased"
-	case LeastConnections:
-		return "LeastConnections"
-	case WeightedRoundRobin:
-		return "WeightedRoundRobin"
-	default:
-		return "Unknown"
-	}
 }
 
 // Helper functions
@@ -1836,6 +1831,8 @@ func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) 
 }
 
 func (g *GravityClient) cleanup() {
+	g.logger.Debug("cleanup called")
+
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {
 		if cancel != nil {
@@ -2234,6 +2231,7 @@ func (g *GravityClient) handleInboundPackets() {
 	for {
 		select {
 		case <-g.ctx.Done():
+			g.logger.Debug("handleInboundPackets is done and no longer reading")
 			return
 		case packet := <-g.inboundPackets:
 			// Forward to provider for local processing
@@ -2247,6 +2245,7 @@ func (g *GravityClient) handleOutboundPackets() {
 	for {
 		select {
 		case <-g.ctx.Done():
+			g.logger.Debug("handleOutboundPackets is done and no longer reading")
 			return
 		case data := <-g.outboundPackets:
 			// Send packet through tunnel stream (round-robin selection)
@@ -2432,6 +2431,7 @@ func (g *GravityClient) monitorConnectionHealth() {
 	for {
 		select {
 		case <-g.ctx.Done():
+			g.logger.Debug("monitorConnectionHealth is no and no longer processing")
 			return
 		case <-ticker.C:
 			g.performHealthCheck()

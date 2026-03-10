@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/agentuity/go-common/gravity/network"
@@ -188,6 +189,7 @@ type GravityClient struct {
 	pendingCheckpointURLMu sync.RWMutex
 
 	// Packet channels for network device multiplexing
+	droppedPackets  atomic.Int64 // counts consecutive dropped inbound packets
 	inboundPackets  chan *PooledBuffer
 	outboundPackets chan []byte
 	textMessages    chan *PooledBuffer
@@ -770,9 +772,15 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		pooledBuf := g.getBuffer(packet.Data)
 		select {
 		case g.inboundPackets <- pooledBuf:
+			// Channel drained — if packets were dropped during backpressure, log a summary and reset.
+			if dropped := g.droppedPackets.Swap(0); dropped > 0 {
+				g.logger.Warn("tunnel stream %d: recovered after dropping %d packet(s)", streamIndex, dropped)
+			}
 		default:
-			g.logger.Error("tunnel stream %d is full and dropping packets!", streamIndex)
-			// Channel full, drop packet
+			// Channel full, drop packet. Only log on the first drop of each burst.
+			if g.droppedPackets.Add(1) == 1 {
+				g.logger.Warn("tunnel stream %d: channel full, dropping packets", streamIndex)
+			}
 			g.returnBuffer(pooledBuf)
 		}
 	}

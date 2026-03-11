@@ -819,13 +819,11 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)
 
-		// Track channel high-water mark
+		// Track channel high-water mark — a single CAS attempt is sufficient;
+		// if it fails, a concurrent goroutine already set a value >= depth.
 		depth := int32(len(g.inboundPackets))
-		for {
-			old := g.inboundHighWater.Load()
-			if depth <= old || g.inboundHighWater.CompareAndSwap(old, depth) {
-				break
-			}
+		if old := g.inboundHighWater.Load(); depth > old {
+			g.inboundHighWater.CompareAndSwap(old, depth)
 		}
 
 		select {
@@ -2950,7 +2948,9 @@ func (g *GravityClient) handlePingHeartbeat() {
 	}
 }
 
-// sendPing sends a ping message to the server
+// sendPing sends a ping message to the server and starts a deadline timer
+// to detect pong timeouts. If the corresponding pong is not received within
+// one ping interval, pingTimeouts is incremented.
 func (g *GravityClient) sendPing() {
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
@@ -2964,6 +2964,13 @@ func (g *GravityClient) sendPing() {
 	started := time.Now()
 	pingID := generateMessageID()
 
+	// Register for pong response before sending so handlePong() can
+	// correlate the reply by message ID and signal the deadline goroutine.
+	responseChan := make(chan *pb.ProtocolResponse, 1)
+	g.pendingMu.Lock()
+	g.pending[pingID] = responseChan
+	g.pendingMu.Unlock()
+
 	pingMsg := &pb.SessionMessage{
 		Id: pingID,
 		MessageType: &pb.SessionMessage_Ping{
@@ -2976,12 +2983,38 @@ func (g *GravityClient) sendPing() {
 	err := controlStream.Send(pingMsg)
 	if err != nil {
 		g.logger.Error("failed to send ping: %v", err)
+		// Clean up pending entry on send failure
+		g.pendingMu.Lock()
+		delete(g.pending, pingID)
+		g.pendingMu.Unlock()
 		return
 	}
 
 	g.pingsSent.Add(1)
 	g.lastPingSentUs.Store(time.Now().UnixMicro())
 	g.logger.Debug("sent ping message: id=%s, took=%v", pingID, time.Since(started))
+
+	// Wait for the pong with a deadline of one ping interval. If the pong
+	// doesn't arrive in time, increment pingTimeouts. The goroutine is
+	// short-lived and bounded by the deadline or client context cancellation.
+	go func() {
+		select {
+		case <-responseChan:
+			// Pong received in time — already counted by handlePong.
+		case <-time.After(g.pingInterval):
+			g.pingTimeouts.Add(1)
+			g.logger.Debug("ping %s timed out after %v", pingID, g.pingInterval)
+			// Clean up stale pending entry so handlePong ignores late arrivals
+			g.pendingMu.Lock()
+			delete(g.pending, pingID)
+			g.pendingMu.Unlock()
+		case <-g.ctx.Done():
+			// Client shutting down — clean up silently
+			g.pendingMu.Lock()
+			delete(g.pending, pingID)
+			g.pendingMu.Unlock()
+		}
+	}()
 }
 
 // Buffer management

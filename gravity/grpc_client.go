@@ -777,13 +777,13 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		}
 		// Mark tunnel stream as unhealthy so TunnelStats() reports
 		// accurate HealthyTunnelStreams during reconnection.
-		g.streamManager.tunnelMu.RLock()
+		g.streamManager.tunnelMu.Lock()
 		if streamIndex < len(g.streamManager.tunnelStreams) {
 			if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
 				si.isHealthy = false
 			}
 		}
-		g.streamManager.tunnelMu.RUnlock()
+		g.streamManager.tunnelMu.Unlock()
 	}()
 
 	g.logger.Debug("handleTunnelStream: starting receive loop for stream %d", streamIndex)
@@ -2296,7 +2296,9 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	if err != nil {
 		// Mark stream unhealthy and record per-stream error metrics,
 		// mirroring the error handling in sendTunnelPacket.
+		g.streamManager.tunnelMu.Lock()
 		stream.isHealthy = false
+		g.streamManager.tunnelMu.Unlock()
 		g.outboundErrors.Add(1)
 		now := time.Now()
 		g.streamManager.metricsMu.Lock()
@@ -3028,6 +3030,17 @@ func (g *GravityClient) sendPing() {
 		g.pendingMu.Lock()
 		delete(g.pending, pingID)
 		g.pendingMu.Unlock()
+		return
+	}
+
+	// If the sendBlocked timer fired before Send() returned (race between
+	// Stop and the timer goroutine), it already incremented pingTimeouts
+	// and deleted pending[pingID]. Check the map to avoid double-counting.
+	g.pendingMu.RLock()
+	_, stillPending := g.pending[pingID]
+	g.pendingMu.RUnlock()
+	if !stillPending {
+		// Timer already handled this ping — don't start the pong wait.
 		return
 	}
 

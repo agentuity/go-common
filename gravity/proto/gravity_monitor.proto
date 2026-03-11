@@ -15,6 +15,7 @@ message NodeMonitorReport {
   CapacitySummary capacity = 6;
   repeated NodeEvent events = 7;
   int32 report_interval_seconds = 8;
+  TunnelHealthMetrics tunnel = 9;
 }
 
 // ===== Host Metrics =====
@@ -222,6 +223,11 @@ enum NodeEventType {
   NODE_EVENT_TYPE_COLLECTOR_ERROR = 7;
   NODE_EVENT_TYPE_PRESSURE_ALERT = 8;
   NODE_EVENT_TYPE_HEALTH_ALERT = 9;
+  NODE_EVENT_TYPE_TUNNEL_STALL           = 10;  // tunnel idle while control stream active
+  NODE_EVENT_TYPE_TUNNEL_PACKETS_DROPPED = 11;  // inbound channel full, dropping packets
+  NODE_EVENT_TYPE_TUNNEL_STREAM_DOWN     = 12;  // a tunnel stream became unhealthy
+  NODE_EVENT_TYPE_TUNNEL_RECOVERED       = 13;  // tunnel recovered from stall or drops
+  NODE_EVENT_TYPE_CONTROL_PLANE_STALL   = 14;  // pings sent but no pongs, or no pings at all
 }
 
 message NodeEvent {
@@ -247,4 +253,152 @@ message AdjustMonitorInterval {
 
 message RequestMonitorSnapshot {
   // Triggers immediate out-of-cycle collection
+}
+
+// ===== Tunnel Health Metrics =====
+//
+// Captures the health and performance of the Gravity↔Hadron packet tunnel.
+// Primary signal for detecting data-plane issues (deadlocks, backpressure,
+// stream failures) that do NOT affect the control-plane (ping/pong).
+
+message TunnelHealthMetrics {
+  ConnectionPoolMetrics       connection_pool  = 1;
+  PacketFlowMetrics           packet_flow      = 2;
+  ChannelMetrics              inbound_channel  = 3;
+  TunInterfaceMetrics         tun_interface    = 4;
+  repeated TunnelStreamMetrics streams         = 5;
+  ControlPlaneMetrics         control_plane    = 6;
+  StallIndicators             stall            = 7;
+}
+
+// ----- Connection Pool -----
+
+message ConnectionPoolMetrics {
+  int32 total_connections         = 1;
+  int32 healthy_connections       = 2;
+  int32 total_tunnel_streams      = 3;
+  int32 healthy_tunnel_streams    = 4;
+  int32 total_control_streams     = 5;
+  int32 healthy_control_streams   = 6;
+}
+
+// ----- Packet Flow (THE primary health signal) -----
+
+message PacketFlowMetrics {
+  // Inbound: Gravity → Hadron → Container
+  uint64 inbound_received_delta   = 1;   // packets received from gravity this interval
+  uint64 inbound_delivered_delta  = 2;   // packets successfully delivered to containers
+  uint64 inbound_dropped_delta    = 3;   // packets dropped (channel full)
+  uint64 inbound_received_total   = 4;   // lifetime received
+  uint64 inbound_delivered_total  = 5;   // lifetime delivered
+  uint64 inbound_dropped_total    = 6;   // lifetime dropped
+  uint64 inbound_bytes_delta      = 7;   // bytes received this interval
+  uint64 inbound_bytes_total      = 8;   // lifetime bytes received
+
+  // Outbound: Container → Hadron → Gravity
+  uint64 outbound_received_delta  = 9;   // packets read from TUN this interval
+  uint64 outbound_sent_delta      = 10;  // packets sent to gravity this interval
+  uint64 outbound_errors_delta    = 11;  // send failures this interval
+  uint64 outbound_received_total  = 12;  // lifetime from TUN
+  uint64 outbound_sent_total      = 13;  // lifetime sent to gravity
+  uint64 outbound_errors_total    = 14;  // lifetime errors
+  uint64 outbound_bytes_delta     = 15;  // bytes sent this interval
+  uint64 outbound_bytes_total     = 16;  // lifetime bytes sent
+}
+
+// ----- Channel Backpressure -----
+
+message ChannelMetrics {
+  int32  current_depth    = 1;   // items in channel right now (point-in-time gauge)
+  int32  capacity         = 2;   // channel buffer size (typically 1000)
+  int32  high_water_mark  = 3;   // max depth observed this interval
+  uint64 drops_delta      = 4;   // drops this interval
+  uint64 drops_total      = 5;   // lifetime drops
+}
+
+// ----- TUN Interface -----
+
+message TunInterfaceMetrics {
+  // Read direction = container → hadron (outbound packets)
+  uint64 packets_read_delta    = 1;
+  uint64 packets_read_total    = 2;
+  uint64 bytes_read_delta      = 3;
+  uint64 bytes_read_total      = 4;
+  uint64 read_errors_delta     = 5;
+  uint64 read_errors_total     = 6;
+
+  // Write direction = hadron → container (inbound packets)
+  uint64 packets_written_delta  = 7;
+  uint64 packets_written_total  = 8;
+  uint64 bytes_written_delta    = 9;
+  uint64 bytes_written_total    = 10;
+  uint64 write_errors_delta     = 11;
+  uint64 write_errors_total     = 12;
+
+  // Write latency = time to push packet into TUN device (final delivery)
+  DurationStats write_latency   = 13;
+}
+
+// ----- Per-Stream Health -----
+
+message TunnelStreamMetrics {
+  string stream_id           = 1;
+  int32  connection_index    = 2;
+  bool   healthy             = 3;
+  uint64 packets_sent_delta  = 4;
+  uint64 packets_recv_delta  = 5;
+  uint64 errors_delta        = 6;
+  uint64 packets_sent_total  = 7;
+  uint64 packets_recv_total  = 8;
+  uint64 errors_total        = 9;
+  int64  last_send_at_us     = 10;   // timestamp of last successful send
+  int64  last_recv_at_us     = 11;   // timestamp of last successful receive
+  DurationStats send_latency = 12;   // gRPC stream.Send() latency this interval
+  uint64 bytes_sent_delta  = 13;
+  uint64 bytes_sent_total  = 14;
+  uint64 bytes_recv_delta  = 15;
+  uint64 bytes_recv_total  = 16;
+}
+
+// ----- Control Plane (for deadlock comparison) -----
+//
+// The key insight: if control plane is active (pings working) but tunnel
+// is idle (no packets), this is a strong indicator of a data-path deadlock.
+
+message ControlPlaneMetrics {
+  int64  last_ping_sent_at_us      = 1;
+  int64  last_pong_received_at_us  = 2;
+  DurationStats ping_latency       = 3;   // ping round-trip latency this interval
+  uint64 pings_sent_delta          = 4;
+  uint64 pongs_received_delta      = 5;
+  uint64 pings_sent_total          = 6;
+  uint64 pongs_received_total      = 7;
+  uint64 timeouts_delta            = 8;   // pings that got no pong within deadline
+  uint64 timeouts_total            = 9;
+}
+
+// ----- Stall / Deadlock Detection -----
+//
+// These indicators are specifically designed to detect the class of bug
+// where the control stream is alive but the data stream is dead.
+
+message StallIndicators {
+  // Timestamps of last successful data-plane activity
+  int64  last_inbound_delivery_at_us  = 1;  // last successful ProcessInPacket
+  int64  last_outbound_send_at_us     = 2;  // last successful sendTunnelPacket
+
+  // Per-interval activity flags
+  bool   control_plane_active  = 3;  // had ping/pong activity this interval
+  bool   tunnel_active         = 4;  // had any packet flow this interval
+
+  // Stall duration and severity
+  double tunnel_idle_seconds           = 5;  // seconds since last tunnel activity
+  uint32 consecutive_idle_intervals    = 6;  // how many report intervals with zero packets
+
+  // Channel pressure snapshot
+  bool   inbound_channel_full  = 7;  // channel at capacity right now
+
+  // Control plane stall counters
+  uint32 consecutive_ping_no_response  = 8;  // intervals with pings sent but no pongs
+  uint32 consecutive_no_pings          = 9;  // intervals with no pings sent at all
 }

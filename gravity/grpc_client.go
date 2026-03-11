@@ -194,6 +194,30 @@ type GravityClient struct {
 	outboundPackets chan []byte
 	textMessages    chan *PooledBuffer
 
+	// ── Tunnel health counters (lock-free, read by external monitor) ──
+
+	// Inbound: gravity → hadron → container
+	inboundReceived  atomic.Uint64 // packets received from gravity streams
+	inboundDelivered atomic.Uint64 // packets delivered via ProcessInPacket
+	inboundDropped   atomic.Uint64 // lifetime drops (channel full)
+	inboundBytes     atomic.Uint64 // bytes received from gravity
+
+	// Outbound: container → hadron → gravity
+	outboundReceived atomic.Uint64 // packets from TUN (ProcessOutPacket called)
+	outboundSent     atomic.Uint64 // packets sent via sendTunnelPacket
+	outboundErrors   atomic.Uint64 // send failures
+	outboundBytes    atomic.Uint64 // bytes sent to gravity
+
+	// Control plane
+	pingsSent      atomic.Uint64
+	pongsReceived  atomic.Uint64
+	pingTimeouts   atomic.Uint64
+	lastPingSentUs atomic.Int64 // unix microseconds
+	lastPongRecvUs atomic.Int64 // unix microseconds
+
+	// Channel monitoring
+	inboundHighWater atomic.Int32 // max channel depth since last reset
+
 	// agentuity internal certificate
 	caCert            string
 	defaultServerName string
@@ -254,9 +278,13 @@ type StreamManager struct {
 type StreamMetrics struct {
 	PacketsSent     int64
 	PacketsReceived int64
+	BytesSent       int64
+	BytesReceived   int64
 	LastLatency     time.Duration
 	ErrorCount      int64
 	LastError       time.Time
+	LastSendUs      int64 // unix microseconds of last successful send
+	LastRecvUs      int64 // unix microseconds of last successful receive
 }
 
 // New creates a new gRPC-based Gravity server client
@@ -768,8 +796,38 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		if g.tracePackets {
 			g.tracePacketLogger.Debug("handleTunnelStream: received packet with %d bytes on stream %d", len(packet.Data), streamIndex)
 		}
+
+		// Track inbound packet from gravity stream
+		g.inboundReceived.Add(1)
+		g.inboundBytes.Add(uint64(len(packet.Data)))
+
+		// Track per-stream receive metrics
+		g.streamManager.tunnelMu.RLock()
+		if streamIndex < len(g.streamManager.tunnelStreams) {
+			if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
+				g.streamManager.metricsMu.Lock()
+				if metrics := g.streamManager.streamMetrics[si.streamID]; metrics != nil {
+					metrics.PacketsReceived++
+					metrics.LastRecvUs = time.Now().UnixMicro()
+					metrics.BytesReceived += int64(len(packet.Data))
+				}
+				g.streamManager.metricsMu.Unlock()
+			}
+		}
+		g.streamManager.tunnelMu.RUnlock()
+
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)
+
+		// Track channel high-water mark
+		depth := int32(len(g.inboundPackets))
+		for {
+			old := g.inboundHighWater.Load()
+			if depth <= old || g.inboundHighWater.CompareAndSwap(old, depth) {
+				break
+			}
+		}
+
 		select {
 		case g.inboundPackets <- pooledBuf:
 			// Channel drained — if packets were dropped during backpressure, log a summary and reset.
@@ -781,6 +839,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			if g.droppedPackets.Add(1) == 1 {
 				g.logger.Warn("tunnel stream %d: channel full, dropping packets", streamIndex)
 			}
+			g.inboundDropped.Add(1)
 			g.returnBuffer(pooledBuf)
 		}
 	}
@@ -1135,6 +1194,9 @@ func (g *GravityClient) handleUnprovisionEvent(event *pb.ProtocolEvent) {
 func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
 	g.logger.Debug("received pong response: id=%s", msgID)
 	_ = pong
+
+	g.pongsReceived.Add(1)
+	g.lastPongRecvUs.Store(time.Now().UnixMicro())
 
 	// Find pending ping request and respond
 	g.pendingMu.RLock()
@@ -2197,6 +2259,8 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	}
 	g.mu.RUnlock()
 
+	g.outboundReceived.Add(1)
+
 	// Select optimal stream using load balancing
 	stream := g.streamManager.selectOptimalTunnelStream()
 	if stream == nil {
@@ -2222,13 +2286,21 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 			return nil
 		}
 		g.logger.Error("writePacket stream.Send failed: %v", err)
+		g.outboundErrors.Add(1)
 	} else {
 		if g.tracePackets {
 			g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
 		}
+		g.outboundSent.Add(1)
+		g.outboundBytes.Add(uint64(len(payload)))
+		g.streamManager.metricsMu.Lock()
+		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
+			metrics.PacketsSent++
+			metrics.BytesSent += int64(len(payload))
+			metrics.LastSendUs = time.Now().UnixMicro()
+		}
+		g.streamManager.metricsMu.Unlock()
 	}
-
-	// Metrics recording removed
 
 	return err
 }
@@ -2244,6 +2316,7 @@ func (g *GravityClient) handleInboundPackets() {
 		case packet := <-g.inboundPackets:
 			// Forward to provider for local processing
 			g.provider.ProcessInPacket(packet.Buffer[:packet.Length])
+			g.inboundDelivered.Add(1)
 			g.returnBuffer(packet)
 		}
 	}
@@ -2309,13 +2382,13 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	connectionIndex := streamInfo.connIndex
 	circuitBreaker := g.circuitBreakers[connectionIndex]
 
-	// Record packet transmission attempt
+	sendStart := time.Now()
 
 	err = RetryWithCircuitBreaker(context.WithoutCancel(g.ctx), g.retryConfig, circuitBreaker, func() error {
 		return streamInfo.stream.Send(packet)
 	})
 
-	// Record latency
+	sendLatency := time.Since(sendStart)
 
 	if err != nil {
 		// Mark stream as unhealthy on error
@@ -2327,9 +2400,20 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 		}
 		g.streamManager.metricsMu.Unlock()
 
-		// Record error
+		g.outboundErrors.Add(1)
 		return fmt.Errorf("failed to send packet after retries: %w", err)
 	}
+
+	// Record successful send metrics
+	g.outboundSent.Add(1)
+	g.outboundBytes.Add(uint64(len(data)))
+	g.streamManager.metricsMu.Lock()
+	if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
+		metrics.LastLatency = sendLatency
+		metrics.LastSendUs = time.Now().UnixMicro()
+		metrics.BytesSent += int64(len(data))
+	}
+	g.streamManager.metricsMu.Unlock()
 
 	// Decrement load count after successful send
 	streamInfo.loadCount--
@@ -2534,6 +2618,141 @@ func (g *GravityClient) GetConnectionPoolStats() map[string]any {
 	}
 
 	return stats
+}
+
+// TunnelStatsSnapshot is a point-in-time snapshot of tunnel counters.
+// All values are cumulative totals (deltas are computed by the caller).
+type TunnelStatsSnapshot struct {
+	// Inbound (gravity → hadron → container)
+	InboundReceived  uint64
+	InboundDelivered uint64
+	InboundDropped   uint64
+	InboundBytes     uint64
+
+	// Outbound (container → hadron → gravity)
+	OutboundReceived uint64
+	OutboundSent     uint64
+	OutboundErrors   uint64
+	OutboundBytes    uint64
+
+	// Control plane
+	PingsSent      uint64
+	PongsReceived  uint64
+	PingTimeouts   uint64
+	LastPingSentUs int64
+	LastPongRecvUs int64
+
+	// Channel
+	InboundChannelLen int
+	InboundChannelCap int
+	InboundHighWater  int32
+
+	// Connection pool (point-in-time)
+	TotalConnections      int
+	HealthyConnections    int
+	TotalTunnelStreams    int
+	HealthyTunnelStreams  int
+	TotalControlStreams   int
+	HealthyControlStreams int
+
+	// Per-stream metrics
+	StreamMetrics map[string]StreamMetricsSnapshot
+}
+
+// StreamMetricsSnapshot is a point-in-time copy of per-stream metrics.
+type StreamMetricsSnapshot struct {
+	StreamID        string
+	ConnectionIndex int
+	Healthy         bool
+	PacketsSent     int64
+	PacketsReceived int64
+	BytesSent       int64
+	BytesReceived   int64
+	ErrorCount      int64
+	LastSendUs      int64
+	LastRecvUs      int64
+}
+
+// TunnelStats returns a point-in-time snapshot of all tunnel health counters.
+// This is safe to call from any goroutine (all reads are atomic or under lock).
+// NOTE: InboundHighWater is reset to 0 on each call (atomic Swap).
+func (g *GravityClient) TunnelStats() TunnelStatsSnapshot {
+	snap := TunnelStatsSnapshot{
+		InboundReceived:  g.inboundReceived.Load(),
+		InboundDelivered: g.inboundDelivered.Load(),
+		InboundDropped:   g.inboundDropped.Load(),
+		InboundBytes:     g.inboundBytes.Load(),
+
+		OutboundReceived: g.outboundReceived.Load(),
+		OutboundSent:     g.outboundSent.Load(),
+		OutboundErrors:   g.outboundErrors.Load(),
+		OutboundBytes:    g.outboundBytes.Load(),
+
+		PingsSent:      g.pingsSent.Load(),
+		PongsReceived:  g.pongsReceived.Load(),
+		PingTimeouts:   g.pingTimeouts.Load(),
+		LastPingSentUs: g.lastPingSentUs.Load(),
+		LastPongRecvUs: g.lastPongRecvUs.Load(),
+
+		InboundChannelLen: len(g.inboundPackets),
+		InboundChannelCap: cap(g.inboundPackets),
+		InboundHighWater:  g.inboundHighWater.Swap(0), // reset on read
+	}
+
+	// Connection pool stats (requires locks)
+	g.streamManager.healthMu.RLock()
+	for _, healthy := range g.streamManager.connectionHealth {
+		snap.TotalConnections++
+		if healthy {
+			snap.HealthyConnections++
+		}
+	}
+	g.streamManager.healthMu.RUnlock()
+
+	g.streamManager.tunnelMu.RLock()
+	snap.StreamMetrics = make(map[string]StreamMetricsSnapshot, len(g.streamManager.tunnelStreams))
+	for _, si := range g.streamManager.tunnelStreams {
+		if si == nil {
+			continue
+		}
+		snap.TotalTunnelStreams++
+		if si.isHealthy {
+			snap.HealthyTunnelStreams++
+		}
+		snap.StreamMetrics[si.streamID] = StreamMetricsSnapshot{
+			StreamID:        si.streamID,
+			ConnectionIndex: si.connIndex,
+			Healthy:         si.isHealthy,
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	g.streamManager.controlMu.RLock()
+	for _, cs := range g.streamManager.controlStreams {
+		snap.TotalControlStreams++
+		if cs != nil {
+			snap.HealthyControlStreams++
+		}
+	}
+	g.streamManager.controlMu.RUnlock()
+
+	// Overlay per-stream packet metrics
+	g.streamManager.metricsMu.RLock()
+	for id, m := range g.streamManager.streamMetrics {
+		if existing, ok := snap.StreamMetrics[id]; ok {
+			existing.PacketsSent = m.PacketsSent
+			existing.PacketsReceived = m.PacketsReceived
+			existing.BytesSent = m.BytesSent
+			existing.BytesReceived = m.BytesReceived
+			existing.ErrorCount = m.ErrorCount
+			existing.LastSendUs = m.LastSendUs
+			existing.LastRecvUs = m.LastRecvUs
+			snap.StreamMetrics[id] = existing
+		}
+	}
+	g.streamManager.metricsMu.RUnlock()
+
+	return snap
 }
 
 // String method for StreamAllocationStrategy enum
@@ -2760,6 +2979,8 @@ func (g *GravityClient) sendPing() {
 		return
 	}
 
+	g.pingsSent.Add(1)
+	g.lastPingSentUs.Store(time.Now().UnixMicro())
 	g.logger.Debug("sent ping message: id=%s, took=%v", pingID, time.Since(started))
 }
 

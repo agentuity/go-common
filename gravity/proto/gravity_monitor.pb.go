@@ -89,21 +89,31 @@ const (
 	NodeEventType_NODE_EVENT_TYPE_COLLECTOR_ERROR         NodeEventType = 7
 	NodeEventType_NODE_EVENT_TYPE_PRESSURE_ALERT          NodeEventType = 8
 	NodeEventType_NODE_EVENT_TYPE_HEALTH_ALERT            NodeEventType = 9
+	NodeEventType_NODE_EVENT_TYPE_TUNNEL_STALL            NodeEventType = 10 // tunnel idle while control stream active
+	NodeEventType_NODE_EVENT_TYPE_TUNNEL_PACKETS_DROPPED  NodeEventType = 11 // inbound channel full, dropping packets
+	NodeEventType_NODE_EVENT_TYPE_TUNNEL_STREAM_DOWN      NodeEventType = 12 // a tunnel stream became unhealthy
+	NodeEventType_NODE_EVENT_TYPE_TUNNEL_RECOVERED        NodeEventType = 13 // tunnel recovered from stall or drops
+	NodeEventType_NODE_EVENT_TYPE_CONTROL_PLANE_STALL     NodeEventType = 14 // pings sent but no pongs, or no pings at all
 )
 
 // Enum value maps for NodeEventType.
 var (
 	NodeEventType_name = map[int32]string{
-		0: "NODE_EVENT_TYPE_UNSPECIFIED",
-		1: "NODE_EVENT_TYPE_CONTAINER_START",
-		2: "NODE_EVENT_TYPE_CONTAINER_STOP",
-		3: "NODE_EVENT_TYPE_CONTAINER_OOM",
-		4: "NODE_EVENT_TYPE_CONTAINER_HEALTH_CHANGE",
-		5: "NODE_EVENT_TYPE_PRESSURE_THRESHOLD",
-		6: "NODE_EVENT_TYPE_DISK_NEARLY_FULL",
-		7: "NODE_EVENT_TYPE_COLLECTOR_ERROR",
-		8: "NODE_EVENT_TYPE_PRESSURE_ALERT",
-		9: "NODE_EVENT_TYPE_HEALTH_ALERT",
+		0:  "NODE_EVENT_TYPE_UNSPECIFIED",
+		1:  "NODE_EVENT_TYPE_CONTAINER_START",
+		2:  "NODE_EVENT_TYPE_CONTAINER_STOP",
+		3:  "NODE_EVENT_TYPE_CONTAINER_OOM",
+		4:  "NODE_EVENT_TYPE_CONTAINER_HEALTH_CHANGE",
+		5:  "NODE_EVENT_TYPE_PRESSURE_THRESHOLD",
+		6:  "NODE_EVENT_TYPE_DISK_NEARLY_FULL",
+		7:  "NODE_EVENT_TYPE_COLLECTOR_ERROR",
+		8:  "NODE_EVENT_TYPE_PRESSURE_ALERT",
+		9:  "NODE_EVENT_TYPE_HEALTH_ALERT",
+		10: "NODE_EVENT_TYPE_TUNNEL_STALL",
+		11: "NODE_EVENT_TYPE_TUNNEL_PACKETS_DROPPED",
+		12: "NODE_EVENT_TYPE_TUNNEL_STREAM_DOWN",
+		13: "NODE_EVENT_TYPE_TUNNEL_RECOVERED",
+		14: "NODE_EVENT_TYPE_CONTROL_PLANE_STALL",
 	}
 	NodeEventType_value = map[string]int32{
 		"NODE_EVENT_TYPE_UNSPECIFIED":             0,
@@ -116,6 +126,11 @@ var (
 		"NODE_EVENT_TYPE_COLLECTOR_ERROR":         7,
 		"NODE_EVENT_TYPE_PRESSURE_ALERT":          8,
 		"NODE_EVENT_TYPE_HEALTH_ALERT":            9,
+		"NODE_EVENT_TYPE_TUNNEL_STALL":            10,
+		"NODE_EVENT_TYPE_TUNNEL_PACKETS_DROPPED":  11,
+		"NODE_EVENT_TYPE_TUNNEL_STREAM_DOWN":      12,
+		"NODE_EVENT_TYPE_TUNNEL_RECOVERED":        13,
+		"NODE_EVENT_TYPE_CONTROL_PLANE_STALL":     14,
 	}
 )
 
@@ -156,6 +171,7 @@ type NodeMonitorReport struct {
 	Capacity              *CapacitySummary       `protobuf:"bytes,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
 	Events                []*NodeEvent           `protobuf:"bytes,7,rep,name=events,proto3" json:"events,omitempty"`
 	ReportIntervalSeconds int32                  `protobuf:"varint,8,opt,name=report_interval_seconds,json=reportIntervalSeconds,proto3" json:"report_interval_seconds,omitempty"`
+	Tunnel                *TunnelHealthMetrics   `protobuf:"bytes,9,opt,name=tunnel,proto3" json:"tunnel,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -244,6 +260,13 @@ func (x *NodeMonitorReport) GetReportIntervalSeconds() int32 {
 		return x.ReportIntervalSeconds
 	}
 	return 0
+}
+
+func (x *NodeMonitorReport) GetTunnel() *TunnelHealthMetrics {
+	if x != nil {
+		return x.Tunnel
+	}
+	return nil
 }
 
 type HostMetrics struct {
@@ -1790,11 +1813,957 @@ func (*RequestMonitorSnapshot) Descriptor() ([]byte, []int) {
 	return file_gravity_monitor_proto_rawDescGZIP(), []int{15}
 }
 
+type TunnelHealthMetrics struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ConnectionPool *ConnectionPoolMetrics `protobuf:"bytes,1,opt,name=connection_pool,json=connectionPool,proto3" json:"connection_pool,omitempty"`
+	PacketFlow     *PacketFlowMetrics     `protobuf:"bytes,2,opt,name=packet_flow,json=packetFlow,proto3" json:"packet_flow,omitempty"`
+	InboundChannel *ChannelMetrics        `protobuf:"bytes,3,opt,name=inbound_channel,json=inboundChannel,proto3" json:"inbound_channel,omitempty"`
+	TunInterface   *TunInterfaceMetrics   `protobuf:"bytes,4,opt,name=tun_interface,json=tunInterface,proto3" json:"tun_interface,omitempty"`
+	Streams        []*TunnelStreamMetrics `protobuf:"bytes,5,rep,name=streams,proto3" json:"streams,omitempty"`
+	ControlPlane   *ControlPlaneMetrics   `protobuf:"bytes,6,opt,name=control_plane,json=controlPlane,proto3" json:"control_plane,omitempty"`
+	Stall          *StallIndicators       `protobuf:"bytes,7,opt,name=stall,proto3" json:"stall,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TunnelHealthMetrics) Reset() {
+	*x = TunnelHealthMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelHealthMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelHealthMetrics) ProtoMessage() {}
+
+func (x *TunnelHealthMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelHealthMetrics.ProtoReflect.Descriptor instead.
+func (*TunnelHealthMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *TunnelHealthMetrics) GetConnectionPool() *ConnectionPoolMetrics {
+	if x != nil {
+		return x.ConnectionPool
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetPacketFlow() *PacketFlowMetrics {
+	if x != nil {
+		return x.PacketFlow
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetInboundChannel() *ChannelMetrics {
+	if x != nil {
+		return x.InboundChannel
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetTunInterface() *TunInterfaceMetrics {
+	if x != nil {
+		return x.TunInterface
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetStreams() []*TunnelStreamMetrics {
+	if x != nil {
+		return x.Streams
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetControlPlane() *ControlPlaneMetrics {
+	if x != nil {
+		return x.ControlPlane
+	}
+	return nil
+}
+
+func (x *TunnelHealthMetrics) GetStall() *StallIndicators {
+	if x != nil {
+		return x.Stall
+	}
+	return nil
+}
+
+type ConnectionPoolMetrics struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	TotalConnections      int32                  `protobuf:"varint,1,opt,name=total_connections,json=totalConnections,proto3" json:"total_connections,omitempty"`
+	HealthyConnections    int32                  `protobuf:"varint,2,opt,name=healthy_connections,json=healthyConnections,proto3" json:"healthy_connections,omitempty"`
+	TotalTunnelStreams    int32                  `protobuf:"varint,3,opt,name=total_tunnel_streams,json=totalTunnelStreams,proto3" json:"total_tunnel_streams,omitempty"`
+	HealthyTunnelStreams  int32                  `protobuf:"varint,4,opt,name=healthy_tunnel_streams,json=healthyTunnelStreams,proto3" json:"healthy_tunnel_streams,omitempty"`
+	TotalControlStreams   int32                  `protobuf:"varint,5,opt,name=total_control_streams,json=totalControlStreams,proto3" json:"total_control_streams,omitempty"`
+	HealthyControlStreams int32                  `protobuf:"varint,6,opt,name=healthy_control_streams,json=healthyControlStreams,proto3" json:"healthy_control_streams,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ConnectionPoolMetrics) Reset() {
+	*x = ConnectionPoolMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConnectionPoolMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConnectionPoolMetrics) ProtoMessage() {}
+
+func (x *ConnectionPoolMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConnectionPoolMetrics.ProtoReflect.Descriptor instead.
+func (*ConnectionPoolMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *ConnectionPoolMetrics) GetTotalConnections() int32 {
+	if x != nil {
+		return x.TotalConnections
+	}
+	return 0
+}
+
+func (x *ConnectionPoolMetrics) GetHealthyConnections() int32 {
+	if x != nil {
+		return x.HealthyConnections
+	}
+	return 0
+}
+
+func (x *ConnectionPoolMetrics) GetTotalTunnelStreams() int32 {
+	if x != nil {
+		return x.TotalTunnelStreams
+	}
+	return 0
+}
+
+func (x *ConnectionPoolMetrics) GetHealthyTunnelStreams() int32 {
+	if x != nil {
+		return x.HealthyTunnelStreams
+	}
+	return 0
+}
+
+func (x *ConnectionPoolMetrics) GetTotalControlStreams() int32 {
+	if x != nil {
+		return x.TotalControlStreams
+	}
+	return 0
+}
+
+func (x *ConnectionPoolMetrics) GetHealthyControlStreams() int32 {
+	if x != nil {
+		return x.HealthyControlStreams
+	}
+	return 0
+}
+
+type PacketFlowMetrics struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Inbound: Gravity → Hadron → Container
+	InboundReceivedDelta  uint64 `protobuf:"varint,1,opt,name=inbound_received_delta,json=inboundReceivedDelta,proto3" json:"inbound_received_delta,omitempty"`    // packets received from gravity this interval
+	InboundDeliveredDelta uint64 `protobuf:"varint,2,opt,name=inbound_delivered_delta,json=inboundDeliveredDelta,proto3" json:"inbound_delivered_delta,omitempty"` // packets successfully delivered to containers
+	InboundDroppedDelta   uint64 `protobuf:"varint,3,opt,name=inbound_dropped_delta,json=inboundDroppedDelta,proto3" json:"inbound_dropped_delta,omitempty"`       // packets dropped (channel full)
+	InboundReceivedTotal  uint64 `protobuf:"varint,4,opt,name=inbound_received_total,json=inboundReceivedTotal,proto3" json:"inbound_received_total,omitempty"`    // lifetime received
+	InboundDeliveredTotal uint64 `protobuf:"varint,5,opt,name=inbound_delivered_total,json=inboundDeliveredTotal,proto3" json:"inbound_delivered_total,omitempty"` // lifetime delivered
+	InboundDroppedTotal   uint64 `protobuf:"varint,6,opt,name=inbound_dropped_total,json=inboundDroppedTotal,proto3" json:"inbound_dropped_total,omitempty"`       // lifetime dropped
+	InboundBytesDelta     uint64 `protobuf:"varint,7,opt,name=inbound_bytes_delta,json=inboundBytesDelta,proto3" json:"inbound_bytes_delta,omitempty"`             // bytes received this interval
+	InboundBytesTotal     uint64 `protobuf:"varint,8,opt,name=inbound_bytes_total,json=inboundBytesTotal,proto3" json:"inbound_bytes_total,omitempty"`             // lifetime bytes received
+	// Outbound: Container → Hadron → Gravity
+	OutboundReceivedDelta uint64 `protobuf:"varint,9,opt,name=outbound_received_delta,json=outboundReceivedDelta,proto3" json:"outbound_received_delta,omitempty"`  // packets read from TUN this interval
+	OutboundSentDelta     uint64 `protobuf:"varint,10,opt,name=outbound_sent_delta,json=outboundSentDelta,proto3" json:"outbound_sent_delta,omitempty"`             // packets sent to gravity this interval
+	OutboundErrorsDelta   uint64 `protobuf:"varint,11,opt,name=outbound_errors_delta,json=outboundErrorsDelta,proto3" json:"outbound_errors_delta,omitempty"`       // send failures this interval
+	OutboundReceivedTotal uint64 `protobuf:"varint,12,opt,name=outbound_received_total,json=outboundReceivedTotal,proto3" json:"outbound_received_total,omitempty"` // lifetime from TUN
+	OutboundSentTotal     uint64 `protobuf:"varint,13,opt,name=outbound_sent_total,json=outboundSentTotal,proto3" json:"outbound_sent_total,omitempty"`             // lifetime sent to gravity
+	OutboundErrorsTotal   uint64 `protobuf:"varint,14,opt,name=outbound_errors_total,json=outboundErrorsTotal,proto3" json:"outbound_errors_total,omitempty"`       // lifetime errors
+	OutboundBytesDelta    uint64 `protobuf:"varint,15,opt,name=outbound_bytes_delta,json=outboundBytesDelta,proto3" json:"outbound_bytes_delta,omitempty"`          // bytes sent this interval
+	OutboundBytesTotal    uint64 `protobuf:"varint,16,opt,name=outbound_bytes_total,json=outboundBytesTotal,proto3" json:"outbound_bytes_total,omitempty"`          // lifetime bytes sent
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *PacketFlowMetrics) Reset() {
+	*x = PacketFlowMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PacketFlowMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PacketFlowMetrics) ProtoMessage() {}
+
+func (x *PacketFlowMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PacketFlowMetrics.ProtoReflect.Descriptor instead.
+func (*PacketFlowMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *PacketFlowMetrics) GetInboundReceivedDelta() uint64 {
+	if x != nil {
+		return x.InboundReceivedDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundDeliveredDelta() uint64 {
+	if x != nil {
+		return x.InboundDeliveredDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundDroppedDelta() uint64 {
+	if x != nil {
+		return x.InboundDroppedDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundReceivedTotal() uint64 {
+	if x != nil {
+		return x.InboundReceivedTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundDeliveredTotal() uint64 {
+	if x != nil {
+		return x.InboundDeliveredTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundDroppedTotal() uint64 {
+	if x != nil {
+		return x.InboundDroppedTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundBytesDelta() uint64 {
+	if x != nil {
+		return x.InboundBytesDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetInboundBytesTotal() uint64 {
+	if x != nil {
+		return x.InboundBytesTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundReceivedDelta() uint64 {
+	if x != nil {
+		return x.OutboundReceivedDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundSentDelta() uint64 {
+	if x != nil {
+		return x.OutboundSentDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundErrorsDelta() uint64 {
+	if x != nil {
+		return x.OutboundErrorsDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundReceivedTotal() uint64 {
+	if x != nil {
+		return x.OutboundReceivedTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundSentTotal() uint64 {
+	if x != nil {
+		return x.OutboundSentTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundErrorsTotal() uint64 {
+	if x != nil {
+		return x.OutboundErrorsTotal
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundBytesDelta() uint64 {
+	if x != nil {
+		return x.OutboundBytesDelta
+	}
+	return 0
+}
+
+func (x *PacketFlowMetrics) GetOutboundBytesTotal() uint64 {
+	if x != nil {
+		return x.OutboundBytesTotal
+	}
+	return 0
+}
+
+type ChannelMetrics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CurrentDepth  int32                  `protobuf:"varint,1,opt,name=current_depth,json=currentDepth,proto3" json:"current_depth,omitempty"`      // items in channel right now (point-in-time gauge)
+	Capacity      int32                  `protobuf:"varint,2,opt,name=capacity,proto3" json:"capacity,omitempty"`                                  // channel buffer size (typically 1000)
+	HighWaterMark int32                  `protobuf:"varint,3,opt,name=high_water_mark,json=highWaterMark,proto3" json:"high_water_mark,omitempty"` // max depth observed this interval
+	DropsDelta    uint64                 `protobuf:"varint,4,opt,name=drops_delta,json=dropsDelta,proto3" json:"drops_delta,omitempty"`            // drops this interval
+	DropsTotal    uint64                 `protobuf:"varint,5,opt,name=drops_total,json=dropsTotal,proto3" json:"drops_total,omitempty"`            // lifetime drops
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChannelMetrics) Reset() {
+	*x = ChannelMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChannelMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChannelMetrics) ProtoMessage() {}
+
+func (x *ChannelMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChannelMetrics.ProtoReflect.Descriptor instead.
+func (*ChannelMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ChannelMetrics) GetCurrentDepth() int32 {
+	if x != nil {
+		return x.CurrentDepth
+	}
+	return 0
+}
+
+func (x *ChannelMetrics) GetCapacity() int32 {
+	if x != nil {
+		return x.Capacity
+	}
+	return 0
+}
+
+func (x *ChannelMetrics) GetHighWaterMark() int32 {
+	if x != nil {
+		return x.HighWaterMark
+	}
+	return 0
+}
+
+func (x *ChannelMetrics) GetDropsDelta() uint64 {
+	if x != nil {
+		return x.DropsDelta
+	}
+	return 0
+}
+
+func (x *ChannelMetrics) GetDropsTotal() uint64 {
+	if x != nil {
+		return x.DropsTotal
+	}
+	return 0
+}
+
+type TunInterfaceMetrics struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Read direction = container → hadron (outbound packets)
+	PacketsReadDelta uint64 `protobuf:"varint,1,opt,name=packets_read_delta,json=packetsReadDelta,proto3" json:"packets_read_delta,omitempty"`
+	PacketsReadTotal uint64 `protobuf:"varint,2,opt,name=packets_read_total,json=packetsReadTotal,proto3" json:"packets_read_total,omitempty"`
+	BytesReadDelta   uint64 `protobuf:"varint,3,opt,name=bytes_read_delta,json=bytesReadDelta,proto3" json:"bytes_read_delta,omitempty"`
+	BytesReadTotal   uint64 `protobuf:"varint,4,opt,name=bytes_read_total,json=bytesReadTotal,proto3" json:"bytes_read_total,omitempty"`
+	ReadErrorsDelta  uint64 `protobuf:"varint,5,opt,name=read_errors_delta,json=readErrorsDelta,proto3" json:"read_errors_delta,omitempty"`
+	ReadErrorsTotal  uint64 `protobuf:"varint,6,opt,name=read_errors_total,json=readErrorsTotal,proto3" json:"read_errors_total,omitempty"`
+	// Write direction = hadron → container (inbound packets)
+	PacketsWrittenDelta uint64 `protobuf:"varint,7,opt,name=packets_written_delta,json=packetsWrittenDelta,proto3" json:"packets_written_delta,omitempty"`
+	PacketsWrittenTotal uint64 `protobuf:"varint,8,opt,name=packets_written_total,json=packetsWrittenTotal,proto3" json:"packets_written_total,omitempty"`
+	BytesWrittenDelta   uint64 `protobuf:"varint,9,opt,name=bytes_written_delta,json=bytesWrittenDelta,proto3" json:"bytes_written_delta,omitempty"`
+	BytesWrittenTotal   uint64 `protobuf:"varint,10,opt,name=bytes_written_total,json=bytesWrittenTotal,proto3" json:"bytes_written_total,omitempty"`
+	WriteErrorsDelta    uint64 `protobuf:"varint,11,opt,name=write_errors_delta,json=writeErrorsDelta,proto3" json:"write_errors_delta,omitempty"`
+	WriteErrorsTotal    uint64 `protobuf:"varint,12,opt,name=write_errors_total,json=writeErrorsTotal,proto3" json:"write_errors_total,omitempty"`
+	// Write latency = time to push packet into TUN device (final delivery)
+	WriteLatency  *DurationStats `protobuf:"bytes,13,opt,name=write_latency,json=writeLatency,proto3" json:"write_latency,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TunInterfaceMetrics) Reset() {
+	*x = TunInterfaceMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunInterfaceMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunInterfaceMetrics) ProtoMessage() {}
+
+func (x *TunInterfaceMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunInterfaceMetrics.ProtoReflect.Descriptor instead.
+func (*TunInterfaceMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *TunInterfaceMetrics) GetPacketsReadDelta() uint64 {
+	if x != nil {
+		return x.PacketsReadDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetPacketsReadTotal() uint64 {
+	if x != nil {
+		return x.PacketsReadTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetBytesReadDelta() uint64 {
+	if x != nil {
+		return x.BytesReadDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetBytesReadTotal() uint64 {
+	if x != nil {
+		return x.BytesReadTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetReadErrorsDelta() uint64 {
+	if x != nil {
+		return x.ReadErrorsDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetReadErrorsTotal() uint64 {
+	if x != nil {
+		return x.ReadErrorsTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetPacketsWrittenDelta() uint64 {
+	if x != nil {
+		return x.PacketsWrittenDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetPacketsWrittenTotal() uint64 {
+	if x != nil {
+		return x.PacketsWrittenTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetBytesWrittenDelta() uint64 {
+	if x != nil {
+		return x.BytesWrittenDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetBytesWrittenTotal() uint64 {
+	if x != nil {
+		return x.BytesWrittenTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetWriteErrorsDelta() uint64 {
+	if x != nil {
+		return x.WriteErrorsDelta
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetWriteErrorsTotal() uint64 {
+	if x != nil {
+		return x.WriteErrorsTotal
+	}
+	return 0
+}
+
+func (x *TunInterfaceMetrics) GetWriteLatency() *DurationStats {
+	if x != nil {
+		return x.WriteLatency
+	}
+	return nil
+}
+
+type TunnelStreamMetrics struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	StreamId         string                 `protobuf:"bytes,1,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`
+	ConnectionIndex  int32                  `protobuf:"varint,2,opt,name=connection_index,json=connectionIndex,proto3" json:"connection_index,omitempty"`
+	Healthy          bool                   `protobuf:"varint,3,opt,name=healthy,proto3" json:"healthy,omitempty"`
+	PacketsSentDelta uint64                 `protobuf:"varint,4,opt,name=packets_sent_delta,json=packetsSentDelta,proto3" json:"packets_sent_delta,omitempty"`
+	PacketsRecvDelta uint64                 `protobuf:"varint,5,opt,name=packets_recv_delta,json=packetsRecvDelta,proto3" json:"packets_recv_delta,omitempty"`
+	ErrorsDelta      uint64                 `protobuf:"varint,6,opt,name=errors_delta,json=errorsDelta,proto3" json:"errors_delta,omitempty"`
+	PacketsSentTotal uint64                 `protobuf:"varint,7,opt,name=packets_sent_total,json=packetsSentTotal,proto3" json:"packets_sent_total,omitempty"`
+	PacketsRecvTotal uint64                 `protobuf:"varint,8,opt,name=packets_recv_total,json=packetsRecvTotal,proto3" json:"packets_recv_total,omitempty"`
+	ErrorsTotal      uint64                 `protobuf:"varint,9,opt,name=errors_total,json=errorsTotal,proto3" json:"errors_total,omitempty"`
+	LastSendAtUs     int64                  `protobuf:"varint,10,opt,name=last_send_at_us,json=lastSendAtUs,proto3" json:"last_send_at_us,omitempty"` // timestamp of last successful send
+	LastRecvAtUs     int64                  `protobuf:"varint,11,opt,name=last_recv_at_us,json=lastRecvAtUs,proto3" json:"last_recv_at_us,omitempty"` // timestamp of last successful receive
+	SendLatency      *DurationStats         `protobuf:"bytes,12,opt,name=send_latency,json=sendLatency,proto3" json:"send_latency,omitempty"`         // gRPC stream.Send() latency this interval
+	BytesSentDelta   uint64                 `protobuf:"varint,13,opt,name=bytes_sent_delta,json=bytesSentDelta,proto3" json:"bytes_sent_delta,omitempty"`
+	BytesSentTotal   uint64                 `protobuf:"varint,14,opt,name=bytes_sent_total,json=bytesSentTotal,proto3" json:"bytes_sent_total,omitempty"`
+	BytesRecvDelta   uint64                 `protobuf:"varint,15,opt,name=bytes_recv_delta,json=bytesRecvDelta,proto3" json:"bytes_recv_delta,omitempty"`
+	BytesRecvTotal   uint64                 `protobuf:"varint,16,opt,name=bytes_recv_total,json=bytesRecvTotal,proto3" json:"bytes_recv_total,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *TunnelStreamMetrics) Reset() {
+	*x = TunnelStreamMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TunnelStreamMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TunnelStreamMetrics) ProtoMessage() {}
+
+func (x *TunnelStreamMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TunnelStreamMetrics.ProtoReflect.Descriptor instead.
+func (*TunnelStreamMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *TunnelStreamMetrics) GetStreamId() string {
+	if x != nil {
+		return x.StreamId
+	}
+	return ""
+}
+
+func (x *TunnelStreamMetrics) GetConnectionIndex() int32 {
+	if x != nil {
+		return x.ConnectionIndex
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetHealthy() bool {
+	if x != nil {
+		return x.Healthy
+	}
+	return false
+}
+
+func (x *TunnelStreamMetrics) GetPacketsSentDelta() uint64 {
+	if x != nil {
+		return x.PacketsSentDelta
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetPacketsRecvDelta() uint64 {
+	if x != nil {
+		return x.PacketsRecvDelta
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetErrorsDelta() uint64 {
+	if x != nil {
+		return x.ErrorsDelta
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetPacketsSentTotal() uint64 {
+	if x != nil {
+		return x.PacketsSentTotal
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetPacketsRecvTotal() uint64 {
+	if x != nil {
+		return x.PacketsRecvTotal
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetErrorsTotal() uint64 {
+	if x != nil {
+		return x.ErrorsTotal
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetLastSendAtUs() int64 {
+	if x != nil {
+		return x.LastSendAtUs
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetLastRecvAtUs() int64 {
+	if x != nil {
+		return x.LastRecvAtUs
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetSendLatency() *DurationStats {
+	if x != nil {
+		return x.SendLatency
+	}
+	return nil
+}
+
+func (x *TunnelStreamMetrics) GetBytesSentDelta() uint64 {
+	if x != nil {
+		return x.BytesSentDelta
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetBytesSentTotal() uint64 {
+	if x != nil {
+		return x.BytesSentTotal
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetBytesRecvDelta() uint64 {
+	if x != nil {
+		return x.BytesRecvDelta
+	}
+	return 0
+}
+
+func (x *TunnelStreamMetrics) GetBytesRecvTotal() uint64 {
+	if x != nil {
+		return x.BytesRecvTotal
+	}
+	return 0
+}
+
+type ControlPlaneMetrics struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	LastPingSentAtUs     int64                  `protobuf:"varint,1,opt,name=last_ping_sent_at_us,json=lastPingSentAtUs,proto3" json:"last_ping_sent_at_us,omitempty"`
+	LastPongReceivedAtUs int64                  `protobuf:"varint,2,opt,name=last_pong_received_at_us,json=lastPongReceivedAtUs,proto3" json:"last_pong_received_at_us,omitempty"`
+	PingLatency          *DurationStats         `protobuf:"bytes,3,opt,name=ping_latency,json=pingLatency,proto3" json:"ping_latency,omitempty"` // ping round-trip latency this interval
+	PingsSentDelta       uint64                 `protobuf:"varint,4,opt,name=pings_sent_delta,json=pingsSentDelta,proto3" json:"pings_sent_delta,omitempty"`
+	PongsReceivedDelta   uint64                 `protobuf:"varint,5,opt,name=pongs_received_delta,json=pongsReceivedDelta,proto3" json:"pongs_received_delta,omitempty"`
+	PingsSentTotal       uint64                 `protobuf:"varint,6,opt,name=pings_sent_total,json=pingsSentTotal,proto3" json:"pings_sent_total,omitempty"`
+	PongsReceivedTotal   uint64                 `protobuf:"varint,7,opt,name=pongs_received_total,json=pongsReceivedTotal,proto3" json:"pongs_received_total,omitempty"`
+	TimeoutsDelta        uint64                 `protobuf:"varint,8,opt,name=timeouts_delta,json=timeoutsDelta,proto3" json:"timeouts_delta,omitempty"` // pings that got no pong within deadline
+	TimeoutsTotal        uint64                 `protobuf:"varint,9,opt,name=timeouts_total,json=timeoutsTotal,proto3" json:"timeouts_total,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *ControlPlaneMetrics) Reset() {
+	*x = ControlPlaneMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ControlPlaneMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ControlPlaneMetrics) ProtoMessage() {}
+
+func (x *ControlPlaneMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ControlPlaneMetrics.ProtoReflect.Descriptor instead.
+func (*ControlPlaneMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ControlPlaneMetrics) GetLastPingSentAtUs() int64 {
+	if x != nil {
+		return x.LastPingSentAtUs
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetLastPongReceivedAtUs() int64 {
+	if x != nil {
+		return x.LastPongReceivedAtUs
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetPingLatency() *DurationStats {
+	if x != nil {
+		return x.PingLatency
+	}
+	return nil
+}
+
+func (x *ControlPlaneMetrics) GetPingsSentDelta() uint64 {
+	if x != nil {
+		return x.PingsSentDelta
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetPongsReceivedDelta() uint64 {
+	if x != nil {
+		return x.PongsReceivedDelta
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetPingsSentTotal() uint64 {
+	if x != nil {
+		return x.PingsSentTotal
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetPongsReceivedTotal() uint64 {
+	if x != nil {
+		return x.PongsReceivedTotal
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetTimeoutsDelta() uint64 {
+	if x != nil {
+		return x.TimeoutsDelta
+	}
+	return 0
+}
+
+func (x *ControlPlaneMetrics) GetTimeoutsTotal() uint64 {
+	if x != nil {
+		return x.TimeoutsTotal
+	}
+	return 0
+}
+
+type StallIndicators struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Timestamps of last successful data-plane activity
+	LastInboundDeliveryAtUs int64 `protobuf:"varint,1,opt,name=last_inbound_delivery_at_us,json=lastInboundDeliveryAtUs,proto3" json:"last_inbound_delivery_at_us,omitempty"` // last successful ProcessInPacket
+	LastOutboundSendAtUs    int64 `protobuf:"varint,2,opt,name=last_outbound_send_at_us,json=lastOutboundSendAtUs,proto3" json:"last_outbound_send_at_us,omitempty"`          // last successful sendTunnelPacket
+	// Per-interval activity flags
+	ControlPlaneActive bool `protobuf:"varint,3,opt,name=control_plane_active,json=controlPlaneActive,proto3" json:"control_plane_active,omitempty"` // had ping/pong activity this interval
+	TunnelActive       bool `protobuf:"varint,4,opt,name=tunnel_active,json=tunnelActive,proto3" json:"tunnel_active,omitempty"`                     // had any packet flow this interval
+	// Stall duration and severity
+	TunnelIdleSeconds        float64 `protobuf:"fixed64,5,opt,name=tunnel_idle_seconds,json=tunnelIdleSeconds,proto3" json:"tunnel_idle_seconds,omitempty"`                     // seconds since last tunnel activity
+	ConsecutiveIdleIntervals uint32  `protobuf:"varint,6,opt,name=consecutive_idle_intervals,json=consecutiveIdleIntervals,proto3" json:"consecutive_idle_intervals,omitempty"` // how many report intervals with zero packets
+	// Channel pressure snapshot
+	InboundChannelFull bool `protobuf:"varint,7,opt,name=inbound_channel_full,json=inboundChannelFull,proto3" json:"inbound_channel_full,omitempty"` // channel at capacity right now
+	// Control plane stall counters
+	ConsecutivePingNoResponse uint32 `protobuf:"varint,8,opt,name=consecutive_ping_no_response,json=consecutivePingNoResponse,proto3" json:"consecutive_ping_no_response,omitempty"` // intervals with pings sent but no pongs
+	ConsecutiveNoPings        uint32 `protobuf:"varint,9,opt,name=consecutive_no_pings,json=consecutiveNoPings,proto3" json:"consecutive_no_pings,omitempty"`                        // intervals with no pings sent at all
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *StallIndicators) Reset() {
+	*x = StallIndicators{}
+	mi := &file_gravity_monitor_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StallIndicators) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StallIndicators) ProtoMessage() {}
+
+func (x *StallIndicators) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StallIndicators.ProtoReflect.Descriptor instead.
+func (*StallIndicators) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *StallIndicators) GetLastInboundDeliveryAtUs() int64 {
+	if x != nil {
+		return x.LastInboundDeliveryAtUs
+	}
+	return 0
+}
+
+func (x *StallIndicators) GetLastOutboundSendAtUs() int64 {
+	if x != nil {
+		return x.LastOutboundSendAtUs
+	}
+	return 0
+}
+
+func (x *StallIndicators) GetControlPlaneActive() bool {
+	if x != nil {
+		return x.ControlPlaneActive
+	}
+	return false
+}
+
+func (x *StallIndicators) GetTunnelActive() bool {
+	if x != nil {
+		return x.TunnelActive
+	}
+	return false
+}
+
+func (x *StallIndicators) GetTunnelIdleSeconds() float64 {
+	if x != nil {
+		return x.TunnelIdleSeconds
+	}
+	return 0
+}
+
+func (x *StallIndicators) GetConsecutiveIdleIntervals() uint32 {
+	if x != nil {
+		return x.ConsecutiveIdleIntervals
+	}
+	return 0
+}
+
+func (x *StallIndicators) GetInboundChannelFull() bool {
+	if x != nil {
+		return x.InboundChannelFull
+	}
+	return false
+}
+
+func (x *StallIndicators) GetConsecutivePingNoResponse() uint32 {
+	if x != nil {
+		return x.ConsecutivePingNoResponse
+	}
+	return 0
+}
+
+func (x *StallIndicators) GetConsecutiveNoPings() uint32 {
+	if x != nil {
+		return x.ConsecutiveNoPings
+	}
+	return 0
+}
+
 var File_gravity_monitor_proto protoreflect.FileDescriptor
 
 const file_gravity_monitor_proto_rawDesc = "" +
 	"\n" +
-	"\x15gravity_monitor.proto\x12\agravity\"\xe9\x02\n" +
+	"\x15gravity_monitor.proto\x12\agravity\"\x9f\x03\n" +
 	"\x11NodeMonitorReport\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12$\n" +
@@ -1806,7 +2775,8 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"containers\x124\n" +
 	"\bcapacity\x18\x06 \x01(\v2\x18.gravity.CapacitySummaryR\bcapacity\x12*\n" +
 	"\x06events\x18\a \x03(\v2\x12.gravity.NodeEventR\x06events\x126\n" +
-	"\x17report_interval_seconds\x18\b \x01(\x05R\x15reportIntervalSeconds\"\x8e\x02\n" +
+	"\x17report_interval_seconds\x18\b \x01(\x05R\x15reportIntervalSeconds\x124\n" +
+	"\x06tunnel\x18\t \x01(\v2\x1c.gravity.TunnelHealthMetricsR\x06tunnel\"\x8e\x02\n" +
 	"\vHostMetrics\x12%\n" +
 	"\x03cpu\x18\x01 \x01(\v2\x13.gravity.CpuMetricsR\x03cpu\x12.\n" +
 	"\x06memory\x18\x02 \x01(\v2\x16.gravity.MemoryMetricsR\x06memory\x12*\n" +
@@ -1965,13 +2935,108 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\acommand\"B\n" +
 	"\x15AdjustMonitorInterval\x12)\n" +
 	"\x10interval_seconds\x18\x01 \x01(\x05R\x0fintervalSeconds\"\x18\n" +
-	"\x16RequestMonitorSnapshot*\xa3\x01\n" +
+	"\x16RequestMonitorSnapshot\"\xcb\x03\n" +
+	"\x13TunnelHealthMetrics\x12G\n" +
+	"\x0fconnection_pool\x18\x01 \x01(\v2\x1e.gravity.ConnectionPoolMetricsR\x0econnectionPool\x12;\n" +
+	"\vpacket_flow\x18\x02 \x01(\v2\x1a.gravity.PacketFlowMetricsR\n" +
+	"packetFlow\x12@\n" +
+	"\x0finbound_channel\x18\x03 \x01(\v2\x17.gravity.ChannelMetricsR\x0einboundChannel\x12A\n" +
+	"\rtun_interface\x18\x04 \x01(\v2\x1c.gravity.TunInterfaceMetricsR\ftunInterface\x126\n" +
+	"\astreams\x18\x05 \x03(\v2\x1c.gravity.TunnelStreamMetricsR\astreams\x12A\n" +
+	"\rcontrol_plane\x18\x06 \x01(\v2\x1c.gravity.ControlPlaneMetricsR\fcontrolPlane\x12.\n" +
+	"\x05stall\x18\a \x01(\v2\x18.gravity.StallIndicatorsR\x05stall\"\xc9\x02\n" +
+	"\x15ConnectionPoolMetrics\x12+\n" +
+	"\x11total_connections\x18\x01 \x01(\x05R\x10totalConnections\x12/\n" +
+	"\x13healthy_connections\x18\x02 \x01(\x05R\x12healthyConnections\x120\n" +
+	"\x14total_tunnel_streams\x18\x03 \x01(\x05R\x12totalTunnelStreams\x124\n" +
+	"\x16healthy_tunnel_streams\x18\x04 \x01(\x05R\x14healthyTunnelStreams\x122\n" +
+	"\x15total_control_streams\x18\x05 \x01(\x05R\x13totalControlStreams\x126\n" +
+	"\x17healthy_control_streams\x18\x06 \x01(\x05R\x15healthyControlStreams\"\xd3\x06\n" +
+	"\x11PacketFlowMetrics\x124\n" +
+	"\x16inbound_received_delta\x18\x01 \x01(\x04R\x14inboundReceivedDelta\x126\n" +
+	"\x17inbound_delivered_delta\x18\x02 \x01(\x04R\x15inboundDeliveredDelta\x122\n" +
+	"\x15inbound_dropped_delta\x18\x03 \x01(\x04R\x13inboundDroppedDelta\x124\n" +
+	"\x16inbound_received_total\x18\x04 \x01(\x04R\x14inboundReceivedTotal\x126\n" +
+	"\x17inbound_delivered_total\x18\x05 \x01(\x04R\x15inboundDeliveredTotal\x122\n" +
+	"\x15inbound_dropped_total\x18\x06 \x01(\x04R\x13inboundDroppedTotal\x12.\n" +
+	"\x13inbound_bytes_delta\x18\a \x01(\x04R\x11inboundBytesDelta\x12.\n" +
+	"\x13inbound_bytes_total\x18\b \x01(\x04R\x11inboundBytesTotal\x126\n" +
+	"\x17outbound_received_delta\x18\t \x01(\x04R\x15outboundReceivedDelta\x12.\n" +
+	"\x13outbound_sent_delta\x18\n" +
+	" \x01(\x04R\x11outboundSentDelta\x122\n" +
+	"\x15outbound_errors_delta\x18\v \x01(\x04R\x13outboundErrorsDelta\x126\n" +
+	"\x17outbound_received_total\x18\f \x01(\x04R\x15outboundReceivedTotal\x12.\n" +
+	"\x13outbound_sent_total\x18\r \x01(\x04R\x11outboundSentTotal\x122\n" +
+	"\x15outbound_errors_total\x18\x0e \x01(\x04R\x13outboundErrorsTotal\x120\n" +
+	"\x14outbound_bytes_delta\x18\x0f \x01(\x04R\x12outboundBytesDelta\x120\n" +
+	"\x14outbound_bytes_total\x18\x10 \x01(\x04R\x12outboundBytesTotal\"\xbb\x01\n" +
+	"\x0eChannelMetrics\x12#\n" +
+	"\rcurrent_depth\x18\x01 \x01(\x05R\fcurrentDepth\x12\x1a\n" +
+	"\bcapacity\x18\x02 \x01(\x05R\bcapacity\x12&\n" +
+	"\x0fhigh_water_mark\x18\x03 \x01(\x05R\rhighWaterMark\x12\x1f\n" +
+	"\vdrops_delta\x18\x04 \x01(\x04R\n" +
+	"dropsDelta\x12\x1f\n" +
+	"\vdrops_total\x18\x05 \x01(\x04R\n" +
+	"dropsTotal\"\xfe\x04\n" +
+	"\x13TunInterfaceMetrics\x12,\n" +
+	"\x12packets_read_delta\x18\x01 \x01(\x04R\x10packetsReadDelta\x12,\n" +
+	"\x12packets_read_total\x18\x02 \x01(\x04R\x10packetsReadTotal\x12(\n" +
+	"\x10bytes_read_delta\x18\x03 \x01(\x04R\x0ebytesReadDelta\x12(\n" +
+	"\x10bytes_read_total\x18\x04 \x01(\x04R\x0ebytesReadTotal\x12*\n" +
+	"\x11read_errors_delta\x18\x05 \x01(\x04R\x0freadErrorsDelta\x12*\n" +
+	"\x11read_errors_total\x18\x06 \x01(\x04R\x0freadErrorsTotal\x122\n" +
+	"\x15packets_written_delta\x18\a \x01(\x04R\x13packetsWrittenDelta\x122\n" +
+	"\x15packets_written_total\x18\b \x01(\x04R\x13packetsWrittenTotal\x12.\n" +
+	"\x13bytes_written_delta\x18\t \x01(\x04R\x11bytesWrittenDelta\x12.\n" +
+	"\x13bytes_written_total\x18\n" +
+	" \x01(\x04R\x11bytesWrittenTotal\x12,\n" +
+	"\x12write_errors_delta\x18\v \x01(\x04R\x10writeErrorsDelta\x12,\n" +
+	"\x12write_errors_total\x18\f \x01(\x04R\x10writeErrorsTotal\x12;\n" +
+	"\rwrite_latency\x18\r \x01(\v2\x16.gravity.DurationStatsR\fwriteLatency\"\xa6\x05\n" +
+	"\x13TunnelStreamMetrics\x12\x1b\n" +
+	"\tstream_id\x18\x01 \x01(\tR\bstreamId\x12)\n" +
+	"\x10connection_index\x18\x02 \x01(\x05R\x0fconnectionIndex\x12\x18\n" +
+	"\ahealthy\x18\x03 \x01(\bR\ahealthy\x12,\n" +
+	"\x12packets_sent_delta\x18\x04 \x01(\x04R\x10packetsSentDelta\x12,\n" +
+	"\x12packets_recv_delta\x18\x05 \x01(\x04R\x10packetsRecvDelta\x12!\n" +
+	"\ferrors_delta\x18\x06 \x01(\x04R\verrorsDelta\x12,\n" +
+	"\x12packets_sent_total\x18\a \x01(\x04R\x10packetsSentTotal\x12,\n" +
+	"\x12packets_recv_total\x18\b \x01(\x04R\x10packetsRecvTotal\x12!\n" +
+	"\ferrors_total\x18\t \x01(\x04R\verrorsTotal\x12%\n" +
+	"\x0flast_send_at_us\x18\n" +
+	" \x01(\x03R\flastSendAtUs\x12%\n" +
+	"\x0flast_recv_at_us\x18\v \x01(\x03R\flastRecvAtUs\x129\n" +
+	"\fsend_latency\x18\f \x01(\v2\x16.gravity.DurationStatsR\vsendLatency\x12(\n" +
+	"\x10bytes_sent_delta\x18\r \x01(\x04R\x0ebytesSentDelta\x12(\n" +
+	"\x10bytes_sent_total\x18\x0e \x01(\x04R\x0ebytesSentTotal\x12(\n" +
+	"\x10bytes_recv_delta\x18\x0f \x01(\x04R\x0ebytesRecvDelta\x12(\n" +
+	"\x10bytes_recv_total\x18\x10 \x01(\x04R\x0ebytesRecvTotal\"\xbe\x03\n" +
+	"\x13ControlPlaneMetrics\x12.\n" +
+	"\x14last_ping_sent_at_us\x18\x01 \x01(\x03R\x10lastPingSentAtUs\x126\n" +
+	"\x18last_pong_received_at_us\x18\x02 \x01(\x03R\x14lastPongReceivedAtUs\x129\n" +
+	"\fping_latency\x18\x03 \x01(\v2\x16.gravity.DurationStatsR\vpingLatency\x12(\n" +
+	"\x10pings_sent_delta\x18\x04 \x01(\x04R\x0epingsSentDelta\x120\n" +
+	"\x14pongs_received_delta\x18\x05 \x01(\x04R\x12pongsReceivedDelta\x12(\n" +
+	"\x10pings_sent_total\x18\x06 \x01(\x04R\x0epingsSentTotal\x120\n" +
+	"\x14pongs_received_total\x18\a \x01(\x04R\x12pongsReceivedTotal\x12%\n" +
+	"\x0etimeouts_delta\x18\b \x01(\x04R\rtimeoutsDelta\x12%\n" +
+	"\x0etimeouts_total\x18\t \x01(\x04R\rtimeoutsTotal\"\xf1\x03\n" +
+	"\x0fStallIndicators\x12<\n" +
+	"\x1blast_inbound_delivery_at_us\x18\x01 \x01(\x03R\x17lastInboundDeliveryAtUs\x126\n" +
+	"\x18last_outbound_send_at_us\x18\x02 \x01(\x03R\x14lastOutboundSendAtUs\x120\n" +
+	"\x14control_plane_active\x18\x03 \x01(\bR\x12controlPlaneActive\x12#\n" +
+	"\rtunnel_active\x18\x04 \x01(\bR\ftunnelActive\x12.\n" +
+	"\x13tunnel_idle_seconds\x18\x05 \x01(\x01R\x11tunnelIdleSeconds\x12<\n" +
+	"\x1aconsecutive_idle_intervals\x18\x06 \x01(\rR\x18consecutiveIdleIntervals\x120\n" +
+	"\x14inbound_channel_full\x18\a \x01(\bR\x12inboundChannelFull\x12?\n" +
+	"\x1cconsecutive_ping_no_response\x18\b \x01(\rR\x19consecutivePingNoResponse\x120\n" +
+	"\x14consecutive_no_pings\x18\t \x01(\rR\x12consecutiveNoPings*\xa3\x01\n" +
 	"\x0eNodeEventLevel\x12 \n" +
 	"\x1cNODE_EVENT_LEVEL_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15NODE_EVENT_LEVEL_INFO\x10\x01\x12\x19\n" +
 	"\x15NODE_EVENT_LEVEL_WARN\x10\x02\x12\x1a\n" +
 	"\x16NODE_EVENT_LEVEL_ERROR\x10\x03\x12\x1d\n" +
-	"\x19NODE_EVENT_LEVEL_CRITICAL\x10\x04*\x82\x03\n" +
+	"\x19NODE_EVENT_LEVEL_CRITICAL\x10\x04*\xc7\x04\n" +
 	"\rNodeEventType\x12\x1f\n" +
 	"\x1bNODE_EVENT_TYPE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fNODE_EVENT_TYPE_CONTAINER_START\x10\x01\x12\"\n" +
@@ -1982,7 +3047,13 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	" NODE_EVENT_TYPE_DISK_NEARLY_FULL\x10\x06\x12#\n" +
 	"\x1fNODE_EVENT_TYPE_COLLECTOR_ERROR\x10\a\x12\"\n" +
 	"\x1eNODE_EVENT_TYPE_PRESSURE_ALERT\x10\b\x12 \n" +
-	"\x1cNODE_EVENT_TYPE_HEALTH_ALERT\x10\tB.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
+	"\x1cNODE_EVENT_TYPE_HEALTH_ALERT\x10\t\x12 \n" +
+	"\x1cNODE_EVENT_TYPE_TUNNEL_STALL\x10\n" +
+	"\x12*\n" +
+	"&NODE_EVENT_TYPE_TUNNEL_PACKETS_DROPPED\x10\v\x12&\n" +
+	"\"NODE_EVENT_TYPE_TUNNEL_STREAM_DOWN\x10\f\x12$\n" +
+	" NODE_EVENT_TYPE_TUNNEL_RECOVERED\x10\r\x12'\n" +
+	"#NODE_EVENT_TYPE_CONTROL_PLANE_STALL\x10\x0eB.Z,github.com/agentuity/go-common/gravity/protob\x06proto3"
 
 var (
 	file_gravity_monitor_proto_rawDescOnce sync.Once
@@ -1997,7 +3068,7 @@ func file_gravity_monitor_proto_rawDescGZIP() []byte {
 }
 
 var file_gravity_monitor_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_gravity_monitor_proto_goTypes = []any{
 	(NodeEventLevel)(0),             // 0: gravity.NodeEventLevel
 	(NodeEventType)(0),              // 1: gravity.NodeEventType
@@ -2017,33 +3088,52 @@ var file_gravity_monitor_proto_goTypes = []any{
 	(*MonitorCommand)(nil),          // 15: gravity.MonitorCommand
 	(*AdjustMonitorInterval)(nil),   // 16: gravity.AdjustMonitorInterval
 	(*RequestMonitorSnapshot)(nil),  // 17: gravity.RequestMonitorSnapshot
-	nil,                             // 18: gravity.NodeEvent.MetadataEntry
+	(*TunnelHealthMetrics)(nil),     // 18: gravity.TunnelHealthMetrics
+	(*ConnectionPoolMetrics)(nil),   // 19: gravity.ConnectionPoolMetrics
+	(*PacketFlowMetrics)(nil),       // 20: gravity.PacketFlowMetrics
+	(*ChannelMetrics)(nil),          // 21: gravity.ChannelMetrics
+	(*TunInterfaceMetrics)(nil),     // 22: gravity.TunInterfaceMetrics
+	(*TunnelStreamMetrics)(nil),     // 23: gravity.TunnelStreamMetrics
+	(*ControlPlaneMetrics)(nil),     // 24: gravity.ControlPlaneMetrics
+	(*StallIndicators)(nil),         // 25: gravity.StallIndicators
+	nil,                             // 26: gravity.NodeEvent.MetadataEntry
 }
 var file_gravity_monitor_proto_depIdxs = []int32{
 	3,  // 0: gravity.NodeMonitorReport.host:type_name -> gravity.HostMetrics
 	9,  // 1: gravity.NodeMonitorReport.containers:type_name -> gravity.ContainerMetrics
 	13, // 2: gravity.NodeMonitorReport.capacity:type_name -> gravity.CapacitySummary
 	14, // 3: gravity.NodeMonitorReport.events:type_name -> gravity.NodeEvent
-	4,  // 4: gravity.HostMetrics.cpu:type_name -> gravity.CpuMetrics
-	5,  // 5: gravity.HostMetrics.memory:type_name -> gravity.MemoryMetrics
-	6,  // 6: gravity.HostMetrics.disks:type_name -> gravity.DiskMetrics
-	7,  // 7: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
-	8,  // 8: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
-	10, // 9: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
-	12, // 10: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
-	10, // 11: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
-	12, // 12: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
-	11, // 13: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
-	0,  // 14: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
-	1,  // 15: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
-	18, // 16: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
-	16, // 17: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
-	17, // 18: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
-	19, // [19:19] is the sub-list for method output_type
-	19, // [19:19] is the sub-list for method input_type
-	19, // [19:19] is the sub-list for extension type_name
-	19, // [19:19] is the sub-list for extension extendee
-	0,  // [0:19] is the sub-list for field type_name
+	18, // 4: gravity.NodeMonitorReport.tunnel:type_name -> gravity.TunnelHealthMetrics
+	4,  // 5: gravity.HostMetrics.cpu:type_name -> gravity.CpuMetrics
+	5,  // 6: gravity.HostMetrics.memory:type_name -> gravity.MemoryMetrics
+	6,  // 7: gravity.HostMetrics.disks:type_name -> gravity.DiskMetrics
+	7,  // 8: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
+	8,  // 9: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
+	10, // 10: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
+	12, // 11: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
+	10, // 12: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
+	12, // 13: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
+	11, // 14: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
+	0,  // 15: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
+	1,  // 16: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
+	26, // 17: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
+	16, // 18: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
+	17, // 19: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
+	19, // 20: gravity.TunnelHealthMetrics.connection_pool:type_name -> gravity.ConnectionPoolMetrics
+	20, // 21: gravity.TunnelHealthMetrics.packet_flow:type_name -> gravity.PacketFlowMetrics
+	21, // 22: gravity.TunnelHealthMetrics.inbound_channel:type_name -> gravity.ChannelMetrics
+	22, // 23: gravity.TunnelHealthMetrics.tun_interface:type_name -> gravity.TunInterfaceMetrics
+	23, // 24: gravity.TunnelHealthMetrics.streams:type_name -> gravity.TunnelStreamMetrics
+	24, // 25: gravity.TunnelHealthMetrics.control_plane:type_name -> gravity.ControlPlaneMetrics
+	25, // 26: gravity.TunnelHealthMetrics.stall:type_name -> gravity.StallIndicators
+	11, // 27: gravity.TunInterfaceMetrics.write_latency:type_name -> gravity.DurationStats
+	11, // 28: gravity.TunnelStreamMetrics.send_latency:type_name -> gravity.DurationStats
+	11, // 29: gravity.ControlPlaneMetrics.ping_latency:type_name -> gravity.DurationStats
+	30, // [30:30] is the sub-list for method output_type
+	30, // [30:30] is the sub-list for method input_type
+	30, // [30:30] is the sub-list for extension type_name
+	30, // [30:30] is the sub-list for extension extendee
+	0,  // [0:30] is the sub-list for field type_name
 }
 
 func init() { file_gravity_monitor_proto_init() }
@@ -2061,7 +3151,7 @@ func file_gravity_monitor_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_monitor_proto_rawDesc), len(file_gravity_monitor_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   17,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

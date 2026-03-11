@@ -654,8 +654,9 @@ func (g *GravityClient) establishTunnelStreams() error {
 			}
 			g.streamManager.metricsMu.Unlock()
 
-			// Start listening on this tunnel stream
-			go g.handleTunnelStream(streamIndex, stream)
+			// Start listening on this tunnel stream — pass the streamID so the
+			// receive loop can update per-stream metrics without tunnelMu.
+			go g.handleTunnelStream(streamIndex, stream, streamID)
 
 			streamIndex++
 		}
@@ -730,6 +731,13 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 		if r := recover(); r != nil {
 			g.logger.Error("control stream %d panic: %v", streamIndex, r)
 		}
+		// Nil out the control stream slot so TunnelStats() reports
+		// accurate HealthyControlStreams during reconnection.
+		g.streamManager.controlMu.Lock()
+		if streamIndex < len(g.streamManager.controlStreams) {
+			g.streamManager.controlStreams[streamIndex] = nil
+		}
+		g.streamManager.controlMu.Unlock()
 		g.logger.Debug("control stream %d handler exiting", streamIndex)
 	}()
 
@@ -761,12 +769,21 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 }
 
 // handleTunnelStream processes packets from a tunnel stream
-func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient) {
+func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient, streamID string) {
 	g.logger.Debug("handleTunnelStream %d called", streamIndex)
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
 		}
+		// Mark tunnel stream as unhealthy so TunnelStats() reports
+		// accurate HealthyTunnelStreams during reconnection.
+		g.streamManager.tunnelMu.RLock()
+		if streamIndex < len(g.streamManager.tunnelStreams) {
+			if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
+				si.isHealthy = false
+			}
+		}
+		g.streamManager.tunnelMu.RUnlock()
 	}()
 
 	g.logger.Debug("handleTunnelStream: starting receive loop for stream %d", streamIndex)
@@ -801,33 +818,31 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		g.inboundReceived.Add(1)
 		g.inboundBytes.Add(uint64(len(packet.Data)))
 
-		// Track per-stream receive metrics
-		g.streamManager.tunnelMu.RLock()
-		if streamIndex < len(g.streamManager.tunnelStreams) {
-			if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
-				g.streamManager.metricsMu.Lock()
-				if metrics := g.streamManager.streamMetrics[si.streamID]; metrics != nil {
-					metrics.PacketsReceived++
-					metrics.LastRecvUs = time.Now().UnixMicro()
-					metrics.BytesReceived += int64(len(packet.Data))
-				}
-				g.streamManager.metricsMu.Unlock()
-			}
+		// Track per-stream receive metrics — streamID was captured at
+		// goroutine creation, so we only need metricsMu (not tunnelMu).
+		g.streamManager.metricsMu.Lock()
+		if metrics := g.streamManager.streamMetrics[streamID]; metrics != nil {
+			metrics.PacketsReceived++
+			metrics.LastRecvUs = time.Now().UnixMicro()
+			metrics.BytesReceived += int64(len(packet.Data))
 		}
-		g.streamManager.tunnelMu.RUnlock()
+		g.streamManager.metricsMu.Unlock()
 
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)
 
-		// Track channel high-water mark — a single CAS attempt is sufficient;
-		// if it fails, a concurrent goroutine already set a value >= depth.
-		depth := int32(len(g.inboundPackets))
-		if old := g.inboundHighWater.Load(); depth > old {
-			g.inboundHighWater.CompareAndSwap(old, depth)
-		}
-
 		select {
 		case g.inboundPackets <- pooledBuf:
+			// Track channel high-water mark AFTER enqueue so the measurement
+			// reflects the actual peak depth. Clamp to capacity since len()
+			// can briefly exceed the value we'd see if sampled atomically.
+			depth := int32(len(g.inboundPackets))
+			if chanCap := int32(cap(g.inboundPackets)); depth > chanCap {
+				depth = chanCap
+			}
+			if old := g.inboundHighWater.Load(); depth > old {
+				g.inboundHighWater.CompareAndSwap(old, depth)
+			}
 			// Channel drained — if packets were dropped during backpressure, log a summary and reset.
 			if dropped := g.droppedPackets.Swap(0); dropped > 0 {
 				g.logger.Warn("tunnel stream %d: recovered after dropping %d packet(s)", streamIndex, dropped)
@@ -2279,12 +2294,24 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 
 	err := stream.stream.Send(tunnelPacket)
 	if err != nil {
+		// Mark stream unhealthy and record per-stream error metrics,
+		// mirroring the error handling in sendTunnelPacket.
+		stream.isHealthy = false
+		g.outboundErrors.Add(1)
+		now := time.Now()
+		g.streamManager.metricsMu.Lock()
+		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
+			metrics.ErrorCount++
+			metrics.LastError = now
+			metrics.LastSendUs = now.UnixMicro()
+		}
+		g.streamManager.metricsMu.Unlock()
+
 		if errors.Is(err, io.EOF) {
 			g.logger.Debug("gravity server closed, exiting")
 			return nil
 		}
 		g.logger.Error("writePacket stream.Send failed: %v", err)
-		g.outboundErrors.Add(1)
 	} else {
 		if g.tracePackets {
 			g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
@@ -2980,10 +3007,24 @@ func (g *GravityClient) sendPing() {
 		},
 	}
 
+	// Guard against a blocked Send(): if the control stream is wedged,
+	// Send() blocks indefinitely, wedging the heartbeat goroutine.
+	// Fire a timer that records the timeout and triggers reconnection
+	// (which cancels stream contexts, unblocking Send).
+	sendBlocked := time.AfterFunc(g.pingInterval, func() {
+		g.pingTimeouts.Add(1)
+		g.logger.Info("ping %s send blocked for %v, triggering reconnection", pingID, g.pingInterval)
+		g.pendingMu.Lock()
+		delete(g.pending, pingID)
+		g.pendingMu.Unlock()
+		go g.handleServerDisconnection("ping_send_blocked")
+	})
+
 	err := controlStream.Send(pingMsg)
+	sendBlocked.Stop()
+
 	if err != nil {
 		g.logger.Error("failed to send ping: %v", err)
-		// Clean up pending entry on send failure
 		g.pendingMu.Lock()
 		delete(g.pending, pingID)
 		g.pendingMu.Unlock()
@@ -2998,21 +3039,20 @@ func (g *GravityClient) sendPing() {
 	// doesn't arrive in time, increment pingTimeouts. The goroutine is
 	// short-lived and bounded by the deadline or client context cancellation.
 	go func() {
+		defer func() {
+			g.pendingMu.Lock()
+			delete(g.pending, pingID)
+			g.pendingMu.Unlock()
+		}()
+
 		select {
 		case <-responseChan:
 			// Pong received in time — already counted by handlePong.
 		case <-time.After(g.pingInterval):
 			g.pingTimeouts.Add(1)
-			g.logger.Debug("ping %s timed out after %v", pingID, g.pingInterval)
-			// Clean up stale pending entry so handlePong ignores late arrivals
-			g.pendingMu.Lock()
-			delete(g.pending, pingID)
-			g.pendingMu.Unlock()
+			g.logger.Info("ping %s pong timed out after %v", pingID, g.pingInterval)
 		case <-g.ctx.Done():
-			// Client shutting down — clean up silently
-			g.pendingMu.Lock()
-			delete(g.pending, pingID)
-			g.pendingMu.Unlock()
+			// Client shutting down.
 		}
 	}()
 }

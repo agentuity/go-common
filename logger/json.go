@@ -140,7 +140,7 @@ func (c *jsonLogger) Log(level LogLevel, severity string, msg string, args ...in
 	}
 	_msg := msg
 	if len(args) > 0 {
-		_msg = fmt.Sprintf(msg, args...)
+		_msg = fmt.Sprintf(msg, derefArgs(args)...)
 	}
 	entry := JSONLogEntry{
 		Severity:  severity,

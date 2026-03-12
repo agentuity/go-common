@@ -155,7 +155,7 @@ func (c *consoleLogger) Log(level LogLevel, levelColor string, messageColor stri
 	if level < c.logLevel && level < c.sinkLogLevel {
 		return
 	}
-	_msg := fmt.Sprintf(msg, args...)
+	_msg := fmt.Sprintf(msg, derefArgs(args)...)
 	var prefix string
 	var suffix string
 	if len(c.prefixes) > 0 {

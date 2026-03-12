@@ -1,8 +1,10 @@
 package logger
 
 import (
+	"encoding/json"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -81,4 +83,38 @@ func TestLogLevelConstants(t *testing.T) {
 	assert.Equal(t, LogLevel(3), LevelWarn)
 	assert.Equal(t, LogLevel(4), LevelError)
 	assert.Equal(t, LogLevel(5), LevelNone)
+}
+
+func TestDerefArgs(t *testing.T) {
+	s := "hello"
+	var nilStr *string
+	b := true
+	i := 42
+
+	args := []interface{}{&s, nilStr, &b, &i, "plain", nil}
+	result := derefArgs(args)
+
+	assert.Equal(t, "hello", result[0])
+	assert.Equal(t, "<nil>", result[1])
+	assert.Equal(t, true, result[2])
+	assert.Equal(t, 42, result[3])
+	assert.Equal(t, "plain", result[4])
+	assert.Nil(t, result[5])
+}
+
+func TestLoggerPointerFormatting(t *testing.T) {
+	sink := &testSink{}
+	log := NewJSONLoggerWithSink(sink, LevelTrace)
+	jlog := log.(*jsonLogger)
+	tv := time.Date(2023, 10, 22, 12, 30, 0, 0, time.UTC)
+	jlog.ts = &tv
+
+	s := "terminated"
+	log.Info("status=%v reason=%v", &s, (*string)(nil))
+
+	var parsed map[string]interface{}
+	err := json.Unmarshal(sink.buf, &parsed)
+	assert.NoError(t, err)
+	assert.Contains(t, parsed["message"], "status=terminated")
+	assert.Contains(t, parsed["message"], "reason=<nil>")
 }

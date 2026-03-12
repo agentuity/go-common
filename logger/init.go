@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 )
@@ -81,6 +82,26 @@ type SinkLogger interface {
 	Logger
 	// SetSink will set the sink, and level to sink
 	SetSink(sink Sink, level LogLevel)
+}
+
+// derefArgs dereferences pointer arguments so that fmt.Sprintf shows values
+// instead of pointer addresses (e.g., "hello" instead of "0x140001b2010").
+// Nil pointers are rendered as "<nil>".
+func derefArgs(args []interface{}) []interface{} {
+	for i, arg := range args {
+		if arg == nil {
+			continue
+		}
+		rv := reflect.ValueOf(arg)
+		if rv.Kind() == reflect.Ptr {
+			if rv.IsNil() {
+				args[i] = "<nil>"
+			} else {
+				args[i] = rv.Elem().Interface()
+			}
+		}
+	}
+	return args
 }
 
 var ansiColorStripper = regexp.MustCompile("\x1b\\[[0-9;]*[mK]")

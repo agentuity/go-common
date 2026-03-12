@@ -112,7 +112,7 @@ func (o *otelLogger) log(level LogLevel, severity otelLog.Severity, msg string, 
 		return
 	}
 
-	formattedMsg := fmt.Sprintf(msg, args...)
+	formattedMsg := fmt.Sprintf(msg, derefArgs(args)...)
 
 	now := time.Now()
 

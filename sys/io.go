@@ -445,8 +445,17 @@ func Unzip(src, dest string, flatten bool) error {
 			if err != nil {
 				return err
 			}
+
+			// Ensure files always have at least 0644 permissions. Zip archives created
+			// on Windows may store zero or incorrect Unix permission bits, causing
+			// EACCES errors when the extracted files are read on Linux.
+			mode := f.Mode()
+			if mode&0o444 == 0 {
+				mode = 0o644
+			}
+
 			f, err := os.OpenFile(
-				fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+				fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 			if err != nil {
 				return err
 			}

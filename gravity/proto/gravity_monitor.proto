@@ -24,6 +24,8 @@ message CacheMetrics {
   int64 size_bytes = 1;      // current cache usage in bytes
   int64 max_size_bytes = 2;  // total allocated cache size in bytes
   int32 entries = 3;         // number of cached entries
+  bool enabled = 4;          // true if the cache is healthy
+  bool healthy = 5;          // true if the cache is enabled and healthy
 }
 
 // ===== Host Metrics =====

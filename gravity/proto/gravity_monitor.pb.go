@@ -283,6 +283,8 @@ type CacheMetrics struct {
 	SizeBytes     int64                  `protobuf:"varint,1,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`            // current cache usage in bytes
 	MaxSizeBytes  int64                  `protobuf:"varint,2,opt,name=max_size_bytes,json=maxSizeBytes,proto3" json:"max_size_bytes,omitempty"` // total allocated cache size in bytes
 	Entries       int32                  `protobuf:"varint,3,opt,name=entries,proto3" json:"entries,omitempty"`                                 // number of cached entries
+	Enabled       bool                   `protobuf:"varint,4,opt,name=enabled,proto3" json:"enabled,omitempty"`                                 // true if the cache is healthy
+	Healthy       bool                   `protobuf:"varint,5,opt,name=healthy,proto3" json:"healthy,omitempty"`                                 // true if the cache is enabled and healthy
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -336,6 +338,20 @@ func (x *CacheMetrics) GetEntries() int32 {
 		return x.Entries
 	}
 	return 0
+}
+
+func (x *CacheMetrics) GetEnabled() bool {
+	if x != nil {
+		return x.Enabled
+	}
+	return false
+}
+
+func (x *CacheMetrics) GetHealthy() bool {
+	if x != nil {
+		return x.Healthy
+	}
+	return false
 }
 
 type HostMetrics struct {
@@ -2850,12 +2866,14 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	" \x03(\v2&.gravity.NodeMonitorReport.CachesEntryR\x06caches\x1aP\n" +
 	"\vCachesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
-	"\x05value\x18\x02 \x01(\v2\x15.gravity.CacheMetricsR\x05value:\x028\x01\"m\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.gravity.CacheMetricsR\x05value:\x028\x01\"\xa1\x01\n" +
 	"\fCacheMetrics\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes\x12$\n" +
 	"\x0emax_size_bytes\x18\x02 \x01(\x03R\fmaxSizeBytes\x12\x18\n" +
-	"\aentries\x18\x03 \x01(\x05R\aentries\"\x8e\x02\n" +
+	"\aentries\x18\x03 \x01(\x05R\aentries\x12\x18\n" +
+	"\aenabled\x18\x04 \x01(\bR\aenabled\x12\x18\n" +
+	"\ahealthy\x18\x05 \x01(\bR\ahealthy\"\x8e\x02\n" +
 	"\vHostMetrics\x12%\n" +
 	"\x03cpu\x18\x01 \x01(\v2\x13.gravity.CpuMetricsR\x03cpu\x12.\n" +
 	"\x06memory\x18\x02 \x01(\v2\x16.gravity.MemoryMetricsR\x06memory\x12*\n" +

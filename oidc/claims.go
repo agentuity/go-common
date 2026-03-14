@@ -31,6 +31,8 @@
 package oidc
 
 import (
+	"strings"
+
 	"github.com/golang-jwt/jwt/v5"
 )
 
@@ -79,20 +81,7 @@ func (c *Claims) Scopes() []string {
 	if c.Scope == "" {
 		return nil
 	}
-	var scopes []string
-	start := 0
-	for i := 0; i < len(c.Scope); i++ {
-		if c.Scope[i] == ' ' {
-			if i > start {
-				scopes = append(scopes, c.Scope[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(c.Scope) {
-		scopes = append(scopes, c.Scope[start:])
-	}
-	return scopes
+	return strings.Fields(c.Scope)
 }
 
 // HasScope returns true if the token includes the given scope.

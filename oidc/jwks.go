@@ -123,8 +123,10 @@ func (c *jwksCache) fetchKeys(ctx context.Context) ([]parsedKey, error) {
 		return nil, fmt.Errorf("oidc: JWKS endpoint returned %d: %s", resp.StatusCode, string(body))
 	}
 
+	// Limit body size to prevent oversized responses from exhausting memory.
+	const jwksMaxBodySize = 1 << 20 // 1 MB
 	var keySet jwkSet
-	if err := json.NewDecoder(resp.Body).Decode(&keySet); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, jwksMaxBodySize)).Decode(&keySet); err != nil {
 		return nil, fmt.Errorf("oidc: decoding JWKS: %w", err)
 	}
 

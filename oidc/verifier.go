@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentuity/go-common/logger"
@@ -58,14 +59,16 @@ type discoveryDocument struct {
 // Key rotation is handled transparently: if a token's kid doesn't match any
 // cached key, the JWKS is refreshed before returning an error.
 type Verifier struct {
-	issuer     string
-	audiences  []string
-	jwksURL    string
-	httpClient *http.Client
-	logger     logger.Logger
-	clockSkew  time.Duration
-	cacheTTL   time.Duration
-	cache      *jwksCache
+	issuer       string
+	audiences    []string
+	jwksURL      string
+	httpClient   *http.Client
+	logger       logger.Logger
+	clockSkew    time.Duration
+	cacheTTL     time.Duration
+	cache        *jwksCache
+	discoverOnce sync.Once
+	discoverErr  error
 }
 
 // NewVerifier creates a new OIDC token verifier.
@@ -125,7 +128,8 @@ func (v *Verifier) VerifyToken(ctx context.Context, tokenString string) (*Claims
 		jwt.WithExpirationRequired(),
 	}
 	if len(v.audiences) > 0 {
-		// jwt/v5 only accepts one audience to check against
+		// jwt/v5's WithAudience checks for a single expected audience.
+		// Multi-audience validation is handled separately below after token parsing.
 		parserOpts = append(parserOpts, jwt.WithAudience(v.audiences[0]))
 	}
 
@@ -177,13 +181,17 @@ func (v *Verifier) keyFunc(ctx context.Context) jwt.Keyfunc {
 			}
 		}
 
-		// Fallback: match by algorithm if no kid match and only one key
+		// Fallback: match by algorithm if no kid match and exactly one key matches
 		alg, _ := token.Header["alg"].(string)
 		if kid == "" && alg != "" {
+			var matches []parsedKey
 			for _, key := range keys {
 				if key.algorithm == alg {
-					return key.publicKey, nil
+					matches = append(matches, key)
 				}
+			}
+			if len(matches) == 1 {
+				return matches[0].publicKey, nil
 			}
 		}
 
@@ -192,48 +200,55 @@ func (v *Verifier) keyFunc(ctx context.Context) jwt.Keyfunc {
 }
 
 // ensureJWKSURL resolves the JWKS URL from the discovery document if needed.
+// Discovery is performed at most once using sync.Once for thread safety.
 func (v *Verifier) ensureJWKSURL(ctx context.Context) error {
-	// If the JWKS URL is already a direct jwks_uri, we're done.
-	// If it ends with .well-known/openid-configuration, we need to fetch it.
-	if !strings.HasSuffix(v.jwksURL, "/.well-known/openid-configuration") {
-		return nil
-	}
+	v.discoverOnce.Do(func() {
+		// If the JWKS URL is already a direct jwks_uri, we're done.
+		// If it ends with .well-known/openid-configuration, we need to fetch it.
+		if !strings.HasSuffix(v.jwksURL, "/.well-known/openid-configuration") {
+			return
+		}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
-	}
-	req.Header.Set("Accept", "application/json")
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
+		if err != nil {
+			v.discoverErr = fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+			return
+		}
+		req.Header.Set("Accept", "application/json")
 
-	resp, err := v.httpClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
-	}
-	defer resp.Body.Close()
+		resp, err := v.httpClient.Do(req)
+		if err != nil {
+			v.discoverErr = fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+			return
+		}
+		defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("%w: status %d: %s", ErrDiscoveryFailed, resp.StatusCode, string(body))
-	}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+			v.discoverErr = fmt.Errorf("%w: status %d: %s", ErrDiscoveryFailed, resp.StatusCode, string(body))
+			return
+		}
 
-	var doc discoveryDocument
-	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		return fmt.Errorf("%w: decoding: %v", ErrDiscoveryFailed, err)
-	}
+		var doc discoveryDocument
+		if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+			v.discoverErr = fmt.Errorf("%w: decoding: %v", ErrDiscoveryFailed, err)
+			return
+		}
 
-	if doc.JWKSURI == "" {
-		return fmt.Errorf("%w: no jwks_uri in discovery document", ErrDiscoveryFailed)
-	}
+		if doc.JWKSURI == "" {
+			v.discoverErr = fmt.Errorf("%w: no jwks_uri in discovery document", ErrDiscoveryFailed)
+			return
+		}
 
-	// Update JWKS URL and cache to use the resolved URI
-	v.jwksURL = doc.JWKSURI
-	v.cache = newJWKSCache(doc.JWKSURI, v.httpClient, v.cacheTTL)
+		// Update JWKS URL and cache to use the resolved URI
+		v.jwksURL = doc.JWKSURI
+		v.cache = newJWKSCache(doc.JWKSURI, v.httpClient, v.cacheTTL)
 
-	if v.logger != nil {
-		v.logger.Debug("oidc: discovered JWKS endpoint: %s", doc.JWKSURI)
-	}
-
-	return nil
+		if v.logger != nil {
+			v.logger.Debug("oidc: discovered JWKS endpoint: %s", doc.JWKSURI)
+		}
+	})
+	return v.discoverErr
 }
 
 // classifyError maps jwt library errors to our sentinel errors.
@@ -254,12 +269,11 @@ func (v *Verifier) classifyError(err error) error {
 		return ErrNoMatchingKey
 	}
 
-	// Check for issuer/audience validation errors
-	errStr := err.Error()
-	if strings.Contains(errStr, "issuer") {
+	// Check for issuer/audience validation errors using typed checks
+	if errors.Is(err, jwt.ErrTokenInvalidIssuer) {
 		return fmt.Errorf("%w: %v", ErrInvalidIssuer, err)
 	}
-	if strings.Contains(errStr, "audience") {
+	if errors.Is(err, jwt.ErrTokenInvalidAudience) {
 		return fmt.Errorf("%w: %v", ErrInvalidAudience, err)
 	}
 

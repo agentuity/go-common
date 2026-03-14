@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -126,28 +127,7 @@ func big2Bytes(e int) []byte {
 }
 
 func base64RawURL(b []byte) string {
-	return base64RawURLEncode(b)
-}
-
-func base64RawURLEncode(b []byte) string {
-	const enc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-	result := make([]byte, 0, (len(b)*4+2)/3)
-	for i := 0; i < len(b); i += 3 {
-		var n uint32
-		remaining := len(b) - i
-		switch {
-		case remaining >= 3:
-			n = uint32(b[i])<<16 | uint32(b[i+1])<<8 | uint32(b[i+2])
-			result = append(result, enc[n>>18&0x3f], enc[n>>12&0x3f], enc[n>>6&0x3f], enc[n&0x3f])
-		case remaining == 2:
-			n = uint32(b[i])<<16 | uint32(b[i+1])<<8
-			result = append(result, enc[n>>18&0x3f], enc[n>>12&0x3f], enc[n>>6&0x3f])
-		case remaining == 1:
-			n = uint32(b[i]) << 16
-			result = append(result, enc[n>>18&0x3f], enc[n>>12&0x3f])
-		}
-	}
-	return string(result)
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // signToken creates a signed JWT for testing.

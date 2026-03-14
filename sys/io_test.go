@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -331,6 +332,99 @@ func TestUnzipZipSlipComprehensive(t *testing.T) {
 					expectedPath := filepath.Join(extractDir, filename)
 					assert.True(t, Exists(expectedPath),
 						"Test case '%s': File should exist at: %s", tc.name, expectedPath)
+				}
+			}
+		})
+	}
+}
+
+func TestUnzipWindowsPermissions(t *testing.T) {
+	tests := []struct {
+		name        string
+		mode        os.FileMode // mode written into the zip entry
+		expectedMin os.FileMode // full minimum permission floor after extraction
+	}{
+		{
+			name:        "ZeroPermissions",
+			mode:        0,
+			expectedMin: 0o600, // default owner rw when all bits are zero
+		},
+		{
+			name:        "MissingOwnerRead",
+			mode:        0o044,
+			expectedMin: 0o444, // owner-read added to existing group/other read
+		},
+		{
+			name:        "ExecuteOnlyNoRead",
+			mode:        0o111,
+			expectedMin: 0o511, // owner-read added, all execute bits preserved
+		},
+		{
+			name:        "NormalPermissions",
+			mode:        0o644,
+			expectedMin: 0o644, // already correct, passed through unchanged
+		},
+		{
+			name:        "ExecutableFile",
+			mode:        0o755,
+			expectedMin: 0o755, // already correct, passed through unchanged
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			zipPath := filepath.Join(baseDir, "test.zip")
+
+			// Create a zip with a specific file mode set via the header.
+			zf, err := os.Create(zipPath)
+			assert.NoError(t, err)
+
+			zw := zip.NewWriter(zf)
+
+			fh := &zip.FileHeader{
+				Name:   "app.js",
+				Method: zip.Deflate,
+			}
+			fh.SetMode(tt.mode) // sets CreatorVersion to Unix
+
+			w, err := zw.CreateHeader(fh)
+			assert.NoError(t, err)
+			_, err = w.Write([]byte("console.log('hello');"))
+			assert.NoError(t, err)
+
+			assert.NoError(t, zw.Close())
+			assert.NoError(t, zf.Close())
+
+			// Extract
+			extractDir := filepath.Join(baseDir, "out")
+			assert.NoError(t, os.MkdirAll(extractDir, 0755))
+			assert.NoError(t, Unzip(zipPath, extractDir, false))
+
+			extracted := filepath.Join(extractDir, "app.js")
+
+			// The file must exist and be readable (cross-platform).
+			content, err := os.ReadFile(extracted)
+			assert.NoError(t, err, "extracted file must be readable (mode in zip: %04o)", tt.mode)
+			assert.Equal(t, "console.log('hello');", string(content))
+
+			// Permission-bit assertions are POSIX-only; Windows does not
+			// surface Unix permission bits via os.Stat.
+			if runtime.GOOS != "windows" {
+				info, err := os.Stat(extracted)
+				assert.NoError(t, err)
+				actual := info.Mode().Perm()
+
+				// Verify all bits in the expected minimum floor are present.
+				assert.Equal(t, tt.expectedMin, actual&tt.expectedMin,
+					"expected all %04o permission bits, got %04o (zip mode %04o)",
+					tt.expectedMin, actual, tt.mode)
+
+				// When the zip entry had execute bits, they must be preserved.
+				if tt.mode&0o111 != 0 {
+					assert.NotZero(t, actual&0o100,
+						"owner-execute bit should be preserved, got %04o (zip mode %04o)",
+						actual, tt.mode)
 				}
 			}
 		})

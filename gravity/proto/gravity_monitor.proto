@@ -16,6 +16,14 @@ message NodeMonitorReport {
   repeated NodeEvent events = 7;
   int32 report_interval_seconds = 8;
   TunnelHealthMetrics tunnel = 9;
+  map<string, CacheMetrics> caches = 10;  // Cache metrics keyed by cache name (e.g. "npm", "apt")
+}
+
+// CacheMetrics reports the state of a named cache.
+message CacheMetrics {
+  int64 size_bytes = 1;      // current cache usage in bytes
+  int64 max_size_bytes = 2;  // total allocated cache size in bytes
+  int32 entries = 3;         // number of cached entries
 }
 
 // ===== Host Metrics =====

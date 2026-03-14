@@ -162,16 +162,17 @@ func (NodeEventType) EnumDescriptor() ([]byte, []int) {
 }
 
 type NodeMonitorReport struct {
-	state                 protoimpl.MessageState `protogen:"open.v1"`
-	MachineId             string                 `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
-	ReportedAtUs          int64                  `protobuf:"varint,2,opt,name=reported_at_us,json=reportedAtUs,proto3" json:"reported_at_us,omitempty"`
-	Seq                   uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
-	Host                  *HostMetrics           `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
-	Containers            []*ContainerMetrics    `protobuf:"bytes,5,rep,name=containers,proto3" json:"containers,omitempty"`
-	Capacity              *CapacitySummary       `protobuf:"bytes,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	Events                []*NodeEvent           `protobuf:"bytes,7,rep,name=events,proto3" json:"events,omitempty"`
-	ReportIntervalSeconds int32                  `protobuf:"varint,8,opt,name=report_interval_seconds,json=reportIntervalSeconds,proto3" json:"report_interval_seconds,omitempty"`
-	Tunnel                *TunnelHealthMetrics   `protobuf:"bytes,9,opt,name=tunnel,proto3" json:"tunnel,omitempty"`
+	state                 protoimpl.MessageState   `protogen:"open.v1"`
+	MachineId             string                   `protobuf:"bytes,1,opt,name=machine_id,json=machineId,proto3" json:"machine_id,omitempty"`
+	ReportedAtUs          int64                    `protobuf:"varint,2,opt,name=reported_at_us,json=reportedAtUs,proto3" json:"reported_at_us,omitempty"`
+	Seq                   uint64                   `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"`
+	Host                  *HostMetrics             `protobuf:"bytes,4,opt,name=host,proto3" json:"host,omitempty"`
+	Containers            []*ContainerMetrics      `protobuf:"bytes,5,rep,name=containers,proto3" json:"containers,omitempty"`
+	Capacity              *CapacitySummary         `protobuf:"bytes,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	Events                []*NodeEvent             `protobuf:"bytes,7,rep,name=events,proto3" json:"events,omitempty"`
+	ReportIntervalSeconds int32                    `protobuf:"varint,8,opt,name=report_interval_seconds,json=reportIntervalSeconds,proto3" json:"report_interval_seconds,omitempty"`
+	Tunnel                *TunnelHealthMetrics     `protobuf:"bytes,9,opt,name=tunnel,proto3" json:"tunnel,omitempty"`
+	Caches                map[string]*CacheMetrics `protobuf:"bytes,10,rep,name=caches,proto3" json:"caches,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"` // Cache metrics keyed by cache name (e.g. "npm", "apt")
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -269,6 +270,74 @@ func (x *NodeMonitorReport) GetTunnel() *TunnelHealthMetrics {
 	return nil
 }
 
+func (x *NodeMonitorReport) GetCaches() map[string]*CacheMetrics {
+	if x != nil {
+		return x.Caches
+	}
+	return nil
+}
+
+// CacheMetrics reports the state of a named cache.
+type CacheMetrics struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SizeBytes     int64                  `protobuf:"varint,1,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`            // current cache usage in bytes
+	MaxSizeBytes  int64                  `protobuf:"varint,2,opt,name=max_size_bytes,json=maxSizeBytes,proto3" json:"max_size_bytes,omitempty"` // total allocated cache size in bytes
+	Entries       int32                  `protobuf:"varint,3,opt,name=entries,proto3" json:"entries,omitempty"`                                 // number of cached entries
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CacheMetrics) Reset() {
+	*x = CacheMetrics{}
+	mi := &file_gravity_monitor_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CacheMetrics) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CacheMetrics) ProtoMessage() {}
+
+func (x *CacheMetrics) ProtoReflect() protoreflect.Message {
+	mi := &file_gravity_monitor_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CacheMetrics.ProtoReflect.Descriptor instead.
+func (*CacheMetrics) Descriptor() ([]byte, []int) {
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CacheMetrics) GetSizeBytes() int64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
+func (x *CacheMetrics) GetMaxSizeBytes() int64 {
+	if x != nil {
+		return x.MaxSizeBytes
+	}
+	return 0
+}
+
+func (x *CacheMetrics) GetEntries() int32 {
+	if x != nil {
+		return x.Entries
+	}
+	return 0
+}
+
 type HostMetrics struct {
 	state             protoimpl.MessageState     `protogen:"open.v1"`
 	Cpu               *CpuMetrics                `protobuf:"bytes,1,opt,name=cpu,proto3" json:"cpu,omitempty"`
@@ -282,7 +351,7 @@ type HostMetrics struct {
 
 func (x *HostMetrics) Reset() {
 	*x = HostMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[1]
+	mi := &file_gravity_monitor_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -294,7 +363,7 @@ func (x *HostMetrics) String() string {
 func (*HostMetrics) ProtoMessage() {}
 
 func (x *HostMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[1]
+	mi := &file_gravity_monitor_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -307,7 +376,7 @@ func (x *HostMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HostMetrics.ProtoReflect.Descriptor instead.
 func (*HostMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{1}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HostMetrics) GetCpu() *CpuMetrics {
@@ -359,7 +428,7 @@ type CpuMetrics struct {
 
 func (x *CpuMetrics) Reset() {
 	*x = CpuMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[2]
+	mi := &file_gravity_monitor_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -371,7 +440,7 @@ func (x *CpuMetrics) String() string {
 func (*CpuMetrics) ProtoMessage() {}
 
 func (x *CpuMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[2]
+	mi := &file_gravity_monitor_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -384,7 +453,7 @@ func (x *CpuMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CpuMetrics.ProtoReflect.Descriptor instead.
 func (*CpuMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{2}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *CpuMetrics) GetUsagePercent() float64 {
@@ -445,7 +514,7 @@ type MemoryMetrics struct {
 
 func (x *MemoryMetrics) Reset() {
 	*x = MemoryMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[3]
+	mi := &file_gravity_monitor_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -457,7 +526,7 @@ func (x *MemoryMetrics) String() string {
 func (*MemoryMetrics) ProtoMessage() {}
 
 func (x *MemoryMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[3]
+	mi := &file_gravity_monitor_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -470,7 +539,7 @@ func (x *MemoryMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MemoryMetrics.ProtoReflect.Descriptor instead.
 func (*MemoryMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{3}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MemoryMetrics) GetTotalBytes() uint64 {
@@ -550,7 +619,7 @@ type DiskMetrics struct {
 
 func (x *DiskMetrics) Reset() {
 	*x = DiskMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[4]
+	mi := &file_gravity_monitor_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -562,7 +631,7 @@ func (x *DiskMetrics) String() string {
 func (*DiskMetrics) ProtoMessage() {}
 
 func (x *DiskMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[4]
+	mi := &file_gravity_monitor_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -575,7 +644,7 @@ func (x *DiskMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiskMetrics.ProtoReflect.Descriptor instead.
 func (*DiskMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{4}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *DiskMetrics) GetMountPoint() string {
@@ -688,7 +757,7 @@ type NetworkInterfaceMetrics struct {
 
 func (x *NetworkInterfaceMetrics) Reset() {
 	*x = NetworkInterfaceMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[5]
+	mi := &file_gravity_monitor_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -700,7 +769,7 @@ func (x *NetworkInterfaceMetrics) String() string {
 func (*NetworkInterfaceMetrics) ProtoMessage() {}
 
 func (x *NetworkInterfaceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[5]
+	mi := &file_gravity_monitor_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -713,7 +782,7 @@ func (x *NetworkInterfaceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NetworkInterfaceMetrics.ProtoReflect.Descriptor instead.
 func (*NetworkInterfaceMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{5}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *NetworkInterfaceMetrics) GetName() string {
@@ -808,7 +877,7 @@ type SystemInfo struct {
 
 func (x *SystemInfo) Reset() {
 	*x = SystemInfo{}
-	mi := &file_gravity_monitor_proto_msgTypes[6]
+	mi := &file_gravity_monitor_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -820,7 +889,7 @@ func (x *SystemInfo) String() string {
 func (*SystemInfo) ProtoMessage() {}
 
 func (x *SystemInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[6]
+	mi := &file_gravity_monitor_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -833,7 +902,7 @@ func (x *SystemInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SystemInfo.ProtoReflect.Descriptor instead.
 func (*SystemInfo) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{6}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *SystemInfo) GetHostname() string {
@@ -947,7 +1016,7 @@ type ContainerMetrics struct {
 
 func (x *ContainerMetrics) Reset() {
 	*x = ContainerMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[7]
+	mi := &file_gravity_monitor_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -959,7 +1028,7 @@ func (x *ContainerMetrics) String() string {
 func (*ContainerMetrics) ProtoMessage() {}
 
 func (x *ContainerMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[7]
+	mi := &file_gravity_monitor_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -972,7 +1041,7 @@ func (x *ContainerMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContainerMetrics.ProtoReflect.Descriptor instead.
 func (*ContainerMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{7}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ContainerMetrics) GetEntityId() string {
@@ -1278,7 +1347,7 @@ type StatusCodeCounts struct {
 
 func (x *StatusCodeCounts) Reset() {
 	*x = StatusCodeCounts{}
-	mi := &file_gravity_monitor_proto_msgTypes[8]
+	mi := &file_gravity_monitor_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1290,7 +1359,7 @@ func (x *StatusCodeCounts) String() string {
 func (*StatusCodeCounts) ProtoMessage() {}
 
 func (x *StatusCodeCounts) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[8]
+	mi := &file_gravity_monitor_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1303,7 +1372,7 @@ func (x *StatusCodeCounts) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatusCodeCounts.ProtoReflect.Descriptor instead.
 func (*StatusCodeCounts) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{8}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *StatusCodeCounts) GetStatus_1Xx() uint64 {
@@ -1358,7 +1427,7 @@ type DurationStats struct {
 
 func (x *DurationStats) Reset() {
 	*x = DurationStats{}
-	mi := &file_gravity_monitor_proto_msgTypes[9]
+	mi := &file_gravity_monitor_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1370,7 +1439,7 @@ func (x *DurationStats) String() string {
 func (*DurationStats) ProtoMessage() {}
 
 func (x *DurationStats) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[9]
+	mi := &file_gravity_monitor_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1383,7 +1452,7 @@ func (x *DurationStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DurationStats.ProtoReflect.Descriptor instead.
 func (*DurationStats) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{9}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *DurationStats) GetAvgMs() float64 {
@@ -1441,7 +1510,7 @@ type ByteStats struct {
 
 func (x *ByteStats) Reset() {
 	*x = ByteStats{}
-	mi := &file_gravity_monitor_proto_msgTypes[10]
+	mi := &file_gravity_monitor_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1453,7 +1522,7 @@ func (x *ByteStats) String() string {
 func (*ByteStats) ProtoMessage() {}
 
 func (x *ByteStats) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[10]
+	mi := &file_gravity_monitor_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1466,7 +1535,7 @@ func (x *ByteStats) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ByteStats.ProtoReflect.Descriptor instead.
 func (*ByteStats) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{10}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ByteStats) GetInBytes() uint64 {
@@ -1498,7 +1567,7 @@ type CapacitySummary struct {
 
 func (x *CapacitySummary) Reset() {
 	*x = CapacitySummary{}
-	mi := &file_gravity_monitor_proto_msgTypes[11]
+	mi := &file_gravity_monitor_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1510,7 +1579,7 @@ func (x *CapacitySummary) String() string {
 func (*CapacitySummary) ProtoMessage() {}
 
 func (x *CapacitySummary) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[11]
+	mi := &file_gravity_monitor_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1523,7 +1592,7 @@ func (x *CapacitySummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CapacitySummary.ProtoReflect.Descriptor instead.
 func (*CapacitySummary) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{11}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *CapacitySummary) GetCpuPressure() float64 {
@@ -1588,7 +1657,7 @@ type NodeEvent struct {
 
 func (x *NodeEvent) Reset() {
 	*x = NodeEvent{}
-	mi := &file_gravity_monitor_proto_msgTypes[12]
+	mi := &file_gravity_monitor_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1600,7 +1669,7 @@ func (x *NodeEvent) String() string {
 func (*NodeEvent) ProtoMessage() {}
 
 func (x *NodeEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[12]
+	mi := &file_gravity_monitor_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1613,7 +1682,7 @@ func (x *NodeEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use NodeEvent.ProtoReflect.Descriptor instead.
 func (*NodeEvent) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{12}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *NodeEvent) GetTimestampUs() int64 {
@@ -1664,7 +1733,7 @@ type MonitorCommand struct {
 
 func (x *MonitorCommand) Reset() {
 	*x = MonitorCommand{}
-	mi := &file_gravity_monitor_proto_msgTypes[13]
+	mi := &file_gravity_monitor_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1676,7 +1745,7 @@ func (x *MonitorCommand) String() string {
 func (*MonitorCommand) ProtoMessage() {}
 
 func (x *MonitorCommand) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[13]
+	mi := &file_gravity_monitor_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1689,7 +1758,7 @@ func (x *MonitorCommand) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MonitorCommand.ProtoReflect.Descriptor instead.
 func (*MonitorCommand) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{13}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *MonitorCommand) GetCommand() isMonitorCommand_Command {
@@ -1742,7 +1811,7 @@ type AdjustMonitorInterval struct {
 
 func (x *AdjustMonitorInterval) Reset() {
 	*x = AdjustMonitorInterval{}
-	mi := &file_gravity_monitor_proto_msgTypes[14]
+	mi := &file_gravity_monitor_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1754,7 +1823,7 @@ func (x *AdjustMonitorInterval) String() string {
 func (*AdjustMonitorInterval) ProtoMessage() {}
 
 func (x *AdjustMonitorInterval) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[14]
+	mi := &file_gravity_monitor_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1767,7 +1836,7 @@ func (x *AdjustMonitorInterval) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AdjustMonitorInterval.ProtoReflect.Descriptor instead.
 func (*AdjustMonitorInterval) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{14}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AdjustMonitorInterval) GetIntervalSeconds() int32 {
@@ -1785,7 +1854,7 @@ type RequestMonitorSnapshot struct {
 
 func (x *RequestMonitorSnapshot) Reset() {
 	*x = RequestMonitorSnapshot{}
-	mi := &file_gravity_monitor_proto_msgTypes[15]
+	mi := &file_gravity_monitor_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1797,7 +1866,7 @@ func (x *RequestMonitorSnapshot) String() string {
 func (*RequestMonitorSnapshot) ProtoMessage() {}
 
 func (x *RequestMonitorSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[15]
+	mi := &file_gravity_monitor_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1810,7 +1879,7 @@ func (x *RequestMonitorSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RequestMonitorSnapshot.ProtoReflect.Descriptor instead.
 func (*RequestMonitorSnapshot) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{15}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{16}
 }
 
 type TunnelHealthMetrics struct {
@@ -1828,7 +1897,7 @@ type TunnelHealthMetrics struct {
 
 func (x *TunnelHealthMetrics) Reset() {
 	*x = TunnelHealthMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[16]
+	mi := &file_gravity_monitor_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1840,7 +1909,7 @@ func (x *TunnelHealthMetrics) String() string {
 func (*TunnelHealthMetrics) ProtoMessage() {}
 
 func (x *TunnelHealthMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[16]
+	mi := &file_gravity_monitor_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1853,7 +1922,7 @@ func (x *TunnelHealthMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelHealthMetrics.ProtoReflect.Descriptor instead.
 func (*TunnelHealthMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{16}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *TunnelHealthMetrics) GetConnectionPool() *ConnectionPoolMetrics {
@@ -1919,7 +1988,7 @@ type ConnectionPoolMetrics struct {
 
 func (x *ConnectionPoolMetrics) Reset() {
 	*x = ConnectionPoolMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[17]
+	mi := &file_gravity_monitor_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1931,7 +2000,7 @@ func (x *ConnectionPoolMetrics) String() string {
 func (*ConnectionPoolMetrics) ProtoMessage() {}
 
 func (x *ConnectionPoolMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[17]
+	mi := &file_gravity_monitor_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1944,7 +2013,7 @@ func (x *ConnectionPoolMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ConnectionPoolMetrics.ProtoReflect.Descriptor instead.
 func (*ConnectionPoolMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{17}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ConnectionPoolMetrics) GetTotalConnections() int32 {
@@ -2015,7 +2084,7 @@ type PacketFlowMetrics struct {
 
 func (x *PacketFlowMetrics) Reset() {
 	*x = PacketFlowMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[18]
+	mi := &file_gravity_monitor_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2027,7 +2096,7 @@ func (x *PacketFlowMetrics) String() string {
 func (*PacketFlowMetrics) ProtoMessage() {}
 
 func (x *PacketFlowMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[18]
+	mi := &file_gravity_monitor_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2040,7 +2109,7 @@ func (x *PacketFlowMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PacketFlowMetrics.ProtoReflect.Descriptor instead.
 func (*PacketFlowMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{18}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *PacketFlowMetrics) GetInboundReceivedDelta() uint64 {
@@ -2168,7 +2237,7 @@ type ChannelMetrics struct {
 
 func (x *ChannelMetrics) Reset() {
 	*x = ChannelMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[19]
+	mi := &file_gravity_monitor_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2180,7 +2249,7 @@ func (x *ChannelMetrics) String() string {
 func (*ChannelMetrics) ProtoMessage() {}
 
 func (x *ChannelMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[19]
+	mi := &file_gravity_monitor_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2193,7 +2262,7 @@ func (x *ChannelMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelMetrics.ProtoReflect.Descriptor instead.
 func (*ChannelMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{19}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ChannelMetrics) GetCurrentDepth() int32 {
@@ -2255,7 +2324,7 @@ type TunInterfaceMetrics struct {
 
 func (x *TunInterfaceMetrics) Reset() {
 	*x = TunInterfaceMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[20]
+	mi := &file_gravity_monitor_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2267,7 +2336,7 @@ func (x *TunInterfaceMetrics) String() string {
 func (*TunInterfaceMetrics) ProtoMessage() {}
 
 func (x *TunInterfaceMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[20]
+	mi := &file_gravity_monitor_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2280,7 +2349,7 @@ func (x *TunInterfaceMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunInterfaceMetrics.ProtoReflect.Descriptor instead.
 func (*TunInterfaceMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{20}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *TunInterfaceMetrics) GetPacketsReadDelta() uint64 {
@@ -2398,7 +2467,7 @@ type TunnelStreamMetrics struct {
 
 func (x *TunnelStreamMetrics) Reset() {
 	*x = TunnelStreamMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[21]
+	mi := &file_gravity_monitor_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2410,7 +2479,7 @@ func (x *TunnelStreamMetrics) String() string {
 func (*TunnelStreamMetrics) ProtoMessage() {}
 
 func (x *TunnelStreamMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[21]
+	mi := &file_gravity_monitor_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2423,7 +2492,7 @@ func (x *TunnelStreamMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TunnelStreamMetrics.ProtoReflect.Descriptor instead.
 func (*TunnelStreamMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{21}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *TunnelStreamMetrics) GetStreamId() string {
@@ -2555,7 +2624,7 @@ type ControlPlaneMetrics struct {
 
 func (x *ControlPlaneMetrics) Reset() {
 	*x = ControlPlaneMetrics{}
-	mi := &file_gravity_monitor_proto_msgTypes[22]
+	mi := &file_gravity_monitor_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2567,7 +2636,7 @@ func (x *ControlPlaneMetrics) String() string {
 func (*ControlPlaneMetrics) ProtoMessage() {}
 
 func (x *ControlPlaneMetrics) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[22]
+	mi := &file_gravity_monitor_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2580,7 +2649,7 @@ func (x *ControlPlaneMetrics) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlPlaneMetrics.ProtoReflect.Descriptor instead.
 func (*ControlPlaneMetrics) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{22}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ControlPlaneMetrics) GetLastPingSentAtUs() int64 {
@@ -2668,7 +2737,7 @@ type StallIndicators struct {
 
 func (x *StallIndicators) Reset() {
 	*x = StallIndicators{}
-	mi := &file_gravity_monitor_proto_msgTypes[23]
+	mi := &file_gravity_monitor_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2680,7 +2749,7 @@ func (x *StallIndicators) String() string {
 func (*StallIndicators) ProtoMessage() {}
 
 func (x *StallIndicators) ProtoReflect() protoreflect.Message {
-	mi := &file_gravity_monitor_proto_msgTypes[23]
+	mi := &file_gravity_monitor_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2693,7 +2762,7 @@ func (x *StallIndicators) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StallIndicators.ProtoReflect.Descriptor instead.
 func (*StallIndicators) Descriptor() ([]byte, []int) {
-	return file_gravity_monitor_proto_rawDescGZIP(), []int{23}
+	return file_gravity_monitor_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *StallIndicators) GetLastInboundDeliveryAtUs() int64 {
@@ -2763,7 +2832,7 @@ var File_gravity_monitor_proto protoreflect.FileDescriptor
 
 const file_gravity_monitor_proto_rawDesc = "" +
 	"\n" +
-	"\x15gravity_monitor.proto\x12\agravity\"\x9f\x03\n" +
+	"\x15gravity_monitor.proto\x12\agravity\"\xb1\x04\n" +
 	"\x11NodeMonitorReport\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12$\n" +
@@ -2776,7 +2845,17 @@ const file_gravity_monitor_proto_rawDesc = "" +
 	"\bcapacity\x18\x06 \x01(\v2\x18.gravity.CapacitySummaryR\bcapacity\x12*\n" +
 	"\x06events\x18\a \x03(\v2\x12.gravity.NodeEventR\x06events\x126\n" +
 	"\x17report_interval_seconds\x18\b \x01(\x05R\x15reportIntervalSeconds\x124\n" +
-	"\x06tunnel\x18\t \x01(\v2\x1c.gravity.TunnelHealthMetricsR\x06tunnel\"\x8e\x02\n" +
+	"\x06tunnel\x18\t \x01(\v2\x1c.gravity.TunnelHealthMetricsR\x06tunnel\x12>\n" +
+	"\x06caches\x18\n" +
+	" \x03(\v2&.gravity.NodeMonitorReport.CachesEntryR\x06caches\x1aP\n" +
+	"\vCachesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12+\n" +
+	"\x05value\x18\x02 \x01(\v2\x15.gravity.CacheMetricsR\x05value:\x028\x01\"m\n" +
+	"\fCacheMetrics\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\x01 \x01(\x03R\tsizeBytes\x12$\n" +
+	"\x0emax_size_bytes\x18\x02 \x01(\x03R\fmaxSizeBytes\x12\x18\n" +
+	"\aentries\x18\x03 \x01(\x05R\aentries\"\x8e\x02\n" +
 	"\vHostMetrics\x12%\n" +
 	"\x03cpu\x18\x01 \x01(\v2\x13.gravity.CpuMetricsR\x03cpu\x12.\n" +
 	"\x06memory\x18\x02 \x01(\v2\x16.gravity.MemoryMetricsR\x06memory\x12*\n" +
@@ -3068,72 +3147,76 @@ func file_gravity_monitor_proto_rawDescGZIP() []byte {
 }
 
 var file_gravity_monitor_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
+var file_gravity_monitor_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_gravity_monitor_proto_goTypes = []any{
 	(NodeEventLevel)(0),             // 0: gravity.NodeEventLevel
 	(NodeEventType)(0),              // 1: gravity.NodeEventType
 	(*NodeMonitorReport)(nil),       // 2: gravity.NodeMonitorReport
-	(*HostMetrics)(nil),             // 3: gravity.HostMetrics
-	(*CpuMetrics)(nil),              // 4: gravity.CpuMetrics
-	(*MemoryMetrics)(nil),           // 5: gravity.MemoryMetrics
-	(*DiskMetrics)(nil),             // 6: gravity.DiskMetrics
-	(*NetworkInterfaceMetrics)(nil), // 7: gravity.NetworkInterfaceMetrics
-	(*SystemInfo)(nil),              // 8: gravity.SystemInfo
-	(*ContainerMetrics)(nil),        // 9: gravity.ContainerMetrics
-	(*StatusCodeCounts)(nil),        // 10: gravity.StatusCodeCounts
-	(*DurationStats)(nil),           // 11: gravity.DurationStats
-	(*ByteStats)(nil),               // 12: gravity.ByteStats
-	(*CapacitySummary)(nil),         // 13: gravity.CapacitySummary
-	(*NodeEvent)(nil),               // 14: gravity.NodeEvent
-	(*MonitorCommand)(nil),          // 15: gravity.MonitorCommand
-	(*AdjustMonitorInterval)(nil),   // 16: gravity.AdjustMonitorInterval
-	(*RequestMonitorSnapshot)(nil),  // 17: gravity.RequestMonitorSnapshot
-	(*TunnelHealthMetrics)(nil),     // 18: gravity.TunnelHealthMetrics
-	(*ConnectionPoolMetrics)(nil),   // 19: gravity.ConnectionPoolMetrics
-	(*PacketFlowMetrics)(nil),       // 20: gravity.PacketFlowMetrics
-	(*ChannelMetrics)(nil),          // 21: gravity.ChannelMetrics
-	(*TunInterfaceMetrics)(nil),     // 22: gravity.TunInterfaceMetrics
-	(*TunnelStreamMetrics)(nil),     // 23: gravity.TunnelStreamMetrics
-	(*ControlPlaneMetrics)(nil),     // 24: gravity.ControlPlaneMetrics
-	(*StallIndicators)(nil),         // 25: gravity.StallIndicators
-	nil,                             // 26: gravity.NodeEvent.MetadataEntry
+	(*CacheMetrics)(nil),            // 3: gravity.CacheMetrics
+	(*HostMetrics)(nil),             // 4: gravity.HostMetrics
+	(*CpuMetrics)(nil),              // 5: gravity.CpuMetrics
+	(*MemoryMetrics)(nil),           // 6: gravity.MemoryMetrics
+	(*DiskMetrics)(nil),             // 7: gravity.DiskMetrics
+	(*NetworkInterfaceMetrics)(nil), // 8: gravity.NetworkInterfaceMetrics
+	(*SystemInfo)(nil),              // 9: gravity.SystemInfo
+	(*ContainerMetrics)(nil),        // 10: gravity.ContainerMetrics
+	(*StatusCodeCounts)(nil),        // 11: gravity.StatusCodeCounts
+	(*DurationStats)(nil),           // 12: gravity.DurationStats
+	(*ByteStats)(nil),               // 13: gravity.ByteStats
+	(*CapacitySummary)(nil),         // 14: gravity.CapacitySummary
+	(*NodeEvent)(nil),               // 15: gravity.NodeEvent
+	(*MonitorCommand)(nil),          // 16: gravity.MonitorCommand
+	(*AdjustMonitorInterval)(nil),   // 17: gravity.AdjustMonitorInterval
+	(*RequestMonitorSnapshot)(nil),  // 18: gravity.RequestMonitorSnapshot
+	(*TunnelHealthMetrics)(nil),     // 19: gravity.TunnelHealthMetrics
+	(*ConnectionPoolMetrics)(nil),   // 20: gravity.ConnectionPoolMetrics
+	(*PacketFlowMetrics)(nil),       // 21: gravity.PacketFlowMetrics
+	(*ChannelMetrics)(nil),          // 22: gravity.ChannelMetrics
+	(*TunInterfaceMetrics)(nil),     // 23: gravity.TunInterfaceMetrics
+	(*TunnelStreamMetrics)(nil),     // 24: gravity.TunnelStreamMetrics
+	(*ControlPlaneMetrics)(nil),     // 25: gravity.ControlPlaneMetrics
+	(*StallIndicators)(nil),         // 26: gravity.StallIndicators
+	nil,                             // 27: gravity.NodeMonitorReport.CachesEntry
+	nil,                             // 28: gravity.NodeEvent.MetadataEntry
 }
 var file_gravity_monitor_proto_depIdxs = []int32{
-	3,  // 0: gravity.NodeMonitorReport.host:type_name -> gravity.HostMetrics
-	9,  // 1: gravity.NodeMonitorReport.containers:type_name -> gravity.ContainerMetrics
-	13, // 2: gravity.NodeMonitorReport.capacity:type_name -> gravity.CapacitySummary
-	14, // 3: gravity.NodeMonitorReport.events:type_name -> gravity.NodeEvent
-	18, // 4: gravity.NodeMonitorReport.tunnel:type_name -> gravity.TunnelHealthMetrics
-	4,  // 5: gravity.HostMetrics.cpu:type_name -> gravity.CpuMetrics
-	5,  // 6: gravity.HostMetrics.memory:type_name -> gravity.MemoryMetrics
-	6,  // 7: gravity.HostMetrics.disks:type_name -> gravity.DiskMetrics
-	7,  // 8: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
-	8,  // 9: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
-	10, // 10: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
-	12, // 11: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
-	10, // 12: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
-	12, // 13: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
-	11, // 14: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
-	0,  // 15: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
-	1,  // 16: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
-	26, // 17: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
-	16, // 18: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
-	17, // 19: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
-	19, // 20: gravity.TunnelHealthMetrics.connection_pool:type_name -> gravity.ConnectionPoolMetrics
-	20, // 21: gravity.TunnelHealthMetrics.packet_flow:type_name -> gravity.PacketFlowMetrics
-	21, // 22: gravity.TunnelHealthMetrics.inbound_channel:type_name -> gravity.ChannelMetrics
-	22, // 23: gravity.TunnelHealthMetrics.tun_interface:type_name -> gravity.TunInterfaceMetrics
-	23, // 24: gravity.TunnelHealthMetrics.streams:type_name -> gravity.TunnelStreamMetrics
-	24, // 25: gravity.TunnelHealthMetrics.control_plane:type_name -> gravity.ControlPlaneMetrics
-	25, // 26: gravity.TunnelHealthMetrics.stall:type_name -> gravity.StallIndicators
-	11, // 27: gravity.TunInterfaceMetrics.write_latency:type_name -> gravity.DurationStats
-	11, // 28: gravity.TunnelStreamMetrics.send_latency:type_name -> gravity.DurationStats
-	11, // 29: gravity.ControlPlaneMetrics.ping_latency:type_name -> gravity.DurationStats
-	30, // [30:30] is the sub-list for method output_type
-	30, // [30:30] is the sub-list for method input_type
-	30, // [30:30] is the sub-list for extension type_name
-	30, // [30:30] is the sub-list for extension extendee
-	0,  // [0:30] is the sub-list for field type_name
+	4,  // 0: gravity.NodeMonitorReport.host:type_name -> gravity.HostMetrics
+	10, // 1: gravity.NodeMonitorReport.containers:type_name -> gravity.ContainerMetrics
+	14, // 2: gravity.NodeMonitorReport.capacity:type_name -> gravity.CapacitySummary
+	15, // 3: gravity.NodeMonitorReport.events:type_name -> gravity.NodeEvent
+	19, // 4: gravity.NodeMonitorReport.tunnel:type_name -> gravity.TunnelHealthMetrics
+	27, // 5: gravity.NodeMonitorReport.caches:type_name -> gravity.NodeMonitorReport.CachesEntry
+	5,  // 6: gravity.HostMetrics.cpu:type_name -> gravity.CpuMetrics
+	6,  // 7: gravity.HostMetrics.memory:type_name -> gravity.MemoryMetrics
+	7,  // 8: gravity.HostMetrics.disks:type_name -> gravity.DiskMetrics
+	8,  // 9: gravity.HostMetrics.network_interfaces:type_name -> gravity.NetworkInterfaceMetrics
+	9,  // 10: gravity.HostMetrics.system:type_name -> gravity.SystemInfo
+	11, // 11: gravity.ContainerMetrics.status_codes:type_name -> gravity.StatusCodeCounts
+	13, // 12: gravity.ContainerMetrics.traffic_bytes:type_name -> gravity.ByteStats
+	11, // 13: gravity.ContainerMetrics.status_codes_delta:type_name -> gravity.StatusCodeCounts
+	13, // 14: gravity.ContainerMetrics.traffic_bytes_delta:type_name -> gravity.ByteStats
+	12, // 15: gravity.ContainerMetrics.duration:type_name -> gravity.DurationStats
+	0,  // 16: gravity.NodeEvent.level:type_name -> gravity.NodeEventLevel
+	1,  // 17: gravity.NodeEvent.type:type_name -> gravity.NodeEventType
+	28, // 18: gravity.NodeEvent.metadata:type_name -> gravity.NodeEvent.MetadataEntry
+	17, // 19: gravity.MonitorCommand.adjust_interval:type_name -> gravity.AdjustMonitorInterval
+	18, // 20: gravity.MonitorCommand.request_snapshot:type_name -> gravity.RequestMonitorSnapshot
+	20, // 21: gravity.TunnelHealthMetrics.connection_pool:type_name -> gravity.ConnectionPoolMetrics
+	21, // 22: gravity.TunnelHealthMetrics.packet_flow:type_name -> gravity.PacketFlowMetrics
+	22, // 23: gravity.TunnelHealthMetrics.inbound_channel:type_name -> gravity.ChannelMetrics
+	23, // 24: gravity.TunnelHealthMetrics.tun_interface:type_name -> gravity.TunInterfaceMetrics
+	24, // 25: gravity.TunnelHealthMetrics.streams:type_name -> gravity.TunnelStreamMetrics
+	25, // 26: gravity.TunnelHealthMetrics.control_plane:type_name -> gravity.ControlPlaneMetrics
+	26, // 27: gravity.TunnelHealthMetrics.stall:type_name -> gravity.StallIndicators
+	12, // 28: gravity.TunInterfaceMetrics.write_latency:type_name -> gravity.DurationStats
+	12, // 29: gravity.TunnelStreamMetrics.send_latency:type_name -> gravity.DurationStats
+	12, // 30: gravity.ControlPlaneMetrics.ping_latency:type_name -> gravity.DurationStats
+	3,  // 31: gravity.NodeMonitorReport.CachesEntry.value:type_name -> gravity.CacheMetrics
+	32, // [32:32] is the sub-list for method output_type
+	32, // [32:32] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_gravity_monitor_proto_init() }
@@ -3141,7 +3224,7 @@ func file_gravity_monitor_proto_init() {
 	if File_gravity_monitor_proto != nil {
 		return
 	}
-	file_gravity_monitor_proto_msgTypes[13].OneofWrappers = []any{
+	file_gravity_monitor_proto_msgTypes[14].OneofWrappers = []any{
 		(*MonitorCommand_AdjustInterval)(nil),
 		(*MonitorCommand_RequestSnapshot)(nil),
 	}
@@ -3151,7 +3234,7 @@ func file_gravity_monitor_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_monitor_proto_rawDesc), len(file_gravity_monitor_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   25,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

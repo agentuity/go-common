@@ -407,12 +407,12 @@ func TestUnzipWindowsPermissions(t *testing.T) {
 			assert.NoError(t, err, "extracted file must be readable (mode in zip: %04o)", tt.mode)
 			assert.Equal(t, "console.log('hello');", string(content))
 
-			// Verify the minimum owner bits are present.
+			// Verify all required owner bits are present.
 			info, err := os.Stat(extracted)
 			assert.NoError(t, err)
 			actual := info.Mode().Perm()
-			assert.NotZero(t, actual&tt.minOwner,
-				"expected at least %04o owner bits, got %04o (zip mode %04o)",
+			assert.Equal(t, tt.minOwner, actual&tt.minOwner,
+				"expected all %04o owner bits, got %04o (zip mode %04o)",
 				tt.minOwner, actual, tt.mode)
 
 			// When the zip entry had execute bits, they must be preserved.

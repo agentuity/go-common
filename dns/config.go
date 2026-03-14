@@ -68,5 +68,14 @@ func (c *DNSConfig) Validate() error {
 	if len(c.UpstreamNameservers) == 0 {
 		return fmt.Errorf("no upstream nameservers configured")
 	}
+	for _, ns := range c.UpstreamNameservers {
+		host, _, err := net.SplitHostPort(ns)
+		if err != nil {
+			host = ns
+		}
+		if net.ParseIP(host) == nil {
+			return fmt.Errorf("upstream nameserver must be an IP address, got hostname: %s", ns)
+		}
+	}
 	return nil
 }

@@ -1483,9 +1483,9 @@ func TestDNSResolver_NameserverFallback(t *testing.T) {
 				mu.Unlock()
 
 				var response *dns.Msg
-				if address == "ns1.test:53" {
+				if address == "198.51.100.1:53" {
 					response = tt.firstResponse
-				} else if address == "ns2.test:53" {
+				} else if address == "198.51.100.2:53" {
 					mu.Lock()
 					secondCalled = true
 					mu.Unlock()
@@ -1516,7 +1516,7 @@ func TestDNSResolver_NameserverFallback(t *testing.T) {
 			config := DNSConfig{
 				ManagedDomains:      []string{"test.local"},
 				InternalNameservers: []string{"ns.internal:53"},
-				UpstreamNameservers: []string{"ns1.test:53", "ns2.test:53"},
+				UpstreamNameservers: []string{"198.51.100.1:53", "198.51.100.2:53"},
 				QueryTimeout:        "2s",
 				ListenAddress:       ":15353",
 				DialContext:         mockDialer,
@@ -1578,7 +1578,7 @@ func TestDNSResolver_NameserverFallback_ConnectionError(t *testing.T) {
 	mockDialer := func(ctx context.Context, network, address string) (net.Conn, error) {
 		callCount++
 
-		if address == "ns1.test:53" {
+		if address == "198.51.100.1:53" {
 			// First nameserver fails with connection error
 			return nil, net.UnknownNetworkError("connection refused")
 		}
@@ -1613,7 +1613,7 @@ func TestDNSResolver_NameserverFallback_ConnectionError(t *testing.T) {
 	config := DNSConfig{
 		ManagedDomains:      []string{"test.local"},
 		InternalNameservers: []string{"ns.internal:53"},
-		UpstreamNameservers: []string{"ns1.test:53", "ns2.test:53"},
+		UpstreamNameservers: []string{"198.51.100.1:53", "198.51.100.2:53"},
 		QueryTimeout:        "2s",
 		ListenAddress:       ":15353",
 		DialContext:         mockDialer,

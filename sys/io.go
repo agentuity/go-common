@@ -446,12 +446,18 @@ func Unzip(src, dest string, flatten bool) error {
 				return err
 			}
 
-			// Ensure files always have at least 0644 permissions. Zip archives created
-			// on Windows may store zero or incorrect Unix permission bits, causing
-			// EACCES errors when the extracted files are read on Linux.
+			// Zip archives created on Windows may store zero or incorrect Unix
+			// permission bits, causing EACCES errors when the extracted files
+			// are read on Linux.  Ensure the owner-read bit is always present
+			// while preserving any existing execute bits.
 			mode := f.Mode()
-			if mode&0o444 == 0 {
-				mode = 0o644
+			if mode.Perm() == 0 {
+				// Entirely missing permissions — set sensible default but
+				// keep any execute bits from the original mode.
+				mode = (mode & 0o111) | 0o600
+			} else if mode&0o400 == 0 {
+				// Has some bits but owner-read is missing — add it.
+				mode = mode | 0o400
 			}
 
 			f, err := os.OpenFile(

@@ -337,6 +337,94 @@ func TestUnzipZipSlipComprehensive(t *testing.T) {
 	}
 }
 
+func TestUnzipWindowsPermissions(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     os.FileMode // mode written into the zip entry
+		minOwner os.FileMode // minimum expected owner bits after extraction
+	}{
+		{
+			name:     "ZeroPermissions",
+			mode:     0,
+			minOwner: 0o600, // should get owner read+write default
+		},
+		{
+			name:     "MissingOwnerRead",
+			mode:     0o044,
+			minOwner: 0o400, // owner-read must be added
+		},
+		{
+			name:     "ExecuteOnlyNoRead",
+			mode:     0o111,
+			minOwner: 0o400, // owner-read added, execute preserved
+		},
+		{
+			name:     "NormalPermissions",
+			mode:     0o644,
+			minOwner: 0o600, // already has owner read+write
+		},
+		{
+			name:     "ExecutableFile",
+			mode:     0o755,
+			minOwner: 0o700, // already has owner rwx
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseDir := t.TempDir()
+			zipPath := filepath.Join(baseDir, "test.zip")
+
+			// Create a zip with a specific file mode set via the header.
+			zf, err := os.Create(zipPath)
+			assert.NoError(t, err)
+
+			zw := zip.NewWriter(zf)
+
+			fh := &zip.FileHeader{
+				Name:   "app.js",
+				Method: zip.Deflate,
+			}
+			fh.SetMode(tt.mode) // sets CreatorVersion to Unix
+
+			w, err := zw.CreateHeader(fh)
+			assert.NoError(t, err)
+			_, err = w.Write([]byte("console.log('hello');"))
+			assert.NoError(t, err)
+
+			assert.NoError(t, zw.Close())
+			assert.NoError(t, zf.Close())
+
+			// Extract
+			extractDir := filepath.Join(baseDir, "out")
+			assert.NoError(t, os.MkdirAll(extractDir, 0755))
+			assert.NoError(t, Unzip(zipPath, extractDir, false))
+
+			extracted := filepath.Join(extractDir, "app.js")
+
+			// The file must exist and be readable.
+			content, err := os.ReadFile(extracted)
+			assert.NoError(t, err, "extracted file must be readable (mode in zip: %04o)", tt.mode)
+			assert.Equal(t, "console.log('hello');", string(content))
+
+			// Verify the minimum owner bits are present.
+			info, err := os.Stat(extracted)
+			assert.NoError(t, err)
+			actual := info.Mode().Perm()
+			assert.NotZero(t, actual&tt.minOwner,
+				"expected at least %04o owner bits, got %04o (zip mode %04o)",
+				tt.minOwner, actual, tt.mode)
+
+			// When the zip entry had execute bits, they must be preserved.
+			if tt.mode&0o111 != 0 {
+				assert.NotZero(t, actual&0o100,
+					"owner-execute bit should be preserved, got %04o (zip mode %04o)",
+					actual, tt.mode)
+			}
+		})
+	}
+}
+
 func TestUnzipZipSlipSpecialCases(t *testing.T) {
 	t.Run("EmptyDestination", func(t *testing.T) {
 		baseDir := t.TempDir()

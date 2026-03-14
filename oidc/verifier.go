@@ -59,16 +59,16 @@ type discoveryDocument struct {
 // Key rotation is handled transparently: if a token's kid doesn't match any
 // cached key, the JWKS is refreshed before returning an error.
 type Verifier struct {
-	issuer       string
-	audiences    []string
-	jwksURL      string
-	httpClient   *http.Client
-	logger       logger.Logger
-	clockSkew    time.Duration
-	cacheTTL     time.Duration
-	cache        *jwksCache
-	discoverOnce sync.Once
-	discoverErr  error
+	issuer     string
+	audiences  []string
+	jwksURL    string
+	httpClient *http.Client
+	logger     logger.Logger
+	clockSkew  time.Duration
+	cacheTTL   time.Duration
+	cache      *jwksCache
+	discoverMu sync.Mutex
+	discovered bool
 }
 
 // NewVerifier creates a new OIDC token verifier.
@@ -127,9 +127,8 @@ func (v *Verifier) VerifyToken(ctx context.Context, tokenString string) (*Claims
 		jwt.WithLeeway(v.clockSkew),
 		jwt.WithExpirationRequired(),
 	}
-	if len(v.audiences) > 0 {
-		// jwt/v5's WithAudience checks for a single expected audience.
-		// Multi-audience validation is handled separately below after token parsing.
+	if len(v.audiences) == 1 {
+		// jwt/v5's WithAudience validates a single expected audience during parsing.
 		parserOpts = append(parserOpts, jwt.WithAudience(v.audiences[0]))
 	}
 
@@ -199,56 +198,64 @@ func (v *Verifier) keyFunc(ctx context.Context) jwt.Keyfunc {
 	}
 }
 
+// maxDiscoveryBodySize limits the size of the OIDC discovery document response.
+const maxDiscoveryBodySize = 1 << 20 // 1 MB
+
 // ensureJWKSURL resolves the JWKS URL from the discovery document if needed.
-// Discovery is performed at most once using sync.Once for thread safety.
+// Only successful discovery is cached; transient failures allow retry on
+// subsequent calls so that a temporary network error does not permanently
+// disable the verifier.
 func (v *Verifier) ensureJWKSURL(ctx context.Context) error {
-	v.discoverOnce.Do(func() {
-		// If the JWKS URL is already a direct jwks_uri, we're done.
-		// If it ends with .well-known/openid-configuration, we need to fetch it.
-		if !strings.HasSuffix(v.jwksURL, "/.well-known/openid-configuration") {
-			return
-		}
+	v.discoverMu.Lock()
+	defer v.discoverMu.Unlock()
 
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
-		if err != nil {
-			v.discoverErr = fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
-			return
-		}
-		req.Header.Set("Accept", "application/json")
+	if v.discovered {
+		return nil
+	}
 
-		resp, err := v.httpClient.Do(req)
-		if err != nil {
-			v.discoverErr = fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
-			return
-		}
-		defer resp.Body.Close()
+	// If the JWKS URL is already a direct jwks_uri, we're done.
+	// If it ends with .well-known/openid-configuration, we need to fetch it.
+	if !strings.HasSuffix(v.jwksURL, "/.well-known/openid-configuration") {
+		v.discovered = true
+		return nil
+	}
 
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-			v.discoverErr = fmt.Errorf("%w: status %d: %s", ErrDiscoveryFailed, resp.StatusCode, string(body))
-			return
-		}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.jwksURL, nil)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+	}
+	req.Header.Set("Accept", "application/json")
 
-		var doc discoveryDocument
-		if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-			v.discoverErr = fmt.Errorf("%w: decoding: %v", ErrDiscoveryFailed, err)
-			return
-		}
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrDiscoveryFailed, err)
+	}
+	defer resp.Body.Close()
 
-		if doc.JWKSURI == "" {
-			v.discoverErr = fmt.Errorf("%w: no jwks_uri in discovery document", ErrDiscoveryFailed)
-			return
-		}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("%w: status %d: %s", ErrDiscoveryFailed, resp.StatusCode, string(body))
+	}
 
-		// Update JWKS URL and cache to use the resolved URI
-		v.jwksURL = doc.JWKSURI
-		v.cache = newJWKSCache(doc.JWKSURI, v.httpClient, v.cacheTTL)
+	var doc discoveryDocument
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxDiscoveryBodySize)).Decode(&doc); err != nil {
+		return fmt.Errorf("%w: decoding: %v", ErrDiscoveryFailed, err)
+	}
 
-		if v.logger != nil {
-			v.logger.Debug("oidc: discovered JWKS endpoint: %s", doc.JWKSURI)
-		}
-	})
-	return v.discoverErr
+	if doc.JWKSURI == "" {
+		return fmt.Errorf("%w: no jwks_uri in discovery document", ErrDiscoveryFailed)
+	}
+
+	// Update JWKS URL and cache to use the resolved URI
+	v.jwksURL = doc.JWKSURI
+	v.cache = newJWKSCache(doc.JWKSURI, v.httpClient, v.cacheTTL)
+
+	if v.logger != nil {
+		v.logger.Debug("oidc: discovered JWKS endpoint: %s", doc.JWKSURI)
+	}
+
+	v.discovered = true
+	return nil
 }
 
 // classifyError maps jwt library errors to our sentinel errors.

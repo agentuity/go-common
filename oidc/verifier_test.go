@@ -490,3 +490,35 @@ func TestNewVerifier_DefaultIssuer(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, DefaultIssuer, v.issuer)
 }
+
+func TestVerifyToken_MultiAudienceAccepted(t *testing.T) {
+	privKey, pubKey := testKeyPair(t)
+
+	keys := []parsedKey{
+		{kid: "key-1", algorithm: "ES256", publicKey: pubKey},
+	}
+	_, issuer := jwksServer(t, keys)
+
+	// Configure verifier with one expected audience
+	v, err := NewVerifier(
+		WithIssuer(issuer),
+		WithAudience("expected-client"),
+	)
+	require.NoError(t, err)
+
+	// Token has multiple audiences; "expected-client" is present but not first
+	tokenStr := signToken(t, privKey, "key-1", &Claims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    issuer,
+			Subject:   "user-123",
+			Audience:  jwt.ClaimStrings{"other-client", "expected-client", "another"},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+		},
+		Scope: "openid",
+	}, jwt.SigningMethodES256)
+
+	claims, err := v.VerifyToken(context.Background(), tokenStr)
+	require.NoError(t, err)
+	assert.Equal(t, "user-123", claims.Subject)
+}

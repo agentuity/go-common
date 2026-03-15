@@ -270,6 +270,18 @@ message DeploymentCert {
 message CodeMetadata {
   repeated string env = 1; // Environment variable names
   repeated string secrets = 2; // Secret names required by the code
+  repeated SecretRule secret_rules = 3; // Rules for transparent proxy secret injection
+}
+
+// SecretRule defines how a secret environment variable is injected into
+// outbound HTTP requests by the transparent proxy. The proxy replaces
+// hashed placeholder tokens with real secret values in the specified header,
+// only for requests matching the allowed hosts.
+message SecretRule {
+  string env = 1; // Environment variable name containing the secret
+  string header = 2; // HTTP header to intercept (case-insensitive), e.g. "authorization"
+  string scheme = 3; // Injection scheme: "bearer", "basic", or "raw"
+  repeated string host_match = 4; // Glob patterns for allowed destination hosts
 }
 
 message HostMapping {

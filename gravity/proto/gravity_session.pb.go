@@ -23,6 +23,60 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// SecretScheme describes how the secret value is formatted inside the
+// HTTP header before being sent upstream.
+type SecretScheme int32
+
+const (
+	SecretScheme_SECRET_SCHEME_UNSPECIFIED SecretScheme = 0 // Invalid / not set — rule will be rejected at validation
+	SecretScheme_SECRET_SCHEME_BEARER      SecretScheme = 1 // "Bearer <value>" in the header (e.g. Authorization)
+	SecretScheme_SECRET_SCHEME_BASIC       SecretScheme = 2 // HTTP Basic auth — password portion is replaced
+	SecretScheme_SECRET_SCHEME_RAW         SecretScheme = 3 // Header value is the literal secret (e.g. x-api-key)
+)
+
+// Enum value maps for SecretScheme.
+var (
+	SecretScheme_name = map[int32]string{
+		0: "SECRET_SCHEME_UNSPECIFIED",
+		1: "SECRET_SCHEME_BEARER",
+		2: "SECRET_SCHEME_BASIC",
+		3: "SECRET_SCHEME_RAW",
+	}
+	SecretScheme_value = map[string]int32{
+		"SECRET_SCHEME_UNSPECIFIED": 0,
+		"SECRET_SCHEME_BEARER":      1,
+		"SECRET_SCHEME_BASIC":       2,
+		"SECRET_SCHEME_RAW":         3,
+	}
+)
+
+func (x SecretScheme) Enum() *SecretScheme {
+	p := new(SecretScheme)
+	*p = x
+	return p
+}
+
+func (x SecretScheme) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SecretScheme) Descriptor() protoreflect.EnumDescriptor {
+	return file_gravity_session_proto_enumTypes[0].Descriptor()
+}
+
+func (SecretScheme) Type() protoreflect.EnumType {
+	return &file_gravity_session_proto_enumTypes[0]
+}
+
+func (x SecretScheme) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SecretScheme.Descriptor instead.
+func (SecretScheme) EnumDescriptor() ([]byte, []int) {
+	return file_gravity_session_proto_rawDescGZIP(), []int{0}
+}
+
 // Checkpoint URL operation type
 type CheckpointURLOperation int32
 
@@ -54,11 +108,11 @@ func (x CheckpointURLOperation) String() string {
 }
 
 func (CheckpointURLOperation) Descriptor() protoreflect.EnumDescriptor {
-	return file_gravity_session_proto_enumTypes[0].Descriptor()
+	return file_gravity_session_proto_enumTypes[1].Descriptor()
 }
 
 func (CheckpointURLOperation) Type() protoreflect.EnumType {
-	return &file_gravity_session_proto_enumTypes[0]
+	return &file_gravity_session_proto_enumTypes[1]
 }
 
 func (x CheckpointURLOperation) Number() protoreflect.EnumNumber {
@@ -67,7 +121,7 @@ func (x CheckpointURLOperation) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CheckpointURLOperation.Descriptor instead.
 func (CheckpointURLOperation) EnumDescriptor() ([]byte, []int) {
-	return file_gravity_session_proto_rawDescGZIP(), []int{0}
+	return file_gravity_session_proto_rawDescGZIP(), []int{1}
 }
 
 // IdentifyRequest is sent by the client to identify the org associated with the key.
@@ -2193,10 +2247,10 @@ func (x *CodeMetadata) GetSecretRules() []*SecretRule {
 // only for requests matching the allowed hosts.
 type SecretRule struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Env           string                 `protobuf:"bytes,1,opt,name=env,proto3" json:"env,omitempty"`                              // Environment variable name containing the secret
-	Header        string                 `protobuf:"bytes,2,opt,name=header,proto3" json:"header,omitempty"`                        // HTTP header to intercept (case-insensitive), e.g. "authorization"
-	Scheme        string                 `protobuf:"bytes,3,opt,name=scheme,proto3" json:"scheme,omitempty"`                        // Injection scheme: "bearer", "basic", or "raw"
-	HostMatch     []string               `protobuf:"bytes,4,rep,name=host_match,json=hostMatch,proto3" json:"host_match,omitempty"` // Glob patterns for allowed destination hosts
+	Env           string                 `protobuf:"bytes,1,opt,name=env,proto3" json:"env,omitempty"`                                  // Environment variable name containing the secret (required)
+	Header        string                 `protobuf:"bytes,2,opt,name=header,proto3" json:"header,omitempty"`                            // HTTP header to intercept (case-insensitive, required), e.g. "authorization"
+	Scheme        SecretScheme           `protobuf:"varint,3,opt,name=scheme,proto3,enum=gravity.SecretScheme" json:"scheme,omitempty"` // How the secret is formatted in the header (required)
+	HostMatch     []string               `protobuf:"bytes,4,rep,name=host_match,json=hostMatch,proto3" json:"host_match,omitempty"`     // Glob patterns for allowed destination hosts (required, non-empty).
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2245,11 +2299,11 @@ func (x *SecretRule) GetHeader() string {
 	return ""
 }
 
-func (x *SecretRule) GetScheme() string {
+func (x *SecretRule) GetScheme() SecretScheme {
 	if x != nil {
 		return x.Scheme
 	}
-	return ""
+	return SecretScheme_SECRET_SCHEME_UNSPECIFIED
 }
 
 func (x *SecretRule) GetHostMatch() []string {
@@ -3500,12 +3554,12 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\fCodeMetadata\x12\x10\n" +
 	"\x03env\x18\x01 \x03(\tR\x03env\x12\x18\n" +
 	"\asecrets\x18\x02 \x03(\tR\asecrets\x126\n" +
-	"\fsecret_rules\x18\x03 \x03(\v2\x13.gravity.SecretRuleR\vsecretRules\"m\n" +
+	"\fsecret_rules\x18\x03 \x03(\v2\x13.gravity.SecretRuleR\vsecretRules\"\x84\x01\n" +
 	"\n" +
 	"SecretRule\x12\x10\n" +
 	"\x03env\x18\x01 \x01(\tR\x03env\x12\x16\n" +
-	"\x06header\x18\x02 \x01(\tR\x06header\x12\x16\n" +
-	"\x06scheme\x18\x03 \x01(\tR\x06scheme\x12\x1d\n" +
+	"\x06header\x18\x02 \x01(\tR\x06header\x12-\n" +
+	"\x06scheme\x18\x03 \x01(\x0e2\x15.gravity.SecretSchemeR\x06scheme\x12\x1d\n" +
 	"\n" +
 	"host_match\x18\x04 \x03(\tR\thostMatch\"H\n" +
 	"\vHostMapping\x12\x1a\n" +
@@ -3606,7 +3660,12 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x0echeckpoint_key\x18\x03 \x01(\tR\rcheckpointKey\x12%\n" +
 	"\x0eexpiry_seconds\x18\x04 \x01(\x03R\rexpirySeconds\x12\x18\n" +
 	"\asuccess\x18\x05 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x06 \x01(\tR\x05error*P\n" +
+	"\x05error\x18\x06 \x01(\tR\x05error*w\n" +
+	"\fSecretScheme\x12\x1d\n" +
+	"\x19SECRET_SCHEME_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14SECRET_SCHEME_BEARER\x10\x01\x12\x17\n" +
+	"\x13SECRET_SCHEME_BASIC\x10\x02\x12\x15\n" +
+	"\x11SECRET_SCHEME_RAW\x10\x03*P\n" +
 	"\x16CheckpointURLOperation\x12\x19\n" +
 	"\x15CHECKPOINT_URL_UPLOAD\x10\x00\x12\x1b\n" +
 	"\x17CHECKPOINT_URL_DOWNLOAD\x10\x012\xa7\x03\n" +
@@ -3629,116 +3688,118 @@ func file_gravity_session_proto_rawDescGZIP() []byte {
 	return file_gravity_session_proto_rawDescData
 }
 
-var file_gravity_session_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_gravity_session_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_gravity_session_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_gravity_session_proto_goTypes = []any{
-	(CheckpointURLOperation)(0),         // 0: gravity.CheckpointURLOperation
-	(*IdentifyRequest)(nil),             // 1: gravity.IdentifyRequest
-	(*IdentifyResponse)(nil),            // 2: gravity.IdentifyResponse
-	(*SessionMessage)(nil),              // 3: gravity.SessionMessage
-	(*SessionHello)(nil),                // 4: gravity.SessionHello
-	(*SessionHelloResponse)(nil),        // 5: gravity.SessionHelloResponse
-	(*SessionCloseRequest)(nil),         // 6: gravity.SessionCloseRequest
-	(*TunnelPacket)(nil),                // 7: gravity.TunnelPacket
-	(*ClientCapabilities)(nil),          // 8: gravity.ClientCapabilities
-	(*RouteDeploymentRequest)(nil),      // 9: gravity.RouteDeploymentRequest
-	(*RouteDeploymentResponse)(nil),     // 10: gravity.RouteDeploymentResponse
-	(*UnprovisionRequest)(nil),          // 11: gravity.UnprovisionRequest
-	(*PingRequest)(nil),                 // 12: gravity.PingRequest
-	(*PongResponse)(nil),                // 13: gravity.PongResponse
-	(*CloseRequest)(nil),                // 14: gravity.CloseRequest
-	(*PauseRequest)(nil),                // 15: gravity.PauseRequest
-	(*ResumeRequest)(nil),               // 16: gravity.ResumeRequest
-	(*ProtocolResponse)(nil),            // 17: gravity.ProtocolResponse
-	(*ProtocolEvent)(nil),               // 18: gravity.ProtocolEvent
-	(*ConfigurationUpdate)(nil),         // 19: gravity.ConfigurationUpdate
-	(*ConfigItem)(nil),                  // 20: gravity.ConfigItem
-	(*ConfigurationUpdateResponse)(nil), // 21: gravity.ConfigurationUpdateResponse
-	(*HostInfo)(nil),                    // 22: gravity.HostInfo
-	(*ExistingDeployment)(nil),          // 23: gravity.ExistingDeployment
-	(*ResourceRequirements)(nil),        // 24: gravity.ResourceRequirements
-	(*DeploymentCert)(nil),              // 25: gravity.DeploymentCert
-	(*CodeMetadata)(nil),                // 26: gravity.CodeMetadata
-	(*SecretRule)(nil),                  // 27: gravity.SecretRule
-	(*HostMapping)(nil),                 // 28: gravity.HostMapping
-	(*DeploymentMetadataRequest)(nil),   // 29: gravity.DeploymentMetadataRequest
-	(*DeploymentMetadataResponse)(nil),  // 30: gravity.DeploymentMetadataResponse
-	(*RouteSandboxRequest)(nil),         // 31: gravity.RouteSandboxRequest
-	(*RouteSandboxResponse)(nil),        // 32: gravity.RouteSandboxResponse
-	(*SandboxMetadataRequest)(nil),      // 33: gravity.SandboxMetadataRequest
-	(*SandboxMetadataResponse)(nil),     // 34: gravity.SandboxMetadataResponse
-	(*SandboxEvacInfo)(nil),             // 35: gravity.SandboxEvacInfo
-	(*EvacuateRequest)(nil),             // 36: gravity.EvacuateRequest
-	(*EvacuateSandboxPlan)(nil),         // 37: gravity.EvacuateSandboxPlan
-	(*EvacuationPlan)(nil),              // 38: gravity.EvacuationPlan
-	(*SandboxCheckpointed)(nil),         // 39: gravity.SandboxCheckpointed
-	(*RestoreSandboxTask)(nil),          // 40: gravity.RestoreSandboxTask
-	(*SandboxRestored)(nil),             // 41: gravity.SandboxRestored
-	(*CheckpointURLRequest)(nil),        // 42: gravity.CheckpointURLRequest
-	(*CheckpointURLResponse)(nil),       // 43: gravity.CheckpointURLResponse
-	(*NodeMonitorReport)(nil),           // 44: gravity.NodeMonitorReport
-	(*MonitorCommand)(nil),              // 45: gravity.MonitorCommand
-	(*timestamppb.Timestamp)(nil),       // 46: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),         // 47: google.protobuf.Duration
+	(SecretScheme)(0),                   // 0: gravity.SecretScheme
+	(CheckpointURLOperation)(0),         // 1: gravity.CheckpointURLOperation
+	(*IdentifyRequest)(nil),             // 2: gravity.IdentifyRequest
+	(*IdentifyResponse)(nil),            // 3: gravity.IdentifyResponse
+	(*SessionMessage)(nil),              // 4: gravity.SessionMessage
+	(*SessionHello)(nil),                // 5: gravity.SessionHello
+	(*SessionHelloResponse)(nil),        // 6: gravity.SessionHelloResponse
+	(*SessionCloseRequest)(nil),         // 7: gravity.SessionCloseRequest
+	(*TunnelPacket)(nil),                // 8: gravity.TunnelPacket
+	(*ClientCapabilities)(nil),          // 9: gravity.ClientCapabilities
+	(*RouteDeploymentRequest)(nil),      // 10: gravity.RouteDeploymentRequest
+	(*RouteDeploymentResponse)(nil),     // 11: gravity.RouteDeploymentResponse
+	(*UnprovisionRequest)(nil),          // 12: gravity.UnprovisionRequest
+	(*PingRequest)(nil),                 // 13: gravity.PingRequest
+	(*PongResponse)(nil),                // 14: gravity.PongResponse
+	(*CloseRequest)(nil),                // 15: gravity.CloseRequest
+	(*PauseRequest)(nil),                // 16: gravity.PauseRequest
+	(*ResumeRequest)(nil),               // 17: gravity.ResumeRequest
+	(*ProtocolResponse)(nil),            // 18: gravity.ProtocolResponse
+	(*ProtocolEvent)(nil),               // 19: gravity.ProtocolEvent
+	(*ConfigurationUpdate)(nil),         // 20: gravity.ConfigurationUpdate
+	(*ConfigItem)(nil),                  // 21: gravity.ConfigItem
+	(*ConfigurationUpdateResponse)(nil), // 22: gravity.ConfigurationUpdateResponse
+	(*HostInfo)(nil),                    // 23: gravity.HostInfo
+	(*ExistingDeployment)(nil),          // 24: gravity.ExistingDeployment
+	(*ResourceRequirements)(nil),        // 25: gravity.ResourceRequirements
+	(*DeploymentCert)(nil),              // 26: gravity.DeploymentCert
+	(*CodeMetadata)(nil),                // 27: gravity.CodeMetadata
+	(*SecretRule)(nil),                  // 28: gravity.SecretRule
+	(*HostMapping)(nil),                 // 29: gravity.HostMapping
+	(*DeploymentMetadataRequest)(nil),   // 30: gravity.DeploymentMetadataRequest
+	(*DeploymentMetadataResponse)(nil),  // 31: gravity.DeploymentMetadataResponse
+	(*RouteSandboxRequest)(nil),         // 32: gravity.RouteSandboxRequest
+	(*RouteSandboxResponse)(nil),        // 33: gravity.RouteSandboxResponse
+	(*SandboxMetadataRequest)(nil),      // 34: gravity.SandboxMetadataRequest
+	(*SandboxMetadataResponse)(nil),     // 35: gravity.SandboxMetadataResponse
+	(*SandboxEvacInfo)(nil),             // 36: gravity.SandboxEvacInfo
+	(*EvacuateRequest)(nil),             // 37: gravity.EvacuateRequest
+	(*EvacuateSandboxPlan)(nil),         // 38: gravity.EvacuateSandboxPlan
+	(*EvacuationPlan)(nil),              // 39: gravity.EvacuationPlan
+	(*SandboxCheckpointed)(nil),         // 40: gravity.SandboxCheckpointed
+	(*RestoreSandboxTask)(nil),          // 41: gravity.RestoreSandboxTask
+	(*SandboxRestored)(nil),             // 42: gravity.SandboxRestored
+	(*CheckpointURLRequest)(nil),        // 43: gravity.CheckpointURLRequest
+	(*CheckpointURLResponse)(nil),       // 44: gravity.CheckpointURLResponse
+	(*NodeMonitorReport)(nil),           // 45: gravity.NodeMonitorReport
+	(*MonitorCommand)(nil),              // 46: gravity.MonitorCommand
+	(*timestamppb.Timestamp)(nil),       // 47: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),         // 48: google.protobuf.Duration
 }
 var file_gravity_session_proto_depIdxs = []int32{
-	4,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
-	5,  // 1: gravity.SessionMessage.session_hello_response:type_name -> gravity.SessionHelloResponse
-	6,  // 2: gravity.SessionMessage.session_close:type_name -> gravity.SessionCloseRequest
-	9,  // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
-	10, // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
-	11, // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
-	31, // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
-	32, // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
-	12, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
-	13, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
-	44, // 10: gravity.SessionMessage.monitor_report:type_name -> gravity.NodeMonitorReport
-	45, // 11: gravity.SessionMessage.monitor_command:type_name -> gravity.MonitorCommand
-	15, // 12: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
-	16, // 13: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
-	19, // 14: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
-	21, // 15: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
-	17, // 16: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
-	18, // 17: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
-	36, // 18: gravity.SessionMessage.evacuate_request:type_name -> gravity.EvacuateRequest
-	38, // 19: gravity.SessionMessage.evacuation_plan:type_name -> gravity.EvacuationPlan
-	39, // 20: gravity.SessionMessage.sandbox_checkpointed:type_name -> gravity.SandboxCheckpointed
-	40, // 21: gravity.SessionMessage.restore_sandbox_task:type_name -> gravity.RestoreSandboxTask
-	41, // 22: gravity.SessionMessage.sandbox_restored:type_name -> gravity.SandboxRestored
-	42, // 23: gravity.SessionMessage.checkpoint_url_request:type_name -> gravity.CheckpointURLRequest
-	43, // 24: gravity.SessionMessage.checkpoint_url_response:type_name -> gravity.CheckpointURLResponse
-	23, // 25: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
-	22, // 26: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
-	8,  // 27: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
-	28, // 28: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
-	46, // 29: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
-	46, // 30: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
-	20, // 31: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
-	46, // 32: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
-	24, // 33: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
-	25, // 34: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
-	47, // 35: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
-	27, // 36: gravity.CodeMetadata.secret_rules:type_name -> gravity.SecretRule
-	26, // 37: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	25, // 38: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	35, // 39: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
-	37, // 40: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
-	0,  // 41: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
-	3,  // 42: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	7,  // 43: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	29, // 44: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	33, // 45: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	1,  // 46: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
-	3,  // 47: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	7,  // 48: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	30, // 49: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	34, // 50: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	2,  // 51: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
-	47, // [47:52] is the sub-list for method output_type
-	42, // [42:47] is the sub-list for method input_type
-	42, // [42:42] is the sub-list for extension type_name
-	42, // [42:42] is the sub-list for extension extendee
-	0,  // [0:42] is the sub-list for field type_name
+	5,  // 0: gravity.SessionMessage.session_hello:type_name -> gravity.SessionHello
+	6,  // 1: gravity.SessionMessage.session_hello_response:type_name -> gravity.SessionHelloResponse
+	7,  // 2: gravity.SessionMessage.session_close:type_name -> gravity.SessionCloseRequest
+	10, // 3: gravity.SessionMessage.route_deployment:type_name -> gravity.RouteDeploymentRequest
+	11, // 4: gravity.SessionMessage.route_deployment_response:type_name -> gravity.RouteDeploymentResponse
+	12, // 5: gravity.SessionMessage.unprovision:type_name -> gravity.UnprovisionRequest
+	32, // 6: gravity.SessionMessage.route_sandbox:type_name -> gravity.RouteSandboxRequest
+	33, // 7: gravity.SessionMessage.route_sandbox_response:type_name -> gravity.RouteSandboxResponse
+	13, // 8: gravity.SessionMessage.ping:type_name -> gravity.PingRequest
+	14, // 9: gravity.SessionMessage.pong:type_name -> gravity.PongResponse
+	45, // 10: gravity.SessionMessage.monitor_report:type_name -> gravity.NodeMonitorReport
+	46, // 11: gravity.SessionMessage.monitor_command:type_name -> gravity.MonitorCommand
+	16, // 12: gravity.SessionMessage.pause:type_name -> gravity.PauseRequest
+	17, // 13: gravity.SessionMessage.resume:type_name -> gravity.ResumeRequest
+	20, // 14: gravity.SessionMessage.config_update:type_name -> gravity.ConfigurationUpdate
+	22, // 15: gravity.SessionMessage.config_update_response:type_name -> gravity.ConfigurationUpdateResponse
+	18, // 16: gravity.SessionMessage.response:type_name -> gravity.ProtocolResponse
+	19, // 17: gravity.SessionMessage.event:type_name -> gravity.ProtocolEvent
+	37, // 18: gravity.SessionMessage.evacuate_request:type_name -> gravity.EvacuateRequest
+	39, // 19: gravity.SessionMessage.evacuation_plan:type_name -> gravity.EvacuationPlan
+	40, // 20: gravity.SessionMessage.sandbox_checkpointed:type_name -> gravity.SandboxCheckpointed
+	41, // 21: gravity.SessionMessage.restore_sandbox_task:type_name -> gravity.RestoreSandboxTask
+	42, // 22: gravity.SessionMessage.sandbox_restored:type_name -> gravity.SandboxRestored
+	43, // 23: gravity.SessionMessage.checkpoint_url_request:type_name -> gravity.CheckpointURLRequest
+	44, // 24: gravity.SessionMessage.checkpoint_url_response:type_name -> gravity.CheckpointURLResponse
+	24, // 25: gravity.SessionHello.deployments:type_name -> gravity.ExistingDeployment
+	23, // 26: gravity.SessionHello.host_info:type_name -> gravity.HostInfo
+	9,  // 27: gravity.SessionHello.capabilities:type_name -> gravity.ClientCapabilities
+	29, // 28: gravity.SessionHelloResponse.host_mapping:type_name -> gravity.HostMapping
+	47, // 29: gravity.PingRequest.timestamp:type_name -> google.protobuf.Timestamp
+	47, // 30: gravity.PongResponse.timestamp:type_name -> google.protobuf.Timestamp
+	21, // 31: gravity.ConfigurationUpdate.config:type_name -> gravity.ConfigItem
+	47, // 32: gravity.ExistingDeployment.started:type_name -> google.protobuf.Timestamp
+	25, // 33: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
+	26, // 34: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
+	48, // 35: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
+	28, // 36: gravity.CodeMetadata.secret_rules:type_name -> gravity.SecretRule
+	0,  // 37: gravity.SecretRule.scheme:type_name -> gravity.SecretScheme
+	27, // 38: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	26, // 39: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	36, // 40: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
+	38, // 41: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
+	1,  // 42: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
+	4,  // 43: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	8,  // 44: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	30, // 45: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	34, // 46: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	2,  // 47: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	4,  // 48: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	8,  // 49: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	31, // 50: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	35, // 51: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	3,  // 52: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	48, // [48:53] is the sub-list for method output_type
+	43, // [43:48] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_gravity_session_proto_init() }
@@ -3779,7 +3840,7 @@ func file_gravity_session_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_gravity_session_proto_rawDesc), len(file_gravity_session_proto_rawDesc)),
-			NumEnums:      1,
+			NumEnums:      2,
 			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,

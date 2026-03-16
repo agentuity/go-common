@@ -9,110 +9,129 @@ import (
 
 // AetherServiceIP is the IP address for the aether service
 const AetherServiceIP = "fd15:d710:2d:c580:9dc5:aeeb::"
-
+// ApiServiceIP is the IP address for the api service
+const ApiServiceIP = "fd15:d710:2c:e000:9dc5:82b5::"
 // CatalystServiceIP is the IP address for the catalyst service
 const CatalystServiceIP = "fd15:d710:25:c500:9dc5:d408::"
-
 // OtelServiceIP is the IP address for the otel service
 const OtelServiceIP = "fd15:d710:2a:68d0:9dc5:2763::"
-
 // RegistryServiceIP is the IP address for the registry service
 const RegistryServiceIP = "fd15:d710:2b:6d30:9dc5:e069::"
-
 // StreamsServiceIP is the IP address for the streams service
 const StreamsServiceIP = "fd15:d710:29:9440:9dc5:96bf::"
-
 // IonServiceIP is the IP address for the ion service
 const IonServiceIP = "fd15:d710:2c:8380:9dc5:95eb::"
 
 // Services maps IP address strings to service names
 var Services = map[string]string{
-	AetherServiceIP:   "aether",
+	AetherServiceIP: "aether",
+	ApiServiceIP: "api",
 	CatalystServiceIP: "catalyst",
-	OtelServiceIP:     "otel",
+	OtelServiceIP: "otel",
 	RegistryServiceIP: "registry",
-	StreamsServiceIP:  "streams",
-	IonServiceIP:      "ion",
+	StreamsServiceIP: "streams",
+	IonServiceIP: "ion",
 }
 
 // Addresses is a map of service names to their IP addresses
 var Addresses = map[string]net.IP{
-	"aether":   net.ParseIP(AetherServiceIP),
+	"aether": net.ParseIP(AetherServiceIP),
+	"api": net.ParseIP(ApiServiceIP),
 	"catalyst": net.ParseIP(CatalystServiceIP),
-	"otel":     net.ParseIP(OtelServiceIP),
+	"otel": net.ParseIP(OtelServiceIP),
 	"registry": net.ParseIP(RegistryServiceIP),
-	"streams":  net.ParseIP(StreamsServiceIP),
-	"ion":      net.ParseIP(IonServiceIP),
+	"streams": net.ParseIP(StreamsServiceIP),
+	"ion": net.ParseIP(IonServiceIP),
 }
-
 // InternalServiceSubnet is the subnet for the internal service network
 const InternalServiceSubnet = "fd15:d710:0020::/44"
 
 // AgentSubnetCENTRALUS is the subnet for the agent network in the centralus region
 const AgentSubnetCENTRALUS = "fd15:d710:0140::/44"
-
 // HadronSubnetCENTRALUS is the subnet for the hadron network in the centralus region
 const HadronSubnetCENTRALUS = "fd15:d710:0130::/44"
 
 // AgentSubnetEASTUS is the subnet for the agent network in the eastus region
 const AgentSubnetEASTUS = "fd15:d710:0340::/44"
-
 // HadronSubnetEASTUS is the subnet for the hadron network in the eastus region
 const HadronSubnetEASTUS = "fd15:d710:0330::/44"
 
 // AgentSubnetEASTUS2 is the subnet for the agent network in the eastus2 region
 const AgentSubnetEASTUS2 = "fd15:d710:0840::/44"
-
 // HadronSubnetEASTUS2 is the subnet for the hadron network in the eastus2 region
 const HadronSubnetEASTUS2 = "fd15:d710:0830::/44"
 
+// AgentSubnetEUCentral1 is the subnet for the agent network in the eu-central-1 region
+const AgentSubnetEUCentral1 = "fd15:d710:0d40::/44"
+// HadronSubnetEUCentral1 is the subnet for the hadron network in the eu-central-1 region
+const HadronSubnetEUCentral1 = "fd15:d710:0d30::/44"
+
+// AgentSubnetEUCentral2 is the subnet for the agent network in the eu-central-2 region
+const AgentSubnetEUCentral2 = "fd15:d710:0e40::/44"
+// HadronSubnetEUCentral2 is the subnet for the hadron network in the eu-central-2 region
+const HadronSubnetEUCentral2 = "fd15:d710:0e30::/44"
+
+// AgentSubnetEUNorth1 is the subnet for the agent network in the eu-north-1 region
+const AgentSubnetEUNorth1 = "fd15:d710:0f40::/44"
+// HadronSubnetEUNorth1 is the subnet for the hadron network in the eu-north-1 region
+const HadronSubnetEUNorth1 = "fd15:d710:0f30::/44"
+
+// AgentSubnetEUWest1 is the subnet for the agent network in the eu-west-1 region
+const AgentSubnetEUWest1 = "fd15:d710:1040::/44"
+// HadronSubnetEUWest1 is the subnet for the hadron network in the eu-west-1 region
+const HadronSubnetEUWest1 = "fd15:d710:1030::/44"
+
+// AgentSubnetEUWest2 is the subnet for the agent network in the eu-west-2 region
+const AgentSubnetEUWest2 = "fd15:d710:1140::/44"
+// HadronSubnetEUWest2 is the subnet for the hadron network in the eu-west-2 region
+const HadronSubnetEUWest2 = "fd15:d710:1130::/44"
+
+// AgentSubnetEUWest3 is the subnet for the agent network in the eu-west-3 region
+const AgentSubnetEUWest3 = "fd15:d710:1240::/44"
+// HadronSubnetEUWest3 is the subnet for the hadron network in the eu-west-3 region
+const HadronSubnetEUWest3 = "fd15:d710:1230::/44"
+
 // AgentSubnetGLOBAL is the subnet for the agent network in the global region
 const AgentSubnetGLOBAL = "fd15:d710:0040::/44"
-
 // HadronSubnetGLOBAL is the subnet for the hadron network in the global region
 const HadronSubnetGLOBAL = "fd15:d710:0030::/44"
 
 // AgentSubnetNORTHCENTRALUS is the subnet for the agent network in the northcentralus region
 const AgentSubnetNORTHCENTRALUS = "fd15:d710:0440::/44"
-
 // HadronSubnetNORTHCENTRALUS is the subnet for the hadron network in the northcentralus region
 const HadronSubnetNORTHCENTRALUS = "fd15:d710:0430::/44"
 
 // AgentSubnetSOUTHCENTRALUS is the subnet for the agent network in the southcentralus region
 const AgentSubnetSOUTHCENTRALUS = "fd15:d710:0540::/44"
-
 // HadronSubnetSOUTHCENTRALUS is the subnet for the hadron network in the southcentralus region
 const HadronSubnetSOUTHCENTRALUS = "fd15:d710:0530::/44"
 
 // AgentSubnetUSEast5 is the subnet for the agent network in the us-east5 region
 const AgentSubnetUSEast5 = "fd15:d710:0940::/44"
-
 // HadronSubnetUSEast5 is the subnet for the hadron network in the us-east5 region
 const HadronSubnetUSEast5 = "fd15:d710:0930::/44"
 
 // AgentSubnetUSWest1 is the subnet for the agent network in the us-west-1 region
 const AgentSubnetUSWest1 = "fd15:d710:0240::/44"
-
 // HadronSubnetUSWest1 is the subnet for the hadron network in the us-west-1 region
 const HadronSubnetUSWest1 = "fd15:d710:0230::/44"
 
 // AgentSubnetUSWest2 is the subnet for the agent network in the us-west-2 region
 const AgentSubnetUSWest2 = "fd15:d710:0640::/44"
-
 // HadronSubnetUSWest2 is the subnet for the hadron network in the us-west-2 region
 const HadronSubnetUSWest2 = "fd15:d710:0630::/44"
 
 // AgentSubnetUSWest3 is the subnet for the agent network in the us-west3 region
 const AgentSubnetUSWest3 = "fd15:d710:0740::/44"
-
 // HadronSubnetUSWest3 is the subnet for the hadron network in the us-west3 region
 const HadronSubnetUSWest3 = "fd15:d710:0730::/44"
 
 // AgentSubnetUSWest4 is the subnet for the agent network in the us-west4 region
 const AgentSubnetUSWest4 = "fd15:d710:0b40::/44"
-
 // HadronSubnetUSWest4 is the subnet for the hadron network in the us-west4 region
 const HadronSubnetUSWest4 = "fd15:d710:0b30::/44"
+
+
 
 // AgentSubnetForRegion will return the subnet for the agent network in the given region
 func AgentSubnetForRegion(region Region) string {
@@ -137,10 +156,24 @@ func AgentSubnetForRegion(region Region) string {
 		return AgentSubnetUSEast5
 	case 11: // us-west4
 		return AgentSubnetUSWest4
+	case 13: // eu-central-1
+		return AgentSubnetEUCentral1
+	case 14: // eu-central-2
+		return AgentSubnetEUCentral2
+	case 15: // eu-north-1
+		return AgentSubnetEUNorth1
+	case 16: // eu-west-1
+		return AgentSubnetEUWest1
+	case 17: // eu-west-2
+		return AgentSubnetEUWest2
+	case 18: // eu-west-3
+		return AgentSubnetEUWest3
 	default:
 		return AgentSubnetGLOBAL
 	}
 }
+
+
 
 // HadronSubnetForRegion will return the subnet for the hadron network in the given region
 func HadronSubnetForRegion(region Region) string {
@@ -165,7 +198,22 @@ func HadronSubnetForRegion(region Region) string {
 		return HadronSubnetUSEast5
 	case 11: // us-west4
 		return HadronSubnetUSWest4
+	case 13: // eu-central-1
+		return HadronSubnetEUCentral1
+	case 14: // eu-central-2
+		return HadronSubnetEUCentral2
+	case 15: // eu-north-1
+		return HadronSubnetEUNorth1
+	case 16: // eu-west-1
+		return HadronSubnetEUWest1
+	case 17: // eu-west-2
+		return HadronSubnetEUWest2
+	case 18: // eu-west-3
+		return HadronSubnetEUWest3
 	default:
 		return HadronSubnetGLOBAL
 	}
 }
+
+
+

@@ -69,7 +69,7 @@ message SessionMessage {
     PongResponse pong = 31;
     // Field 32 reserved (was: ReportRequest report, deprecated and removed)
     NodeMonitorReport monitor_report = 33; // Node monitoring report (hadron → gravity)
-    MonitorCommand monitor_command = 34;   // Monitoring commands (gravity → hadron)
+    MonitorCommand monitor_command = 34; // Monitoring commands (gravity → hadron)
 
     // Session control (40-49)
     PauseRequest pause = 40;
@@ -136,6 +136,7 @@ message SessionCloseRequest {
 message TunnelPacket {
   bytes data = 1; // Raw IP packet data
   string stream_id = 2; // Logical stream identifier for multiplexing
+  int64 enqueued_at_us = 3; // Microsecond timestamp when the packet was received from the kernel (ONLY ENABLED FOR DEBUG)
 }
 
 // ClientCapabilities defines what capabilities a client supports
@@ -277,9 +278,9 @@ message CodeMetadata {
 // HTTP header before being sent upstream.
 enum SecretScheme {
   SECRET_SCHEME_UNSPECIFIED = 0; // Invalid / not set — rule will be rejected at validation
-  SECRET_SCHEME_BEARER      = 1; // "Bearer <value>" in the header (e.g. Authorization)
-  SECRET_SCHEME_BASIC       = 2; // HTTP Basic auth — password portion is replaced
-  SECRET_SCHEME_RAW         = 3; // Header value is the literal secret (e.g. x-api-key)
+  SECRET_SCHEME_BEARER = 1; // "Bearer <value>" in the header (e.g. Authorization)
+  SECRET_SCHEME_BASIC = 2; // HTTP Basic auth — password portion is replaced
+  SECRET_SCHEME_RAW = 3; // Header value is the literal secret (e.g. x-api-key)
 }
 
 // SecretRule defines how a secret environment variable is injected into
@@ -287,12 +288,12 @@ enum SecretScheme {
 // hashed placeholder tokens with real secret values in the specified header,
 // only for requests matching the allowed hosts.
 message SecretRule {
-  string env = 1;                    // Environment variable name containing the secret (required)
-  string header = 2;                 // HTTP header to intercept (case-insensitive, required), e.g. "authorization"
-  SecretScheme scheme = 3;           // How the secret is formatted in the header (required)
-  repeated string host_match = 4;    // Glob patterns for allowed destination hosts (required, non-empty).
-                                     // Empty means the rule matches NO hosts (deny-by-default) and
-                                     // will be rejected at validation time.
+  string env = 1; // Environment variable name containing the secret (required)
+  string header = 2; // HTTP header to intercept (case-insensitive, required), e.g. "authorization"
+  SecretScheme scheme = 3; // How the secret is formatted in the header (required)
+  repeated string host_match = 4; // Glob patterns for allowed destination hosts (required, non-empty).
+  // Empty means the rule matches NO hosts (deny-by-default) and
+  // will be rejected at validation time.
 }
 
 message HostMapping {
@@ -418,7 +419,7 @@ message CheckpointURLRequest {
   string sandbox_id = 1;
   CheckpointURLOperation operation = 2;
   string checkpoint_key = 3; // For downloads: the S3 key to download. Empty for uploads (Gravity generates key).
-  string org_id = 4;         // Organization ID for S3 bucket resolution
+  string org_id = 4; // Organization ID for S3 bucket resolution
 }
 
 // CheckpointURLResponse is sent by Gravity to Hadron with the presigned S3 URL.
@@ -426,7 +427,7 @@ message CheckpointURLResponse {
   string sandbox_id = 1;
   string presigned_url = 2;
   string checkpoint_key = 3; // The S3 object key (for uploads: Gravity-generated; for downloads: echoed back)
-  int64 expiry_seconds = 4;  // How long the presigned URL is valid
+  int64 expiry_seconds = 4; // How long the presigned URL is valid
   bool success = 5;
-  string error = 6;          // Error message if success=false
+  string error = 6; // Error message if success=false
 }

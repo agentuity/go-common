@@ -975,8 +975,9 @@ func (x *SessionCloseRequest) GetReason() string {
 // TunnelPacket represents network packet data for the tunnel
 type TunnelPacket struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                         // Raw IP packet data
-	StreamId      string                 `protobuf:"bytes,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"` // Logical stream identifier for multiplexing
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`                                        // Raw IP packet data
+	StreamId      string                 `protobuf:"bytes,2,opt,name=stream_id,json=streamId,proto3" json:"stream_id,omitempty"`                // Logical stream identifier for multiplexing
+	EnqueuedAtUs  int64                  `protobuf:"varint,3,opt,name=enqueued_at_us,json=enqueuedAtUs,proto3" json:"enqueued_at_us,omitempty"` // Microsecond timestamp when the packet was received from the kernel (ONLY ENABLED FOR DEBUG)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1023,6 +1024,13 @@ func (x *TunnelPacket) GetStreamId() string {
 		return x.StreamId
 	}
 	return ""
+}
+
+func (x *TunnelPacket) GetEnqueuedAtUs() int64 {
+	if x != nil {
+		return x.EnqueuedAtUs
+	}
+	return 0
 }
 
 // ClientCapabilities defines what capabilities a client supports
@@ -3460,10 +3468,11 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\rmachine_token\x18\f \x01(\tR\fmachineToken\x12.\n" +
 	"\x13machine_cert_bundle\x18\r \x01(\tR\x11machineCertBundle\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"?\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"e\n" +
 	"\fTunnelPacket\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1b\n" +
-	"\tstream_id\x18\x02 \x01(\tR\bstreamId\"\xe5\x01\n" +
+	"\tstream_id\x18\x02 \x01(\tR\bstreamId\x12$\n" +
+	"\x0eenqueued_at_us\x18\x03 \x01(\x03R\fenqueuedAtUs\"\xe5\x01\n" +
 	"\x12ClientCapabilities\x123\n" +
 	"\x15provision_deployments\x18\x01 \x01(\bR\x14provisionDeployments\x127\n" +
 	"\x17unprovision_deployments\x18\x02 \x01(\bR\x16unprovisionDeployments\x126\n" +

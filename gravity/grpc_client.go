@@ -823,7 +823,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			dstIP := make(net.IP, 16)
 			copy(dstIP, packet.Data[24:40])
 			srcPort := binary.BigEndian.Uint16(packet.Data[40:42])
-			g.logger.Info("gravity.packet.delivered dst=%s src_port=%d tunnel_latency=%s", dstIP, srcPort, tunnelLatency)
+			g.logger.Info("gravity.packet.delivered dst=%s src_port=%d enqueued_at=%s tunnel_latency=%s", dstIP, srcPort, enqueuedAt.Format(time.RFC3339Nano), tunnelLatency)
 		}
 
 		// Track inbound packet from gravity stream

@@ -74,6 +74,26 @@ func Get[T any](c Cache, key string) (bool, T, error) {
 	return GetContext[T](context.Background(), c, key)
 }
 
+// ExpirePrefixContext removes all cache entries whose key starts with the given
+// prefix. It handles each concrete cache implementation via type switch.
+// Returns the number of keys removed. For unsupported implementations it
+// returns 0, nil (no error, no action).
+func ExpirePrefixContext(ctx context.Context, c Cache, prefix string) (int64, error) {
+	switch cc := c.(type) {
+	case *sqliteCache:
+		return cc.expirePrefixContext(ctx, prefix)
+	case *redisCache:
+		return cc.expirePrefixContext(ctx, prefix)
+	case *inMemoryCache:
+		return cc.expirePrefixContext(ctx, prefix)
+	case *compositeCache:
+		return cc.expirePrefixContext(ctx, prefix)
+	default:
+		// Unknown implementation — fall back to no-op.
+		return 0, nil
+	}
+}
+
 // DefaultExpires is the default TTL used by Exec when CacheConfig.Expires is zero.
 const DefaultExpires = 5 * time.Minute
 

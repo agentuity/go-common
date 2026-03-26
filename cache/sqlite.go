@@ -171,6 +171,20 @@ func (c *sqliteCache) Expire(key string) (bool, error) {
 	return c.ExpireContext(c.ctx, key)
 }
 
+func (c *sqliteCache) expirePrefixContext(ctx context.Context, prefix string) (int64, error) {
+	qctx, cancel := c.queryCtx(ctx)
+	defer cancel()
+	result, err := c.db.ExecContext(qctx, `DELETE FROM cache WHERE key LIKE ? || '%'`, prefix)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return rows, nil
+}
+
 func (c *sqliteCache) CloseContext(_ context.Context) error {
 	var dbErr error
 	c.once.Do(func() {

@@ -108,7 +108,7 @@ func (c *redisCache) Expire(key string) (bool, error) {
 	return c.ExpireContext(c.ctx, key)
 }
 
-func (c *redisCache) expirePrefixContext(ctx context.Context, prefix string) (int64, error) {
+func (c *redisCache) ExpirePrefixContext(ctx context.Context, prefix string) (int64, error) {
 	qctx, cancel := c.queryCtx(ctx)
 	defer cancel()
 	pattern := c.prefixKey(prefix) + "*"

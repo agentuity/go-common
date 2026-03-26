@@ -172,7 +172,7 @@ func (c *sqliteCache) Expire(key string) (bool, error) {
 	return c.ExpireContext(c.ctx, key)
 }
 
-func (c *sqliteCache) expirePrefixContext(ctx context.Context, prefix string) (int64, error) {
+func (c *sqliteCache) ExpirePrefixContext(ctx context.Context, prefix string) (int64, error) {
 	qctx, cancel := c.queryCtx(ctx)
 	defer cancel()
 	// Escape LIKE metacharacters so the prefix is matched literally.

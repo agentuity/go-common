@@ -88,7 +88,7 @@ func (c *inMemoryCache) Expire(key string) (bool, error) {
 	return c.ExpireContext(c.ctx, key)
 }
 
-func (c *inMemoryCache) expirePrefixContext(_ context.Context, prefix string) (int64, error) {
+func (c *inMemoryCache) ExpirePrefixContext(_ context.Context, prefix string) (int64, error) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	var count int64

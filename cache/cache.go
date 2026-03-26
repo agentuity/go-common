@@ -74,24 +74,23 @@ func Get[T any](c Cache, key string) (bool, T, error) {
 	return GetContext[T](context.Background(), c, key)
 }
 
+// PrefixExpirer is an optional interface that Cache implementations can
+// satisfy to support prefix-based key expiration. All built-in backends
+// (SQLite, Redis, in-memory, composite) implement this interface.
+type PrefixExpirer interface {
+	// ExpirePrefixContext removes all cache entries whose key starts with
+	// prefix and returns the number of keys removed.
+	ExpirePrefixContext(ctx context.Context, prefix string) (int64, error)
+}
+
 // ExpirePrefixContext removes all cache entries whose key starts with the given
-// prefix. It handles each concrete cache implementation via type switch.
-// Returns the number of keys removed. For unsupported implementations it
-// returns 0, nil (no error, no action).
+// prefix. If the cache implements [PrefixExpirer] the operation is delegated to
+// it; otherwise 0, nil is returned (no-op).
 func ExpirePrefixContext(ctx context.Context, c Cache, prefix string) (int64, error) {
-	switch cc := c.(type) {
-	case *sqliteCache:
-		return cc.expirePrefixContext(ctx, prefix)
-	case *redisCache:
-		return cc.expirePrefixContext(ctx, prefix)
-	case *inMemoryCache:
-		return cc.expirePrefixContext(ctx, prefix)
-	case *compositeCache:
-		return cc.expirePrefixContext(ctx, prefix)
-	default:
-		// Unknown implementation — fall back to no-op.
-		return 0, nil
+	if pe, ok := c.(PrefixExpirer); ok {
+		return pe.ExpirePrefixContext(ctx, prefix)
 	}
+	return 0, nil
 }
 
 // DefaultExpires is the default TTL used by Exec when CacheConfig.Expires is zero.

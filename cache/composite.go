@@ -118,7 +118,7 @@ func (c *compositeCache) Expire(key string) (bool, error) {
 	return anyFound, firstErr
 }
 
-func (c *compositeCache) expirePrefixContext(ctx context.Context, prefix string) (int64, error) {
+func (c *compositeCache) ExpirePrefixContext(ctx context.Context, prefix string) (int64, error) {
 	var maxCount int64
 	var firstErr error
 	for _, cc := range c.caches {

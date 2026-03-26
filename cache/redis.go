@@ -112,26 +112,29 @@ func (c *redisCache) expirePrefixContext(ctx context.Context, prefix string) (in
 	qctx, cancel := c.queryCtx(ctx)
 	defer cancel()
 	pattern := c.prefixKey(prefix) + "*"
-	var total int64
+
+	// Collect all matching keys first, then delete in a single pipeline.
+	var allKeys []string
 	var cursor uint64
 	for {
 		keys, nextCursor, err := c.client.Scan(qctx, cursor, pattern, 100).Result()
 		if err != nil {
-			return total, err
+			return 0, err
 		}
-		if len(keys) > 0 {
-			deleted, err := c.client.Unlink(qctx, keys...).Result()
-			if err != nil {
-				return total, err
-			}
-			total += deleted
-		}
+		allKeys = append(allKeys, keys...)
 		cursor = nextCursor
 		if cursor == 0 {
 			break
 		}
 	}
-	return total, nil
+	if len(allKeys) == 0 {
+		return 0, nil
+	}
+	deleted, err := c.client.Unlink(qctx, allKeys...).Result()
+	if err != nil {
+		return 0, err
+	}
+	return deleted, nil
 }
 
 // CloseContext is a no-op — the caller owns the redis.Client lifecycle.

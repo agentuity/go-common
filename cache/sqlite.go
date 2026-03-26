@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"sync"
 	"time"
 
@@ -174,7 +175,9 @@ func (c *sqliteCache) Expire(key string) (bool, error) {
 func (c *sqliteCache) expirePrefixContext(ctx context.Context, prefix string) (int64, error) {
 	qctx, cancel := c.queryCtx(ctx)
 	defer cancel()
-	result, err := c.db.ExecContext(qctx, `DELETE FROM cache WHERE key LIKE ? || '%'`, prefix)
+	// Escape LIKE metacharacters so the prefix is matched literally.
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	result, err := c.db.ExecContext(qctx, `DELETE FROM cache WHERE key LIKE ? ESCAPE '\'`, escaped+"%")
 	if err != nil {
 		return 0, err
 	}

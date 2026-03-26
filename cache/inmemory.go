@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 )
@@ -85,6 +86,19 @@ func (c *inMemoryCache) ExpireContext(_ context.Context, key string) (bool, erro
 
 func (c *inMemoryCache) Expire(key string) (bool, error) {
 	return c.ExpireContext(c.ctx, key)
+}
+
+func (c *inMemoryCache) ExpirePrefixContext(_ context.Context, prefix string) (int64, error) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	var count int64
+	for key := range c.cache {
+		if strings.HasPrefix(key, prefix) {
+			delete(c.cache, key)
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (c *inMemoryCache) CloseContext(_ context.Context) error {

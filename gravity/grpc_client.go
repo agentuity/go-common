@@ -468,6 +468,8 @@ func (g *GravityClient) Start() error {
 		conn, err := grpc.NewClient(grpcURL,
 			grpc.WithTransportCredentials(creds),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
+			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
 		)
 		if err != nil {
 			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
@@ -2286,6 +2288,24 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 
 	g.outboundReceived.Add(1)
 
+	// Detect TCP SYN-ACK in outbound packet — confirms container responded and
+	// hadron is forwarding the SYN-ACK through the tunnel back to ion.
+	// Intentionally chatty — will dial back once latency issue is diagnosed.
+	var isSynAck bool
+	if len(payload) >= 54 && payload[6] == 6 { // IPv6 Next Header == TCP
+		flags := payload[53]
+		if flags&0x12 == 0x12 { // SYN+ACK
+			isSynAck = true
+			srcIP := make(net.IP, 16)
+			copy(srcIP, payload[8:24])
+			dstIP := make(net.IP, 16)
+			copy(dstIP, payload[24:40])
+			srcPort := binary.BigEndian.Uint16(payload[40:42])
+			dstPort := binary.BigEndian.Uint16(payload[42:44])
+			g.logger.Info("gravity.synack.sending src=%s:%d dst=%s:%d", srcIP, srcPort, dstIP, dstPort)
+		}
+	}
+
 	// Select optimal stream using load balancing
 	stream := g.streamManager.selectOptimalTunnelStream()
 	if stream == nil {
@@ -2302,6 +2322,9 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	tunnelPacket := &pb.TunnelPacket{
 		Data:     payload,
 		StreamId: stream.streamID,
+	}
+	if isSynAck {
+		tunnelPacket.EnqueuedAtUs = time.Now().UnixMicro()
 	}
 
 	err := stream.stream.Send(tunnelPacket)

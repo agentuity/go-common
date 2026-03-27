@@ -483,10 +483,29 @@ func (g *GravityClient) Start() error {
 
 	// ── Phase 2: Data-plane (tunnel) connection pool ──
 
-	// establishTunnelStreams blocks until the hello response is received
-	// (via connectionIDChan).  At that point g.tunnelAddress is set by
-	// handleSessionHelloResponse.  We use it to decide where to dial the
-	// tunnel pool.
+	// Block until the hello response has been fully processed by
+	// handleSessionHelloResponse, which sets g.tunnelAddress and then
+	// signals via connectionIDChan.  We must wait here — before
+	// establishing the tunnel pool — so that establishTunnelPool can
+	// read the (possibly non-empty) tunnel address.
+	g.logger.Debug("waiting for hello response from server...")
+	var machineID string
+	select {
+	case machineID = <-g.connectionIDChan:
+		if machineID == "" {
+			g.logger.Error("session failed - authentication rejected by server")
+			g.cleanup()
+			return fmt.Errorf("session failed - authentication rejected by server")
+		}
+		g.logger.Debug("hello response received: machineID=%s", machineID)
+	case <-time.After(time.Minute):
+		g.logger.Error("timeout waiting for hello response from server")
+		g.cleanup()
+		return fmt.Errorf("timeout waiting for hello response from server")
+	case <-g.ctx.Done():
+		g.cleanup()
+		return context.Canceled
+	}
 
 	g.logger.Debug("establishing tunnel connection pool...")
 	err = g.establishTunnelPool()
@@ -503,7 +522,7 @@ func (g *GravityClient) Start() error {
 	g.logger.Debug("tunnel connection pool established")
 
 	g.logger.Debug("establishing tunnel streams...")
-	err = g.establishTunnelStreams()
+	err = g.establishTunnelStreams(machineID)
 	if err != nil {
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("tunnel streams closed due to context cancellation")
@@ -697,23 +716,10 @@ func (g *GravityClient) establishControlStreams() error {
 	return nil
 }
 
-// establishTunnelStreams creates tunnel streams for packet forwarding
-func (g *GravityClient) establishTunnelStreams() error {
-	// Wait for machine ID from primary control stream using channel
-	g.logger.Debug("waiting for machine ID from server...")
-
-	var machineID string
-	select {
-	case machineID = <-g.connectionIDChan:
-		if machineID == "" {
-			g.logger.Error("session failed - authentication rejected by server")
-			return fmt.Errorf("session failed - authentication rejected by server")
-		}
-		g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
-	case <-time.After(time.Minute):
-		g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
-		return fmt.Errorf("timeout waiting for machine ID from server")
-	}
+// establishTunnelStreams creates tunnel streams for packet forwarding.
+// machineID is obtained from the hello response and passed by Start().
+func (g *GravityClient) establishTunnelStreams(machineID string) error {
+	g.logger.Debug("establishing tunnel streams with machineID=%s", machineID)
 
 	// Use configured streams per connection
 	streamsPerConnection := g.poolConfig.StreamsPerConnection

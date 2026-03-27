@@ -2465,7 +2465,10 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	sendStart := time.Now()
 
 	err = RetryWithCircuitBreaker(context.WithoutCancel(g.ctx), g.retryConfig, circuitBreaker, func() error {
-		return streamInfo.stream.Send(packet)
+		streamInfo.sendMu.Lock()
+		sendErr := streamInfo.stream.Send(packet)
+		streamInfo.sendMu.Unlock()
+		return sendErr
 	})
 
 	sendLatency := time.Since(sendStart)

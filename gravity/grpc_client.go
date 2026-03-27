@@ -2427,15 +2427,16 @@ func (g *GravityClient) handleOutboundPackets() {
 
 func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	g.streamManager.tunnelMu.Lock()
-	defer g.streamManager.tunnelMu.Unlock()
 
 	if len(g.streamManager.tunnelStreams) == 0 {
+		g.streamManager.tunnelMu.Unlock()
 		return fmt.Errorf("no tunnel streams available")
 	}
 
 	// Select optimal stream using configured strategy
 	streamIndex, err := g.selectOptimalStream(data)
 	if err != nil {
+		g.streamManager.tunnelMu.Unlock()
 		return fmt.Errorf("failed to select stream: %w", err)
 	}
 
@@ -2444,19 +2445,24 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 		// Try to find an alternative healthy stream
 		streamIndex, err = g.selectHealthyStream()
 		if err != nil {
+			g.streamManager.tunnelMu.Unlock()
 			return fmt.Errorf("no healthy streams available: %w", err)
 		}
 		streamInfo = g.streamManager.tunnelStreams[streamIndex]
 	}
 
+	// Update stream metrics under lock, then release
+	streamInfo.loadCount++
+	streamInfo.lastUsed = time.Now()
+	g.streamManager.tunnelMu.Unlock()
+
+	// Ensure load count is decremented in all exit paths
+	defer g.streamManager.releaseStream(streamInfo)
+
 	packet := &pb.TunnelPacket{
 		Data:     data,
 		StreamId: streamInfo.streamID,
 	}
-
-	// Update stream metrics
-	streamInfo.loadCount++
-	streamInfo.lastUsed = time.Now()
 
 	// Send packet with retry logic and circuit breaker
 	connectionIndex := streamInfo.connIndex
@@ -2475,7 +2481,10 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 
 	if err != nil {
 		// Mark stream as unhealthy on error
+		g.streamManager.tunnelMu.Lock()
 		streamInfo.isHealthy = false
+		g.streamManager.tunnelMu.Unlock()
+
 		g.streamManager.metricsMu.Lock()
 		if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
 			metrics.ErrorCount++
@@ -2499,8 +2508,6 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	}
 	g.streamManager.metricsMu.Unlock()
 
-	// Decrement load count after successful send
-	streamInfo.loadCount--
 	return nil
 }
 

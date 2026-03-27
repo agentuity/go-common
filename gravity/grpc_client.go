@@ -2362,7 +2362,6 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
 			metrics.ErrorCount++
 			metrics.LastError = now
-			metrics.LastSendUs = now.UnixMicro()
 		}
 		g.streamManager.metricsMu.Unlock()
 

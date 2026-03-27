@@ -159,6 +159,7 @@ type GravityClient struct {
 	ctx                        context.Context
 	cancel                     context.CancelFunc
 	tlsCert                    *tls.Certificate
+	tlsCreds                   credentials.TransportCredentials // Built once from the LB URL, reused for tunnel connections
 	skipAutoReconnect          bool
 	closed                     chan struct{}
 	maxReconnectAttempts       int
@@ -425,12 +426,16 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("parsed gRPC URL successfully: %s", grpcURL)
 
-	// Build TLS credentials for the load-balancer connection
+	// Build TLS credentials from the configured URL. These are reused for
+	// both the control-plane (LB) and data-plane (direct tunnel) connections
+	// so that the ServerName derived from the original URL (e.g. *.agentuity.io)
+	// is used everywhere — even when dialling a bare IP address.
 	creds, err := g.buildTLSCredentials(g.url)
 	if err != nil {
 		g.mu.Unlock()
 		return err
 	}
+	g.tlsCreds = creds
 
 	// ── Phase 1: Control-plane connection (single conn through LB) ──
 
@@ -632,14 +637,10 @@ func (g *GravityClient) establishTunnelPool() error {
 
 	g.logger.Info("opening tunnel connection pool directly to %s (from tunnel_address=%s)", dialTarget, tunnelAddr)
 
-	// Build TLS credentials for the direct tunnel address. We synthesize a
-	// grpc:// URL so extractHostnameFromURL/extractHostnameFromGravityURL can
-	// reuse the existing IP→fallbackServerName logic.
-	tunnelURL := "grpc://" + dialTarget
-	creds, err := g.buildTLSCredentials(tunnelURL)
-	if err != nil {
-		return fmt.Errorf("failed to build TLS credentials for tunnel address %s: %w", dialTarget, err)
-	}
+	// Reuse the TLS credentials built from the original LB URL so the
+	// ServerName (e.g. gravity.agentuity.io → matches *.agentuity.io cert)
+	// stays correct even when dialling a bare IP address.
+	creds := g.tlsCreds
 
 	poolSize := g.poolConfig.PoolSize
 	g.mu.Lock()

@@ -204,3 +204,42 @@ func TestExtractHostnameFromURL(t *testing.T) {
 		t.Errorf("Expected hostname to be gravity.agentuity.io, got %s", val)
 	}
 }
+
+func TestNormalizeTunnelAddress(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		// IPv4 addresses
+		{name: "ipv4 bare", input: "1.2.3.4", want: "1.2.3.4:443"},
+		{name: "ipv4 with port", input: "1.2.3.4:8443", want: "1.2.3.4:8443"},
+
+		// IPv6 addresses
+		{name: "ipv6 bracketed bare", input: "[::1]", want: "[::1]:443"},
+		{name: "ipv6 bracketed with port", input: "[::1]:8443", want: "[::1]:8443"},
+		{name: "ipv6 full bracketed", input: "[2001:db8::1]", want: "[2001:db8::1]:443"},
+		{name: "ipv6 full with port", input: "[2001:db8::1]:443", want: "[2001:db8::1]:443"},
+
+		// Hostnames
+		{name: "hostname bare", input: "gravity.example.com", want: "gravity.example.com:443"},
+		{name: "hostname with port", input: "gravity.example.com:8443", want: "gravity.example.com:8443"},
+
+		// Edge cases
+		{name: "empty string", input: "", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := normalizeTunnelAddress(tt.input)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("normalizeTunnelAddress(%q) error = %v, wantErr %v", tt.input, err, tt.wantErr)
+				return
+			}
+			if got != tt.want {
+				t.Errorf("normalizeTunnelAddress(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -135,14 +135,22 @@ type GravityClient struct {
 	// Connection pool configuration
 	poolConfig ConnectionPoolConfig
 
-	// gRPC connections and streams
-	connections    []*grpc.ClientConn // Connection pool (4-8 connections)
-	sessionClients []pb.GravitySessionServiceClient
-	streamManager  *StreamManager
+	// Control-plane connection (single connection through load balancer)
+	controlConn   *grpc.ClientConn
+	controlClient pb.GravitySessionServiceClient
+
+	// Data-plane (tunnel) connections – pool of direct connections to the
+	// gravity server when tunnel_address is provided, or a single-element
+	// slice reusing controlConn when it is not.
+	tunnelConns   []*grpc.ClientConn
+	tunnelClients []pb.GravitySessionServiceClient
+	tunnelAddress string // direct address from SessionHelloResponse (empty = LB fallback)
+
+	streamManager *StreamManager
 
 	// Fault tolerance
 	retryConfig     RetryConfig
-	circuitBreakers []*CircuitBreaker // One per connection
+	circuitBreakers []*CircuitBreaker // One per tunnel connection
 
 	// Connection management
 	mu                         sync.RWMutex
@@ -385,7 +393,18 @@ func New(config GravityConfig) (*GravityClient, error) {
 	return g, nil
 }
 
-// Start establishes gRPC connections and starts the client
+// Start establishes gRPC connections and starts the client.
+//
+// The connection is established in two phases:
+//
+//  1. Control plane – a single connection through the load balancer is used to
+//     establish a control stream and perform the session hello handshake.
+//  2. Data plane – if the server returns a tunnel_address in its hello response
+//     the client opens a pool of connections directly to that address for tunnel
+//     streams, bypassing the load balancer and guaranteeing that every stream
+//     reaches the same gravity server.  When the server omits tunnel_address the
+//     client falls back to tunnelling over the control-plane connection (pool of
+//     one), which preserves backward compatibility with older servers.
 func (g *GravityClient) Start() error {
 	g.logger.Debug("starting gRPC Gravity client...")
 	g.mu.Lock()
@@ -396,7 +415,7 @@ func (g *GravityClient) Start() error {
 	}
 
 	g.logger.Debug("parsing gRPC URL: %s", g.url)
-	// Parse gRPC URL
+	// Parse gRPC URL (load balancer address)
 	grpcURL, err := g.parseGRPCURL(g.url)
 	if err != nil {
 		g.logger.Error("failed to parse gRPC URL: %v", err)
@@ -404,112 +423,53 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("parsed gRPC URL successfully: %s", grpcURL)
 
-	// Extract hostname for TLS ServerName
-	hostname, err := g.extractHostnameFromURL(g.url)
+	// Build TLS credentials for the load-balancer connection
+	creds, err := g.buildTLSCredentials(g.url)
 	if err != nil {
-		g.logger.Error("failed to extract hostname from URL: %v", err)
-		return fmt.Errorf("failed to extract hostname: %w", err)
+		g.mu.Unlock()
+		return err
 	}
 
-	g.logger.Debug("loading CA certificate for TLS...")
-	pool, err := x509.SystemCertPool()
+	// ── Phase 1: Control-plane connection (single conn through LB) ──
+
+	g.logger.Debug("establishing control-plane connection to %s", grpcURL)
+	controlConn, err := grpc.NewClient(grpcURL,
+		grpc.WithTransportCredentials(creds),
+		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithInitialWindowSize(1<<20),
+		grpc.WithInitialConnWindowSize(4<<20),
+	)
 	if err != nil {
-		g.logger.Warn("failed to load system cert pool, using empty pool: %v", err)
-		pool = x509.NewCertPool()
+		g.logger.Error("failed to create control-plane gRPC client: %v", err)
+		g.mu.Unlock()
+		return fmt.Errorf("failed to create control-plane gRPC client to %s: %w", grpcURL, err)
 	}
-	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
-		g.logger.Error("failed to load embedded CA certificate")
-		return fmt.Errorf("failed to load embedded CA certificate")
-	}
+	g.controlConn = controlConn
+	g.controlClient = pb.NewGravitySessionServiceClient(controlConn)
+	g.logger.Debug("control-plane connection established")
 
-	g.logger.Debug("creating TLS configuration...")
-	if g.tlsCert == nil {
-		g.logger.Error("failed to load TLS certificate")
-		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
-	}
-	cert := *g.tlsCert
-
-	// Create TLS config that includes both client certificates (mTLS) and server verification
-	tlsConfig := &tls.Config{
-		Certificates: []tls.Certificate{cert}, // Client certificates for mTLS (self-signed)
-		ServerName:   hostname,                // Dynamic server name for SNI and verification
-		MinVersion:   tls.VersionTLS13,
-		// GetClientCertificate ensures the client always sends its cert when requested
-		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
-			if g.tlsCert != nil {
-				return g.tlsCert, nil
-			}
-			return nil, fmt.Errorf("no client certificate available")
-		},
-		RootCAs: pool,
-	}
-
-	creds := credentials.NewTLS(tlsConfig)
-	g.logger.Debug("TLS credentials created successfully")
-
-	// Create connection pool using configuration
-	connectionCount := g.poolConfig.PoolSize
-	g.logger.Debug("creating connection pool with %d connections", connectionCount)
-	g.connections = make([]*grpc.ClientConn, connectionCount)
-	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
-	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
-
-	// Initialize connection health tracking
-	g.streamManager.connectionHealth = make([]bool, connectionCount)
-	for i := range g.streamManager.connectionHealth {
-		g.streamManager.connectionHealth[i] = true // Start assuming healthy
-	}
-
-	g.logger.Debug("establishing %d gRPC connections to %s", connectionCount, grpcURL)
-	// Establish connections using modern gRPC client API
-	for i := range connectionCount {
-		g.logger.Debug("establishing connection %d/%d...", i+1, connectionCount)
-
-		g.logger.Debug("creating gRPC client %d to %s with TLS", i+1, grpcURL)
-		conn, err := grpc.NewClient(grpcURL,
-			grpc.WithTransportCredentials(creds),
-			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
-			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
-		)
-		if err != nil {
-			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
-			// Cleanup partial connections
-			g.cleanup()
-			return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)
-		}
-		g.logger.Debug("gRPC client %d created successfully", i+1)
-
-		g.connections[i] = conn
-		g.sessionClients[i] = pb.NewGravitySessionServiceClient(conn)
-		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
-	}
-	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
-
-	// Release mutex before blocking operations (control streams, connect, tunnel streams)
+	// Release mutex before blocking operations (control stream, hello, tunnel pool)
 	g.mu.Unlock()
 
-	g.logger.Debug("establishing control streams...")
-	// Establish control streams (one per connection)
+	// Establish a single control stream on the control connection
+	g.logger.Debug("establishing control stream...")
 	err = g.establishControlStreams()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
-			g.logger.Debug("control streams closed due to context cancellation")
+			g.logger.Debug("control stream closed due to context cancellation")
 			g.cleanup()
 			return context.Canceled
 		}
-		g.logger.Error("failed to establish control streams: %v", err)
+		g.logger.Error("failed to establish control stream: %v", err)
 		g.cleanup()
-		return fmt.Errorf("failed to establish control streams: %w", err)
+		return fmt.Errorf("failed to establish control stream: %w", err)
 	}
-	g.logger.Debug("control streams established successfully")
+	g.logger.Debug("control stream established successfully")
 
+	// Send session hello and wait for the hello response (which may carry a tunnel_address)
 	g.logger.Debug("sending session hello...")
-	// Send session hello to authenticate and get session info
 	err = g.sendSessionHello()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("session hello cancelled due to context cancellation")
 			g.cleanup()
@@ -521,11 +481,30 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("session hello sent successfully")
 
+	// ── Phase 2: Data-plane (tunnel) connection pool ──
+
+	// establishTunnelStreams blocks until the hello response is received
+	// (via connectionIDChan).  At that point g.tunnelAddress is set by
+	// handleSessionHelloResponse.  We use it to decide where to dial the
+	// tunnel pool.
+
+	g.logger.Debug("establishing tunnel connection pool...")
+	err = g.establishTunnelPool()
+	if err != nil {
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("tunnel pool closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to establish tunnel pool: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to establish tunnel pool: %w", err)
+	}
+	g.logger.Debug("tunnel connection pool established")
+
 	g.logger.Debug("establishing tunnel streams...")
-	// Establish tunnel streams (multiple per connection) - after connect message
 	err = g.establishTunnelStreams()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("tunnel streams closed due to context cancellation")
 			g.cleanup()
@@ -545,50 +524,175 @@ func (g *GravityClient) Start() error {
 	g.logger.Debug("connected to Gravity server via gRPC: %s", grpcURL)
 
 	g.logger.Debug("starting background goroutines...")
-	// Start background goroutines
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()
 	go g.handleTextMessages()
-
 	go g.monitorConnectionHealth()
 	go g.handlePingHeartbeat()
 
 	g.logger.Debug("all background goroutines started successfully")
-
 	g.logger.Debug("gRPC Gravity client startup completed successfully")
 	return nil
 }
 
-// establishControlStreams creates control streams for each connection
-func (g *GravityClient) establishControlStreams() error {
-	g.logger.Debug("creating control streams for %d connections", len(g.connections))
-	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, len(g.connections))
-	g.streamManager.contexts = make([]context.Context, len(g.connections))
-	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
-
-	for i, client := range g.sessionClients {
-		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
-		ctx, cancel := context.WithCancel(g.ctx)
-		g.streamManager.contexts[i] = ctx
-		g.streamManager.cancels[i] = cancel
-
-		// Enable gzip compression for control streams (text-based control messages)
-		stream, err := client.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
-		if err != nil {
-			// Don't log error if context was cancelled (graceful shutdown)
-			if !isContextCanceled(g.ctx, err) {
-				g.logger.Error("failed to establish control stream %d: %v", i+1, err)
-			}
-			return fmt.Errorf("failed to establish control stream %d: %w", i, err)
-		}
-		g.logger.Debug("control stream %d established successfully", i+1)
-
-		g.streamManager.controlStreams[i] = stream
-
-		// Start listening on this control stream
-		go g.handleControlStream(i, stream)
+// buildTLSCredentials creates gRPC transport credentials for the given URL,
+// handling IP-vs-hostname ServerName resolution.
+func (g *GravityClient) buildTLSCredentials(targetURL string) (credentials.TransportCredentials, error) {
+	hostname, err := g.extractHostnameFromURL(targetURL)
+	if err != nil {
+		g.logger.Error("failed to extract hostname from URL %s: %v", targetURL, err)
+		return nil, fmt.Errorf("failed to extract hostname: %w", err)
 	}
-	g.logger.Debug("all %d control streams established successfully", len(g.connections))
+
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		g.logger.Warn("failed to load system cert pool, using empty pool: %v", err)
+		pool = x509.NewCertPool()
+	}
+	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
+		g.logger.Error("failed to load embedded CA certificate")
+		return nil, fmt.Errorf("failed to load embedded CA certificate")
+	}
+
+	if g.tlsCert == nil {
+		return nil, fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
+	}
+	cert := *g.tlsCert
+
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		ServerName:   hostname,
+		MinVersion:   tls.VersionTLS13,
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			if g.tlsCert != nil {
+				return g.tlsCert, nil
+			}
+			return nil, fmt.Errorf("no client certificate available")
+		},
+		RootCAs: pool,
+	}
+
+	return credentials.NewTLS(tlsConfig), nil
+}
+
+// establishTunnelPool creates the data-plane connection pool.  When the server
+// provided a tunnel_address in the hello response the pool connects directly to
+// that address; otherwise the control connection is reused (pool of one).
+func (g *GravityClient) establishTunnelPool() error {
+	g.mu.RLock()
+	tunnelAddr := g.tunnelAddress
+	g.mu.RUnlock()
+
+	if tunnelAddr == "" {
+		// No direct address – fall back to the control connection for tunnels.
+		g.logger.Info("no tunnel_address in hello response, tunnelling over control connection")
+		g.mu.Lock()
+		g.tunnelConns = []*grpc.ClientConn{g.controlConn}
+		g.tunnelClients = []pb.GravitySessionServiceClient{g.controlClient}
+		g.circuitBreakers = []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())}
+		g.streamManager.connectionHealth = []bool{true}
+		g.mu.Unlock()
+		return nil
+	}
+
+	// Parse the tunnel address into a dial-ready host:port.
+	dialTarget, err := normalizeTunnelAddress(tunnelAddr)
+	if err != nil {
+		return fmt.Errorf("invalid tunnel_address %q: %w", tunnelAddr, err)
+	}
+
+	g.logger.Info("opening tunnel connection pool directly to %s (from tunnel_address=%s)", dialTarget, tunnelAddr)
+
+	// Build TLS credentials for the direct tunnel address. We synthesize a
+	// grpc:// URL so extractHostnameFromURL/extractHostnameFromGravityURL can
+	// reuse the existing IP→fallbackServerName logic.
+	tunnelURL := "grpc://" + dialTarget
+	creds, err := g.buildTLSCredentials(tunnelURL)
+	if err != nil {
+		return fmt.Errorf("failed to build TLS credentials for tunnel address %s: %w", dialTarget, err)
+	}
+
+	poolSize := g.poolConfig.PoolSize
+	g.mu.Lock()
+	g.tunnelConns = make([]*grpc.ClientConn, poolSize)
+	g.tunnelClients = make([]pb.GravitySessionServiceClient, poolSize)
+	g.circuitBreakers = make([]*CircuitBreaker, poolSize)
+	g.streamManager.connectionHealth = make([]bool, poolSize)
+	g.mu.Unlock()
+
+	for i := range poolSize {
+		conn, err := grpc.NewClient(dialTarget,
+			grpc.WithTransportCredentials(creds),
+			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+			grpc.WithInitialWindowSize(1<<20),
+			grpc.WithInitialConnWindowSize(4<<20),
+		)
+		if err != nil {
+			g.logger.Error("failed to create tunnel gRPC client %d: %v", i+1, err)
+			g.cleanup()
+			return fmt.Errorf("failed to create tunnel gRPC client to %s: %w", dialTarget, err)
+		}
+
+		g.mu.Lock()
+		g.tunnelConns[i] = conn
+		g.tunnelClients[i] = pb.NewGravitySessionServiceClient(conn)
+		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
+		g.streamManager.connectionHealth[i] = true
+		g.mu.Unlock()
+	}
+
+	g.logger.Debug("tunnel connection pool established: %d connections to %s", poolSize, dialTarget)
+	return nil
+}
+
+// normalizeTunnelAddress takes a tunnel address string (which may be an IPv4
+// address, an IPv6 address, a hostname, or any of these with an explicit port)
+// and returns a dial-ready "host:port" string.  When no port is provided it
+// defaults to 443.
+func normalizeTunnelAddress(addr string) (string, error) {
+	if addr == "" {
+		return "", fmt.Errorf("empty tunnel address")
+	}
+
+	// Try splitting as host:port first.
+	host, port, err := net.SplitHostPort(addr)
+	if err == nil {
+		// Successfully parsed – has an explicit port.
+		return net.JoinHostPort(host, port), nil
+	}
+
+	// net.SplitHostPort failed – the address has no port.
+	// It could be a bare IPv4, a bare hostname, or a bare bracketed IPv6.
+	bare := strings.TrimPrefix(strings.TrimSuffix(addr, "]"), "[")
+	if bare == "" {
+		return "", fmt.Errorf("empty tunnel address after trimming brackets")
+	}
+	return net.JoinHostPort(bare, "443"), nil
+}
+
+// establishControlStreams creates a single control stream on the control connection.
+func (g *GravityClient) establishControlStreams() error {
+	g.logger.Debug("creating control stream on control connection")
+	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, 1)
+	g.streamManager.contexts = make([]context.Context, 1)
+	g.streamManager.cancels = make([]context.CancelFunc, 1)
+
+	ctx, cancel := context.WithCancel(g.ctx)
+	g.streamManager.contexts[0] = ctx
+	g.streamManager.cancels[0] = cancel
+
+	// Enable gzip compression for control streams (text-based control messages)
+	stream, err := g.controlClient.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
+	if err != nil {
+		if !isContextCanceled(g.ctx, err) {
+			g.logger.Error("failed to establish control stream: %v", err)
+		}
+		return fmt.Errorf("failed to establish control stream: %w", err)
+	}
+	g.logger.Debug("control stream established successfully")
+
+	g.streamManager.controlStreams[0] = stream
+	go g.handleControlStream(0, stream)
 
 	return nil
 }
@@ -613,12 +717,12 @@ func (g *GravityClient) establishTunnelStreams() error {
 
 	// Use configured streams per connection
 	streamsPerConnection := g.poolConfig.StreamsPerConnection
-	totalStreams := len(g.connections) * streamsPerConnection
+	totalStreams := len(g.tunnelClients) * streamsPerConnection
 
 	g.streamManager.tunnelStreams = make([]*StreamInfo, totalStreams)
 
 	streamIndex := 0
-	for connIndex, client := range g.sessionClients {
+	for connIndex, client := range g.tunnelClients {
 		for range streamsPerConnection {
 			streamID := fmt.Sprintf("stream_%s", rand.Text())
 			ctx := context.WithValue(g.ctx, "machine-id", machineID)
@@ -944,7 +1048,7 @@ func (g *GravityClient) SetEvacuationCallback(cb func()) {
 
 // Helper functions
 func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.SessionHelloResponse) {
-	g.logger.Debug("handleSessionHelloResponse called: msgID=%s, machineID=%s, gravityServer=%s", msgID, response.MachineId, response.GravityServer)
+	g.logger.Debug("handleSessionHelloResponse called: msgID=%s, machineID=%s, gravityServer=%s, tunnelAddress=%s", msgID, response.MachineId, response.GravityServer, response.TunnelAddress)
 
 	g.mu.Lock()
 
@@ -958,9 +1062,14 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	g.apiURL = response.ApiUrl
 	g.hostEnvironment = response.Environment
 	g.hostMapping = response.HostMapping
+	g.tunnelAddress = response.TunnelAddress
 
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
+	}
+
+	if response.TunnelAddress != "" {
+		g.logger.Info("received tunnel_address from server: %s", response.TunnelAddress)
 	}
 
 	g.mu.Unlock()
@@ -1722,11 +1831,16 @@ func (g *GravityClient) disconnectStreams() {
 		}
 	}
 
-	// Close all connections
-	for _, conn := range g.connections {
-		if conn != nil {
+	// Close tunnel connections (skip if they alias the control connection)
+	for _, conn := range g.tunnelConns {
+		if conn != nil && conn != g.controlConn {
 			conn.Close()
 		}
+	}
+
+	// Close control connection
+	if g.controlConn != nil {
+		g.controlConn.Close()
 	}
 }
 
@@ -1853,8 +1967,12 @@ func (g *GravityClient) reconnect() error {
 	// Clear connection IDs from previous connection
 	g.connectionIDs = make([]string, 0, g.poolConfig.PoolSize)
 
-	// Reset connections slice to avoid conflicts in Start()
-	g.connections = nil
+	// Reset control-plane and tunnel connection state
+	g.controlConn = nil
+	g.controlClient = nil
+	g.tunnelConns = nil
+	g.tunnelClients = nil
+	g.tunnelAddress = ""
 
 	// Reset stream manager state
 	g.streamManager.tunnelStreams = nil
@@ -1938,11 +2056,16 @@ func (g *GravityClient) cleanup() {
 		}
 	}
 
-	// Close all connections
-	for _, conn := range g.connections {
-		if conn != nil {
+	// Close tunnel connections (skip if they alias the control connection)
+	for _, conn := range g.tunnelConns {
+		if conn != nil && conn != g.controlConn {
 			conn.Close()
 		}
+	}
+
+	// Close control connection
+	if g.controlConn != nil {
+		g.controlConn.Close()
 	}
 }
 
@@ -2632,8 +2755,8 @@ func (g *GravityClient) performHealthCheck() {
 	g.streamManager.healthMu.Lock()
 	defer g.streamManager.healthMu.Unlock()
 
-	// Check connection health
-	for i, conn := range g.connections {
+	// Check tunnel connection health
+	for i, conn := range g.tunnelConns {
 		if conn != nil {
 			state := conn.GetState()
 			isHealthy := state.String() == "READY" || state.String() == "CONNECTING"
@@ -2706,7 +2829,7 @@ func (g *GravityClient) GetConnectionPoolStats() map[string]any {
 		"streams_per_connection": g.poolConfig.StreamsPerConnection,
 		"allocation_strategy":    g.poolConfig.AllocationStrategy.String(),
 		"healthy_connections":    healthyConnections,
-		"total_connections":      len(g.connections),
+		"total_connections":      len(g.tunnelConns),
 		"healthy_streams":        healthyStreams,
 		"total_streams":          len(g.streamManager.tunnelStreams),
 		"total_load":             totalLoad,
@@ -3162,10 +3285,11 @@ func (g *GravityClient) returnBuffer(pooledBuf *PooledBuffer) {
 	}
 }
 
-// GetDeploymentMetadata makes a gRPC call to get deployment metadata
+// GetDeploymentMetadata makes a gRPC call to get deployment metadata.
+// Uses the control-plane connection (through LB) for authenticated RPCs.
 func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID, orgID string) (*pb.DeploymentMetadataResponse, error) {
-	if len(g.sessionClients) == 0 {
-		return nil, fmt.Errorf("no gRPC session clients available")
+	if g.controlClient == nil {
+		return nil, fmt.Errorf("no gRPC control client available")
 	}
 
 	metadataRequest := &pb.DeploymentMetadataRequest{
@@ -3176,13 +3300,14 @@ func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID,
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.sessionClients[0].GetDeploymentMetadata(authCtx, metadataRequest)
+	return g.controlClient.GetDeploymentMetadata(authCtx, metadataRequest)
 }
 
-// GetSandboxMetadata makes a gRPC call to get sandbox metadata
+// GetSandboxMetadata makes a gRPC call to get sandbox metadata.
+// Uses the control-plane connection (through LB) for authenticated RPCs.
 func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID string, generateCertificate bool) (*pb.SandboxMetadataResponse, error) {
-	if len(g.sessionClients) == 0 {
-		return nil, fmt.Errorf("no gRPC session clients available")
+	if g.controlClient == nil {
+		return nil, fmt.Errorf("no gRPC control client available")
 	}
 
 	metadataRequest := &pb.SandboxMetadataRequest{
@@ -3194,7 +3319,7 @@ func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.sessionClients[0].GetSandboxMetadata(authCtx, metadataRequest)
+	return g.controlClient.GetSandboxMetadata(authCtx, metadataRequest)
 }
 
 // GetIPv6Address returns the IPv6 address for external use

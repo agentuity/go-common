@@ -125,6 +125,15 @@ message SessionHelloResponse {
   bytes ssh_public_key = 11; // SSH public key for internal trusted connections
   string machine_token = 12; // JWT token for machine to authenticate with catalyst
   string machine_cert_bundle = 13; // PEM certificate bundle (cert, ca, key)
+  string tunnel_address = 14; // Direct address for opening tunnel (data-plane) connections.
+                               // When non-empty the client SHOULD open its tunnel connection
+                               // pool directly to this address instead of through the load
+                               // balancer, guaranteeing all streams reach the same server.
+                               // The value may be an IPv4 address, an IPv6 address, a hostname,
+                               // or any of these with an explicit port (e.g. "1.2.3.4:443",
+                               // "[::1]:443", "grav-07.example.com:443").
+                               // When empty the client falls back to tunneling over the
+                               // existing control-plane connection (backwards compatible).
 }
 
 // SessionCloseRequest is sent to gracefully close the session.

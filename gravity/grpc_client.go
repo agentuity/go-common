@@ -243,11 +243,12 @@ type GravityClient struct {
 // StreamInfo tracks individual stream health and load
 type StreamInfo struct {
 	stream    pb.GravitySessionService_StreamSessionPacketsClient
-	connIndex int       // Connection index this stream belongs to
-	streamID  string    // Unique stream identifier
-	isHealthy bool      // Stream health status
-	loadCount int64     // Current load (packets in flight)
-	lastUsed  time.Time // Last time this stream was used
+	connIndex int        // Connection index this stream belongs to
+	streamID  string     // Unique stream identifier
+	isHealthy bool       // Stream health status
+	loadCount int64      // Current load (packets in flight)
+	lastUsed  time.Time  // Last time this stream was used
+	sendMu    sync.Mutex // Serializes Send calls on this stream
 }
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
@@ -2306,12 +2307,32 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		}
 	}
 
-	// Select optimal stream using load balancing
-	stream := g.streamManager.selectOptimalTunnelStream()
-	if stream == nil {
+	// Select optimal stream using configured allocation strategy
+	g.streamManager.tunnelMu.Lock()
+	if len(g.streamManager.tunnelStreams) == 0 {
+		g.streamManager.tunnelMu.Unlock()
 		g.logger.Error("writePacket failed: no healthy tunnel streams available")
 		return fmt.Errorf("no healthy tunnel streams available")
 	}
+	streamIndex, err := g.selectOptimalStream(payload)
+	if err != nil {
+		g.streamManager.tunnelMu.Unlock()
+		g.logger.Error("writePacket failed to select stream: %v", err)
+		return fmt.Errorf("failed to select stream: %w", err)
+	}
+	stream := g.streamManager.tunnelStreams[streamIndex]
+	if !stream.isHealthy {
+		streamIndex, err = g.selectHealthyStream()
+		if err != nil {
+			g.streamManager.tunnelMu.Unlock()
+			g.logger.Error("writePacket failed: no healthy tunnel streams available")
+			return fmt.Errorf("no healthy tunnel streams available")
+		}
+		stream = g.streamManager.tunnelStreams[streamIndex]
+	}
+	stream.loadCount++
+	stream.lastUsed = time.Now()
+	g.streamManager.tunnelMu.Unlock()
 	if g.tracePackets {
 		g.tracePacketLogger.Debug("writePacket selected stream: %s", stream.streamID)
 	}
@@ -2327,7 +2348,11 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		tunnelPacket.EnqueuedAtUs = time.Now().UnixMicro()
 	}
 
-	err := stream.stream.Send(tunnelPacket)
+	sendStart := time.Now()
+	stream.sendMu.Lock()
+	err = stream.stream.Send(tunnelPacket)
+	stream.sendMu.Unlock()
+	sendLatency := time.Since(sendStart)
 	if err != nil {
 		// Mark stream unhealthy and record per-stream error metrics,
 		// mirroring the error handling in sendTunnelPacket.
@@ -2340,7 +2365,6 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
 			metrics.ErrorCount++
 			metrics.LastError = now
-			metrics.LastSendUs = now.UnixMicro()
 		}
 		g.streamManager.metricsMu.Unlock()
 
@@ -2360,6 +2384,7 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 			metrics.PacketsSent++
 			metrics.BytesSent += int64(len(payload))
 			metrics.LastSendUs = time.Now().UnixMicro()
+			metrics.LastLatency = sendLatency
 		}
 		g.streamManager.metricsMu.Unlock()
 	}
@@ -2402,15 +2427,16 @@ func (g *GravityClient) handleOutboundPackets() {
 
 func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	g.streamManager.tunnelMu.Lock()
-	defer g.streamManager.tunnelMu.Unlock()
 
 	if len(g.streamManager.tunnelStreams) == 0 {
+		g.streamManager.tunnelMu.Unlock()
 		return fmt.Errorf("no tunnel streams available")
 	}
 
 	// Select optimal stream using configured strategy
 	streamIndex, err := g.selectOptimalStream(data)
 	if err != nil {
+		g.streamManager.tunnelMu.Unlock()
 		return fmt.Errorf("failed to select stream: %w", err)
 	}
 
@@ -2419,26 +2445,24 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 		// Try to find an alternative healthy stream
 		streamIndex, err = g.selectHealthyStream()
 		if err != nil {
+			g.streamManager.tunnelMu.Unlock()
 			return fmt.Errorf("no healthy streams available: %w", err)
 		}
 		streamInfo = g.streamManager.tunnelStreams[streamIndex]
 	}
 
+	// Update stream metrics under lock, then release
+	streamInfo.loadCount++
+	streamInfo.lastUsed = time.Now()
+	g.streamManager.tunnelMu.Unlock()
+
+	// Ensure load count is decremented in all exit paths
+	defer g.streamManager.releaseStream(streamInfo)
+
 	packet := &pb.TunnelPacket{
 		Data:     data,
 		StreamId: streamInfo.streamID,
 	}
-
-	// Update stream metrics
-	streamInfo.loadCount++
-	streamInfo.lastUsed = time.Now()
-
-	// Track metrics
-	g.streamManager.metricsMu.Lock()
-	if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
-		metrics.PacketsSent++
-	}
-	g.streamManager.metricsMu.Unlock()
 
 	// Send packet with retry logic and circuit breaker
 	connectionIndex := streamInfo.connIndex
@@ -2447,14 +2471,20 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	sendStart := time.Now()
 
 	err = RetryWithCircuitBreaker(context.WithoutCancel(g.ctx), g.retryConfig, circuitBreaker, func() error {
-		return streamInfo.stream.Send(packet)
+		streamInfo.sendMu.Lock()
+		sendErr := streamInfo.stream.Send(packet)
+		streamInfo.sendMu.Unlock()
+		return sendErr
 	})
 
 	sendLatency := time.Since(sendStart)
 
 	if err != nil {
 		// Mark stream as unhealthy on error
+		g.streamManager.tunnelMu.Lock()
 		streamInfo.isHealthy = false
+		g.streamManager.tunnelMu.Unlock()
+
 		g.streamManager.metricsMu.Lock()
 		if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
 			metrics.ErrorCount++
@@ -2471,14 +2501,13 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 	g.outboundBytes.Add(uint64(len(data)))
 	g.streamManager.metricsMu.Lock()
 	if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
+		metrics.PacketsSent++
 		metrics.LastLatency = sendLatency
 		metrics.LastSendUs = time.Now().UnixMicro()
 		metrics.BytesSent += int64(len(data))
 	}
 	g.streamManager.metricsMu.Unlock()
 
-	// Decrement load count after successful send
-	streamInfo.loadCount--
 	return nil
 }
 
@@ -2517,11 +2546,16 @@ func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
 func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	minLoad := int64(^uint64(0) >> 1) // Max int64
 	selectedIndex := 0
+	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy && streamInfo.loadCount < minLoad {
+		if !streamInfo.isHealthy {
+			continue
+		}
+		if streamInfo.loadCount < minLoad || (streamInfo.loadCount == minLoad && selectedStream != nil && streamInfo.lastUsed.Before(selectedStream.lastUsed)) {
 			minLoad = streamInfo.loadCount
 			selectedIndex = i
+			selectedStream = streamInfo
 		}
 	}
 

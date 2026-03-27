@@ -152,6 +152,7 @@ func TestSendRouteSandboxRequest_ErrorFromServer(t *testing.T) {
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
 		streamManager:          &StreamManager{controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream}},
 		retryConfig:            DefaultRetryConfig(),
+		controlCircuitBreaker:  NewCircuitBreaker(DefaultCircuitBreakerConfig()),
 		circuitBreakers:        []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
 		sessionReady:           make(chan struct{}),
 	}
@@ -190,6 +191,7 @@ func TestSendRouteSandboxRequest_SuccessFromServer(t *testing.T) {
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
 		streamManager:          &StreamManager{controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream}},
 		retryConfig:            DefaultRetryConfig(),
+		controlCircuitBreaker:  NewCircuitBreaker(DefaultCircuitBreakerConfig()),
 		circuitBreakers:        []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
 		sessionReady:           make(chan struct{}),
 	}

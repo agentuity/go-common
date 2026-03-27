@@ -149,8 +149,9 @@ type GravityClient struct {
 	streamManager *StreamManager
 
 	// Fault tolerance
-	retryConfig     RetryConfig
-	circuitBreakers []*CircuitBreaker // One per tunnel connection
+	retryConfig           RetryConfig
+	controlCircuitBreaker *CircuitBreaker   // Dedicated to the control-plane connection (through LB)
+	circuitBreakers       []*CircuitBreaker // One per tunnel connection (data-plane)
 
 	// Connection management
 	mu                         sync.RWMutex
@@ -419,6 +420,7 @@ func (g *GravityClient) Start() error {
 	grpcURL, err := g.parseGRPCURL(g.url)
 	if err != nil {
 		g.logger.Error("failed to parse gRPC URL: %v", err)
+		g.mu.Unlock()
 		return fmt.Errorf("invalid URL: %w", err)
 	}
 	g.logger.Debug("parsed gRPC URL successfully: %s", grpcURL)
@@ -446,6 +448,14 @@ func (g *GravityClient) Start() error {
 	}
 	g.controlConn = controlConn
 	g.controlClient = pb.NewGravitySessionServiceClient(controlConn)
+
+	// The control plane gets its own circuit breaker, independent of the
+	// tunnel pool's breakers.  This must be initialised here — before
+	// sendSessionHello() — because sendSessionHello and every subsequent
+	// control-plane send (sendSessionMessageAsync) use it for retry gating.
+	// Sharing a tunnel breaker would (a) panic before the tunnel pool is
+	// created and (b) couple control-plane availability to data-plane errors.
+	g.controlCircuitBreaker = NewCircuitBreaker(DefaultCircuitBreakerConfig())
 	g.logger.Debug("control-plane connection established")
 
 	// Release mutex before blocking operations (control stream, hello, tunnel pool)
@@ -825,9 +835,9 @@ func (g *GravityClient) sendSessionHello() error {
 	g.logger.Debug("sending session hello on primary control stream")
 
 	stream := g.streamManager.controlStreams[0]
-	circuitBreaker := g.circuitBreakers[0]
 
-	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
+	// Use the control-plane circuit breaker — not a tunnel breaker.
+	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, g.controlCircuitBreaker, func() error {
 		return stream.Send(msg)
 	})
 
@@ -1976,6 +1986,7 @@ func (g *GravityClient) reconnect() error {
 	// Reset control-plane and tunnel connection state
 	g.controlConn = nil
 	g.controlClient = nil
+	g.controlCircuitBreaker = nil
 	g.tunnelConns = nil
 	g.tunnelClients = nil
 	g.tunnelAddress = ""
@@ -2094,12 +2105,12 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 		return fmt.Errorf("control stream is nil")
 	}
 
-	circuitBreaker := g.circuitBreakers[0]
-
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(g.ctx), 10*time.Second)
 	defer cancel()
 
-	return RetryWithCircuitBreaker(ctx, g.retryConfig, circuitBreaker, func() error {
+	// Use the control-plane circuit breaker so that data-plane tunnel
+	// errors don't gate control-plane sends and vice-versa.
+	return RetryWithCircuitBreaker(ctx, g.retryConfig, g.controlCircuitBreaker, func() error {
 		return stream.Send(msg)
 	})
 }

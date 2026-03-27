@@ -243,11 +243,12 @@ type GravityClient struct {
 // StreamInfo tracks individual stream health and load
 type StreamInfo struct {
 	stream    pb.GravitySessionService_StreamSessionPacketsClient
-	connIndex int       // Connection index this stream belongs to
-	streamID  string    // Unique stream identifier
-	isHealthy bool      // Stream health status
-	loadCount int64     // Current load (packets in flight)
-	lastUsed  time.Time // Last time this stream was used
+	connIndex int        // Connection index this stream belongs to
+	streamID  string     // Unique stream identifier
+	isHealthy bool       // Stream health status
+	loadCount int64      // Current load (packets in flight)
+	lastUsed  time.Time  // Last time this stream was used
+	sendMu    sync.Mutex // Serializes Send calls on this stream
 }
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
@@ -2348,7 +2349,9 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	}
 
 	sendStart := time.Now()
+	stream.sendMu.Lock()
 	err = stream.stream.Send(tunnelPacket)
+	stream.sendMu.Unlock()
 	sendLatency := time.Since(sendStart)
 	if err != nil {
 		// Mark stream unhealthy and record per-stream error metrics,

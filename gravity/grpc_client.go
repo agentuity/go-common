@@ -2114,7 +2114,7 @@ func (sm *StreamManager) selectOptimalTunnelStream() *StreamInfo {
 			continue
 		}
 
-		if minLoad == -1 || stream.loadCount < minLoad || (stream.loadCount == minLoad && stream.lastUsed.Before(bestStream.lastUsed)) {
+		if minLoad == -1 || stream.loadCount < minLoad {
 			minLoad = stream.loadCount
 			bestStream = stream
 		}
@@ -2534,11 +2534,16 @@ func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
 func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	minLoad := int64(^uint64(0) >> 1) // Max int64
 	selectedIndex := 0
+	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy && streamInfo.loadCount < minLoad {
+		if !streamInfo.isHealthy {
+			continue
+		}
+		if streamInfo.loadCount < minLoad || (streamInfo.loadCount == minLoad && selectedStream != nil && streamInfo.lastUsed.Before(selectedStream.lastUsed)) {
 			minLoad = streamInfo.loadCount
 			selectedIndex = i
+			selectedStream = streamInfo
 		}
 	}
 

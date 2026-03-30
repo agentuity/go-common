@@ -39,6 +39,14 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// contextKey is a private type for context value keys to avoid collisions.
+type contextKey int
+
+const (
+	machineIDKey contextKey = iota
+	streamIDKey
+)
+
 // Initialize gzip compression settings during package initialization
 func init() {
 	// Set gzip compression level for optimal text compression
@@ -1245,8 +1253,8 @@ proceed:
 	for connIndex, client := range g.sessionClients {
 		for range streamsPerConnection {
 			streamID := fmt.Sprintf("stream_%s", rand.Text())
-			ctx := context.WithValue(g.ctx, "machine-id", machineID)
-			ctx = context.WithValue(ctx, "stream-id", streamID)
+			ctx := context.WithValue(g.ctx, machineIDKey, machineID)
+			ctx = context.WithValue(ctx, streamIDKey, streamID)
 
 			// Add metadata for stream identification
 			md := metadata.Pairs(
@@ -1399,7 +1407,14 @@ func (g *GravityClient) sendSessionHelloOnStream(streamIndex int, stream pb.Grav
 		return fmt.Errorf("control stream %d is nil", streamIndex)
 	}
 
+	g.mu.RLock()
+	if streamIndex < 0 || streamIndex >= len(g.circuitBreakers) {
+		g.mu.RUnlock()
+		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", streamIndex, len(g.circuitBreakers))
+	}
 	cb := g.circuitBreakers[streamIndex]
+	g.mu.RUnlock()
+
 	msg := g.buildSessionHelloMessage()
 	return RetryWithCircuitBreaker(context.Background(), g.retryConfig, cb, func() error {
 		return stream.Send(msg)
@@ -1489,44 +1504,14 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			} else {
 				g.logger.Error("tunnel stream %d receive error: %v", streamIndex, err)
 				// Check if this is a connection error that requires reconnection
-				if errors.Is(err, io.EOF) {
-					g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
-					if len(g.gravityURLs) > 1 {
-						connIdx := -1
-						g.streamManager.tunnelMu.RLock()
-						if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
-							if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
-								connIdx = si.connIndex
-							}
-						}
-						g.streamManager.tunnelMu.RUnlock()
-						if connIdx >= 0 {
-							go g.handleEndpointDisconnection(connIdx, fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
-						} else {
-							go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
-						}
-					} else {
-						go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
+				isConnectionLost := errors.Is(err, io.EOF)
+				if !isConnectionLost {
+					if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+						isConnectionLost = true
 					}
-				} else if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
-					g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
-					if len(g.gravityURLs) > 1 {
-						connIdx := -1
-						g.streamManager.tunnelMu.RLock()
-						if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
-							if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
-								connIdx = si.connIndex
-							}
-						}
-						g.streamManager.tunnelMu.RUnlock()
-						if connIdx >= 0 {
-							go g.handleEndpointDisconnection(connIdx, fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
-						} else {
-							go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
-						}
-					} else {
-						go g.handleServerDisconnection(fmt.Sprintf("tunnel_stream_%d_error", streamIndex))
-					}
+				}
+				if isConnectionLost {
+					g.handleTunnelStreamDisconnection(streamIndex)
 				}
 			}
 			return
@@ -1588,6 +1573,31 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			g.inboundDropped.Add(1)
 			g.returnBuffer(pooledBuf)
 		}
+	}
+}
+
+// handleTunnelStreamDisconnection resolves the owning endpoint for a tunnel
+// stream and triggers either per-endpoint or full-server disconnection.
+func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
+	reason := fmt.Sprintf("tunnel_stream_%d_error", streamIndex)
+	g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
+
+	if len(g.gravityURLs) > 1 {
+		connIdx := -1
+		g.streamManager.tunnelMu.RLock()
+		if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
+			if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
+				connIdx = si.connIndex
+			}
+		}
+		g.streamManager.tunnelMu.RUnlock()
+		if connIdx >= 0 {
+			go g.handleEndpointDisconnection(connIdx, reason)
+		} else {
+			go g.handleServerDisconnection(reason)
+		}
+	} else {
+		go g.handleServerDisconnection(reason)
 	}
 }
 
@@ -2581,35 +2591,37 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 
 	g.logger.Info("starting endpoint %d (%s) reconnection due to: %s", endpointIndex, endpointURL, reason)
 
-	backoff := time.Second
-	maxBackoff := 30 * time.Second
 	maxAttempts := g.maxReconnectAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 10
 	}
 
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	var attempt int
+	err := ExponentialBackoff(g.ctx, maxAttempts-1, time.Second, func() error {
 		g.mu.RLock()
 		closing := g.closing
 		g.mu.RUnlock()
 		if closing {
-			return
+			return context.Canceled
 		}
 
+		attempt++
 		g.logger.Info("endpoint %d reconnection attempt %d/%d", endpointIndex, attempt, maxAttempts)
-		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err == nil {
-			g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
-			return
-		} else {
+		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err != nil {
 			g.logger.Warn("endpoint %d reconnection attempt %d failed: %v", endpointIndex, attempt, err)
+			return err
 		}
+		return nil
+	})
 
-		select {
-		case <-time.After(backoff):
-			backoff = min(backoff*2, maxBackoff)
-		case <-g.ctx.Done():
-			return
-		}
+	if err == nil {
+		g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
+		return
+	}
+
+	// Context cancellation or client closing — expected, no error log needed.
+	if g.ctx.Err() != nil {
+		return
 	}
 
 	g.logger.Error("endpoint %d (%s) reconnection failed after %d attempts", endpointIndex, endpointURL, maxAttempts)
@@ -2743,8 +2755,8 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		}
 
 		streamID := fmt.Sprintf("stream_%s", rand.Text())
-		tctx := context.WithValue(g.ctx, "machine-id", g.machineID)
-		tctx = context.WithValue(tctx, "stream-id", streamID)
+		tctx := context.WithValue(g.ctx, machineIDKey, g.machineID)
+		tctx = context.WithValue(tctx, streamIDKey, streamID)
 		md := metadata.Pairs("machine-id", g.machineID, "stream-id", streamID)
 		tctx = metadata.NewOutgoingContext(tctx, md)
 

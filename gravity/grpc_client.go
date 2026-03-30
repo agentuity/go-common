@@ -962,6 +962,9 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
 	}
+	if len(response.SigningPublicKey) > 0 {
+		g.logger.Info("received signing public key from Gravity (%d bytes)", len(response.SigningPublicKey))
+	}
 
 	g.mu.Unlock()
 
@@ -993,6 +996,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		MachineToken:      response.MachineToken,
 		MachineID:         response.MachineId,
 		MachineCertBundle: response.MachineCertBundle,
+		SigningPublicKey:  response.SigningPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
 		return

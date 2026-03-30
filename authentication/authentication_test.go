@@ -152,3 +152,84 @@ func TestWithExpirationValidRanges(t *testing.T) {
 		})
 	}
 }
+
+// V2 Bearer Token Tests
+
+func TestNewBearerTokenV2(t *testing.T) {
+	sharedSecret := "test-secret"
+
+	token, err := NewBearerTokenV2(sharedSecret)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, token)
+
+	// v2 token should validate
+	err = ValidateToken(sharedSecret, token)
+	assert.NoError(t, err)
+}
+
+func TestNewBearerTokenV2WithExpiration(t *testing.T) {
+	sharedSecret := "test-secret"
+	expiration := time.Now().Add(2 * time.Hour)
+
+	token, err := NewBearerTokenV2(sharedSecret, WithExpiration(expiration))
+	assert.NoError(t, err)
+	assert.NotEmpty(t, token)
+
+	// v2 expiring token should validate
+	err = ValidateToken(sharedSecret, token)
+	assert.NoError(t, err)
+}
+
+func TestV2TokenPrefix(t *testing.T) {
+	sharedSecret := "test-secret"
+
+	token, err := NewBearerTokenV2(sharedSecret)
+	assert.NoError(t, err)
+	assert.True(t, strings.HasPrefix(token, "v2.bearer-token."), "v2 token should start with 'v2.bearer-token.' but got: %s", token)
+}
+
+func TestV1TokenStillValidates(t *testing.T) {
+	sharedSecret := "test-secret"
+
+	// Generate a v1 token
+	token, err := NewBearerToken(sharedSecret)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, token)
+
+	// v1 token should still validate through the updated ValidateToken
+	err = ValidateToken(sharedSecret, token)
+	assert.NoError(t, err)
+}
+
+func TestV2TokenNotValidWithWrongSecret(t *testing.T) {
+	token, err := NewBearerTokenV2("correct-secret")
+	assert.NoError(t, err)
+
+	err = ValidateToken("wrong-secret", token)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, ErrInvalidToken)
+}
+
+func TestCrossVersionIsolation(t *testing.T) {
+	sharedSecret := "test-secret"
+
+	// Generate v1 and v2 tokens
+	v1Token, err := NewBearerToken(sharedSecret)
+	assert.NoError(t, err)
+
+	v2Token, err := NewBearerTokenV2(sharedSecret)
+	assert.NoError(t, err)
+
+	// Extract the inner payload of the v2 token (strip "v2.bearer-token." prefix)
+	v2Payload := strings.TrimPrefix(v2Token, "v2.bearer-token.")
+	assert.NotEqual(t, v2Token, v2Payload, "v2 token should have the prefix")
+
+	// v2 payload should NOT validate as v1 (because it was hashed with derived key, not raw secret)
+	err = validateTokenInner(sharedSecret, v2Payload)
+	assert.Error(t, err, "v2 token payload should not validate as v1 with raw shared secret")
+
+	// v1 token wrapped as v2 should NOT validate (because ValidateToken will use derived key)
+	fakeV2 := "v2.bearer-token." + v1Token
+	err = ValidateToken(sharedSecret, fakeV2)
+	assert.Error(t, err, "v1 token wrapped as v2 should not validate")
+}

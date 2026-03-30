@@ -2523,13 +2523,14 @@ func (g *GravityClient) handleEndpointDisconnection(endpointIndex int, reason st
 
 	if g.hasHealthyEndpoint() {
 		g.logger.Info("operating in degraded mode: endpoint %d down, other endpoint(s) still healthy", endpointIndex)
-		go g.reconnectEndpoint(endpointIndex, reason)
-		return
+	} else {
+		g.logger.Warn("all endpoints down, reconnecting endpoint %d independently", endpointIndex)
 	}
-
-	g.logger.Warn("all endpoints unavailable, falling back to full reconnection")
-	g.endpointReconnecting[endpointIndex].Store(false)
-	go g.handleServerDisconnection(reason)
+	// Always use per-endpoint reconnection in multi-endpoint mode.
+	// Each endpoint reconnects independently as its gravity server
+	// becomes available. This is better than full reconnect which
+	// requires ALL servers to be up simultaneously.
+	go g.reconnectEndpoint(endpointIndex, reason)
 }
 
 func (g *GravityClient) disconnectEndpointStreams(endpointIndex int) {

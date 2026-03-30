@@ -1343,12 +1343,15 @@ func (g *GravityClient) sendSessionHello() error {
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 
+	if len(g.streamManager.controlSendMu) == 0 {
+		return fmt.Errorf("controlSendMu not initialized")
+	}
+	sendMu := &g.streamManager.controlSendMu[0]
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
-		if len(g.streamManager.controlSendMu) > 0 {
-			g.streamManager.controlSendMu[0].Lock()
-			defer g.streamManager.controlSendMu[0].Unlock()
-		}
-		return stream.Send(msg)
+		sendMu.Lock()
+		err := stream.Send(msg)
+		sendMu.Unlock()
+		return err
 	})
 
 	if err != nil {
@@ -1423,13 +1426,17 @@ func (g *GravityClient) sendSessionHelloOnStream(streamIndex int, stream pb.Grav
 	cb := g.circuitBreakers[streamIndex]
 	g.mu.RUnlock()
 
+	if streamIndex < 0 || streamIndex >= len(g.streamManager.controlSendMu) {
+		return fmt.Errorf("controlSendMu index %d out of range (len=%d)", streamIndex, len(g.streamManager.controlSendMu))
+	}
+
 	msg := g.buildSessionHelloMessage()
+	sendMu := &g.streamManager.controlSendMu[streamIndex]
 	return RetryWithCircuitBreaker(context.Background(), g.retryConfig, cb, func() error {
-		if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
-			g.streamManager.controlSendMu[streamIndex].Lock()
-			defer g.streamManager.controlSendMu[streamIndex].Unlock()
-		}
-		return stream.Send(msg)
+		sendMu.Lock()
+		err := stream.Send(msg)
+		sendMu.Unlock()
+		return err
 	})
 }
 

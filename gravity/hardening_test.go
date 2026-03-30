@@ -2,6 +2,9 @@ package gravity
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"errors"
 	"io"
 	"reflect"
@@ -12,9 +15,60 @@ import (
 	"time"
 
 	pb "github.com/agentuity/go-common/gravity/proto"
+	"github.com/agentuity/go-common/gravity/provider"
 	"github.com/agentuity/go-common/logger"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
+
+type hardeningTestProvider struct {
+	configureErr   error
+	configureCalls atomic.Int64
+}
+
+func (p *hardeningTestProvider) Configure(provider.Configuration) error {
+	p.configureCalls.Add(1)
+	return p.configureErr
+}
+
+func (p *hardeningTestProvider) ProcessInPacket([]byte) {}
+
+type hardeningCheckpointProvider struct {
+	hardeningTestProvider
+	results []*pb.SandboxCheckpointed
+}
+
+func (p *hardeningCheckpointProvider) HandleEvacuationPlan(context.Context, []*pb.EvacuateSandboxPlan) []*pb.SandboxCheckpointed {
+	return p.results
+}
+
+func (p *hardeningCheckpointProvider) HandleRestoreSandboxTask(context.Context, *pb.RestoreSandboxTask) *pb.SandboxRestored {
+	return nil
+}
+
+func (p *hardeningCheckpointProvider) SupportsCheckpointRestore() bool { return true }
+
+type hardeningTestNetworkInterface struct {
+	routeErr    error
+	routeCalls  atomic.Int64
+	unrouteErr  error
+	unrouteCall atomic.Int64
+}
+
+func (n *hardeningTestNetworkInterface) RouteTraffic([]string) error {
+	n.routeCalls.Add(1)
+	return n.routeErr
+}
+
+func (n *hardeningTestNetworkInterface) UnrouteTraffic() error {
+	n.unrouteCall.Add(1)
+	return n.unrouteErr
+}
+
+func (n *hardeningTestNetworkInterface) Read([]byte) (int, error)  { return 0, io.EOF }
+func (n *hardeningTestNetworkInterface) Write([]byte) (int, error) { return 0, nil }
+func (n *hardeningTestNetworkInterface) Running() bool             { return true }
+func (n *hardeningTestNetworkInterface) Start(func([]byte))        {}
 
 type hardeningMockTunnelStream struct {
 	sendErr   error
@@ -469,5 +523,215 @@ func TestHardening_AllStreamSelectionStrategies(t *testing.T) {
 	const allowedLeak = 5
 	if got := runtime.NumGoroutine(); got > baseline+allowedLeak {
 		t.Fatalf("unexpected goroutine growth: got=%d baseline=%d allowed=%d", got, baseline, allowedLeak)
+	}
+}
+
+func TestHardening_IdentifyRejectsMalformedPEM(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate test key: %v", err)
+	}
+
+	_, err = Identify(context.Background(), IdentifyConfig{
+		GravityURL:      "grpc://127.0.0.1:443",
+		InstanceID:      "hardening-identify",
+		ECDSAPrivateKey: key,
+		CACert:          "not-a-valid-pem",
+	})
+	if err == nil {
+		t.Fatal("expected malformed PEM to be rejected")
+	}
+	if err.Error() != "failed to parse CA certificate PEM" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestHardening_CertLifetimeExtended(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate test key: %v", err)
+	}
+
+	cert, err := createSelfSignedTLSConfig(key, "hardening-cert-lifetime")
+	if err != nil {
+		t.Fatalf("createSelfSignedTLSConfig failed: %v", err)
+	}
+	if cert.Leaf == nil {
+		t.Fatal("expected parsed leaf certificate")
+	}
+
+	lifetime := cert.Leaf.NotAfter.Sub(cert.Leaf.NotBefore)
+	if lifetime < 300*24*time.Hour {
+		t.Fatalf("expected certificate lifetime > 300 days, got %v", lifetime)
+	}
+}
+
+func TestHardening_EvacuationTimerCleanup(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+	g.context = context.Background()
+	g.pending = make(map[string]chan *pb.ProtocolResponse)
+	g.streamManager.controlStreams[0] = &mockSessionStream{sent: make(chan *pb.SessionMessage, 8)}
+
+	provider := &hardeningCheckpointProvider{
+		results: []*pb.SandboxCheckpointed{{SandboxId: "sbx-1", Success: true}},
+	}
+	g.provider = provider
+
+	callbackDone := make(chan struct{})
+	g.SetEvacuationCallback(func() {
+		select {
+		case <-callbackDone:
+		default:
+			close(callbackDone)
+		}
+	})
+
+	go func() {
+		for {
+			g.pendingMu.RLock()
+			for _, ch := range g.pending {
+				select {
+				case ch <- &pb.ProtocolResponse{Success: true}:
+				default:
+				}
+			}
+			g.pendingMu.RUnlock()
+
+			select {
+			case <-callbackDone:
+				return
+			default:
+			}
+			time.Sleep(1 * time.Millisecond)
+		}
+	}()
+
+	g.handleEvacuationPlan("evac-msg", &pb.EvacuationPlan{
+		Sandboxes: []*pb.EvacuateSandboxPlan{{SandboxId: "sbx-1"}},
+	})
+
+	select {
+	case <-callbackDone:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("evacuation callback did not fire")
+	}
+
+	g.pendingMu.RLock()
+	pending := len(g.pending)
+	g.pendingMu.RUnlock()
+	if pending != 0 {
+		t.Fatalf("expected pending map to be empty after evacuation ack, got %d", pending)
+	}
+}
+
+func TestHardening_ConnectionCtxCancelsBackgroundGoroutines(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+	g.poolConfig.HealthCheckInterval = 10 * time.Millisecond
+	g.pingInterval = 10 * time.Millisecond
+
+	g.mu.Lock()
+	g.connectionCtx, g.connectionCancel = context.WithCancel(g.ctx)
+	g.mu.Unlock()
+
+	dones := []chan struct{}{
+		make(chan struct{}),
+		make(chan struct{}),
+		make(chan struct{}),
+		make(chan struct{}),
+		make(chan struct{}),
+	}
+
+	go func() { defer close(dones[0]); g.handleInboundPackets() }()
+	go func() { defer close(dones[1]); g.handleOutboundPackets() }()
+	go func() { defer close(dones[2]); g.handleTextMessages() }()
+	go func() { defer close(dones[3]); g.monitorConnectionHealth() }()
+	go func() { defer close(dones[4]); g.handlePingHeartbeat() }()
+
+	time.Sleep(20 * time.Millisecond)
+	g.mu.Lock()
+	g.connectionCancel()
+	g.mu.Unlock()
+
+	for i, done := range dones {
+		select {
+		case <-done:
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("background goroutine %d did not exit after connection context cancel", i)
+		}
+	}
+}
+
+func TestHardening_SessionHelloConfigureFailureUnblocksWait(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+	g.context = context.Background()
+	g.provider = &hardeningTestProvider{configureErr: errors.New("configure failed")}
+	g.networkInterface = &hardeningTestNetworkInterface{}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- g.WaitForSession(500 * time.Millisecond)
+	}()
+
+	time.Sleep(10 * time.Millisecond)
+	g.handleSessionHelloResponse("session_hello", &pb.SessionHelloResponse{
+		MachineId:        "machine-1",
+		MachineToken:     "token-1",
+		SubnetRoutes:     []string{"fd00::/64"},
+		Environment:      []string{"A=B"},
+		HostMapping:      []*pb.HostMapping{},
+		SshPublicKey:     []byte("ssh-key"),
+		SigningPublicKey: []byte("signing-key"),
+	})
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("WaitForSession should unblock without timeout, got: %v", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("WaitForSession remained blocked after configure failure")
+	}
+
+	select {
+	case id := <-g.connectionIDChan:
+		if id != "" {
+			t.Fatalf("expected empty machine ID failure signal, got %q", id)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("expected failure signal on connectionIDChan")
+	}
+}
+
+func TestHardening_LockOrderingConsistency(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+	g.poolConfig.FailoverTimeout = 5 * time.Millisecond
+	g.connections = make([]*grpc.ClientConn, 1)
+	g.streamManager.connectionHealth = []bool{true}
+	g.streamManager.tunnelStreams = []*StreamInfo{{
+		streamID:  "s0",
+		connIndex: 0,
+		isHealthy: true,
+		lastUsed:  time.Now().Add(-time.Second),
+	}}
+	g.streamManager.streamMetrics["s0"] = &StreamMetrics{}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			g.performHealthCheck()
+		}
+	}()
+
+	for i := 0; i < 1000; i++ {
+		g.streamManager.tunnelMu.Lock()
+		_, _ = g.selectWeightedRoundRobinStream()
+		g.streamManager.tunnelMu.Unlock()
+	}
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("potential deadlock detected between performHealthCheck and weighted selection")
 	}
 }

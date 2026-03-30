@@ -222,3 +222,55 @@ func TestHardening_CircuitBreakerExecuteContextCancellation(t *testing.T) {
 	// the test exits, preventing interference with other tests.
 	wg.Wait()
 }
+
+func TestHardening_CircuitBreakerHalfOpenCAS(t *testing.T) {
+	config := DefaultCircuitBreakerConfig()
+	config.MaxConcurrentRequests = 1
+	config.SuccessThreshold = 1000
+	config.RequestTimeout = 2 * time.Second
+
+	const workers = 200
+	const rounds = 20
+
+	for round := 0; round < rounds; round++ {
+		cb := NewCircuitBreaker(config)
+		cb.TransitionToHalfOpen()
+
+		start := make(chan struct{})
+		release := make(chan struct{})
+		results := make(chan error, workers)
+
+		for i := 0; i < workers; i++ {
+			go func() {
+				<-start
+				err := cb.Execute(context.Background(), func() error {
+					<-release
+					return nil
+				})
+				results <- err
+			}()
+		}
+
+		close(start)
+		time.Sleep(10 * time.Millisecond)
+		close(release)
+
+		successes := 0
+		rejected := 0
+		for i := 0; i < workers; i++ {
+			err := <-results
+			switch {
+			case err == nil:
+				successes++
+			case errors.Is(err, ErrCircuitBreakerOpen):
+				rejected++
+			default:
+				t.Fatalf("round %d: unexpected error: %v", round, err)
+			}
+		}
+
+		if successes != config.MaxConcurrentRequests {
+			t.Fatalf("round %d: expected exactly %d half-open successes, got %d (rejected=%d)", round, config.MaxConcurrentRequests, successes, rejected)
+		}
+	}
+}

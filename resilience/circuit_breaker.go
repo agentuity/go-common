@@ -153,12 +153,15 @@ func (cb *CircuitBreaker) beforeRequest() error {
 
 	case StateHalfOpen:
 		// Limit concurrent requests in half-open state
-		currentRequests := atomic.LoadInt32(&cb.requests)
-		if currentRequests >= int32(cb.config.MaxConcurrentRequests) {
-			return ErrCircuitBreakerOpen
+		for {
+			currentRequests := atomic.LoadInt32(&cb.requests)
+			if currentRequests >= int32(cb.config.MaxConcurrentRequests) {
+				return ErrCircuitBreakerOpen
+			}
+			if atomic.CompareAndSwapInt32(&cb.requests, currentRequests, currentRequests+1) {
+				return nil
+			}
 		}
-		atomic.AddInt32(&cb.requests, 1)
-		return nil
 
 	default:
 		return ErrCircuitBreakerOpen

@@ -178,14 +178,14 @@ func TestHardening_RandIndexNotRandom(t *testing.T) {
 	}
 }
 
-func TestHardening_ReconnectDrainsOnlyOneConnectionID(t *testing.T) {
+func TestHardening_ReconnectDrainsAllConnectionIDs(t *testing.T) {
 	connectionIDChan := make(chan string, 8)
 	connectionIDChan <- "a"
 	connectionIDChan <- "b"
 	connectionIDChan <- "c"
 	connectionIDChan <- "d"
 
-	// Drain loop matching the fixed production code in reconnect().
+	// Drain loop matching the production code in reconnect().
 	for {
 		select {
 		case <-connectionIDChan:
@@ -326,24 +326,6 @@ func TestHardening_ConcurrentCloseAndWritePacket(t *testing.T) {
 	case p := <-panicCh:
 		t.Fatalf("panic during concurrent Close + WritePacket: %v", p)
 	default:
-	}
-}
-
-func TestHardening_ConnectionIDChannelDrainInReconnect(t *testing.T) {
-	connectionIDChan := make(chan string, 8)
-	connectionIDChan <- "id1"
-	connectionIDChan <- "id2"
-	connectionIDChan <- "id3"
-	connectionIDChan <- "id4"
-
-	// Exact select pattern from reconnect().
-	select {
-	case <-connectionIDChan:
-	default:
-	}
-
-	if got := len(connectionIDChan); got != 3 {
-		t.Fatalf("expected single-drain behavior (3 remaining), got %d", got)
 	}
 }
 

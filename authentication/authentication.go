@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/agentuity/go-common/crypto"
 	"github.com/xhit/go-str2duration/v2"
 )
 
@@ -82,7 +83,40 @@ func NewBearerToken(sharedSecret string, opts ...TokenOpt) (string, error) {
 	return nonce + "." + tok2, nil
 }
 
+// NewBearerTokenV2 generates a v2 bearer token using HKDF-derived key.
+// The token format is "v2.bearer-token.<nonce>.<hash>" (non-expiring)
+// or "v2.bearer-token.<duration>.<timestamp>.<hash>" (expiring).
+func NewBearerTokenV2(sharedSecret string, opts ...TokenOpt) (string, error) {
+	derivedKey, err := crypto.DeriveKey([]byte(sharedSecret), crypto.ContextBearerToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive key: %w", err)
+	}
+	// Generate the inner token using the derived key (same algorithm as v1)
+	innerToken, err := NewBearerToken(string(derivedKey), opts...)
+	if err != nil {
+		return "", err
+	}
+	return crypto.FormatV2Token(crypto.ContextBearerToken, innerToken), nil
+}
+
 func ValidateToken(sharedSecret string, auth string) error {
+	version, context, payload := crypto.DetectTokenVersion(auth)
+	if version == "v2" {
+		if context != crypto.ContextBearerToken {
+			return ErrInvalidToken
+		}
+		derivedKey, err := crypto.DeriveKey([]byte(sharedSecret), crypto.ContextBearerToken)
+		if err != nil {
+			return ErrInvalidToken
+		}
+		return validateTokenInner(string(derivedKey), payload)
+	}
+	// v1 legacy: use raw shared secret
+	return validateTokenInner(sharedSecret, auth)
+}
+
+// validateTokenInner contains the core token validation logic shared by v1 and v2.
+func validateTokenInner(key string, auth string) error {
 	if len(auth) < 32 {
 		return ErrInvalidToken
 	}
@@ -127,7 +161,7 @@ func ValidateToken(sharedSecret string, auth string) error {
 
 	// see if we can hash the token with our shared secret to get the same value as the second token
 	hash := sha256.New()
-	hash.Write([]byte(sharedSecret + "." + token))
+	hash.Write([]byte(key + "." + token))
 	secret := hash.Sum(nil)
 
 	// if the two values are not the same, return an error

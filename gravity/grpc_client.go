@@ -2326,6 +2326,9 @@ func (g *GravityClient) sendOnControlStream(streamIndex int, msg *pb.SessionMess
 		return fmt.Errorf("control stream %d is nil", streamIndex)
 	}
 	// gRPC Send is not safe for concurrent use; serialize per stream.
+	if streamIndex < 0 || streamIndex >= len(g.streamManager.controlSendMu) {
+		return fmt.Errorf("controlSendMu index %d out of range (len=%d)", streamIndex, len(g.streamManager.controlSendMu))
+	}
 	g.streamManager.controlSendMu[streamIndex].Lock()
 	err := stream.Send(msg)
 	g.streamManager.controlSendMu[streamIndex].Unlock()
@@ -3145,6 +3148,13 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 
 	if stream == nil || streamIndex < 0 {
 		return fmt.Errorf("no control streams available")
+	}
+
+	if streamIndex >= len(g.circuitBreakers) {
+		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", streamIndex, len(g.circuitBreakers))
+	}
+	if streamIndex >= len(g.streamManager.controlSendMu) {
+		return fmt.Errorf("controlSendMu index %d out of range (len=%d)", streamIndex, len(g.streamManager.controlSendMu))
 	}
 
 	circuitBreaker := g.circuitBreakers[streamIndex]
@@ -4392,13 +4402,16 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 		}
 	})
 
-	if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
-		g.streamManager.controlSendMu[streamIndex].Lock()
+	if streamIndex < 0 || streamIndex >= len(g.streamManager.controlSendMu) {
+		g.logger.Error("ping aborted: controlSendMu index %d out of range (len=%d)", streamIndex, len(g.streamManager.controlSendMu))
+		g.pendingMu.Lock()
+		delete(g.pending, pingID)
+		g.pendingMu.Unlock()
+		return
 	}
+	g.streamManager.controlSendMu[streamIndex].Lock()
 	err := controlStream.Send(pingMsg)
-	if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
-		g.streamManager.controlSendMu[streamIndex].Unlock()
-	}
+	g.streamManager.controlSendMu[streamIndex].Unlock()
 	sendBlocked.Stop()
 
 	if err != nil {

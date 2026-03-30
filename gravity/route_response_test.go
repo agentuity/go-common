@@ -3,6 +3,7 @@ package gravity
 import (
 	"context"
 	"io"
+	"sync"
 	"testing"
 	"time"
 
@@ -150,10 +151,13 @@ func TestSendRouteSandboxRequest_ErrorFromServer(t *testing.T) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
-		streamManager:          &StreamManager{controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream}},
-		retryConfig:            DefaultRetryConfig(),
-		circuitBreakers:        []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
-		sessionReady:           make(chan struct{}),
+		streamManager: &StreamManager{
+			controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream},
+			controlSendMu:  make([]sync.Mutex, 1),
+		},
+		retryConfig:     DefaultRetryConfig(),
+		circuitBreakers: []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
+		sessionReady:    make(chan struct{}),
 	}
 	close(client.sessionReady)
 
@@ -188,10 +192,13 @@ func TestSendRouteSandboxRequest_SuccessFromServer(t *testing.T) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
-		streamManager:          &StreamManager{controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream}},
-		retryConfig:            DefaultRetryConfig(),
-		circuitBreakers:        []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
-		sessionReady:           make(chan struct{}),
+		streamManager: &StreamManager{
+			controlStreams: []pb.GravitySessionService_EstablishSessionClient{stream},
+			controlSendMu:  make([]sync.Mutex, 1),
+		},
+		retryConfig:     DefaultRetryConfig(),
+		circuitBreakers: []*CircuitBreaker{NewCircuitBreaker(DefaultCircuitBreakerConfig())},
+		sessionReady:    make(chan struct{}),
 	}
 	close(client.sessionReady)
 

@@ -1186,17 +1186,31 @@ func (g *GravityClient) establishControlStreams() error {
 // establishTunnelStreams creates tunnel streams for packet forwarding
 func (g *GravityClient) establishTunnelStreams() error {
 	// Wait for machine ID from control stream(s).
-	// In multi-endpoint mode, wait for responses from ALL Gravity servers to
-	// ensure each has processed the session hello before we open tunnel streams.
+	// In multi-endpoint mode, wait for responses from ALL Gravity servers
+	// (one per endpoint, not per pooled connection) to ensure each has
+	// processed the session hello before we open tunnel streams.
 	numExpected := 1
 	if len(g.gravityURLs) > 1 {
-		numExpected = len(g.connections)
+		numExpected = len(g.gravityURLs)
 		g.logger.Debug("waiting for session hello responses from %d Gravity servers...", numExpected)
 	} else {
 		g.logger.Debug("waiting for machine ID from server...")
 	}
 
+	// Drain any stale responses from previous sessions (reconnect path).
+	for {
+		select {
+		case <-g.connectionIDChan:
+		default:
+			goto drained
+		}
+	}
+drained:
+
+	// Single shared deadline — don't let late responses extend the total wait.
 	var machineID string
+	deadline := time.NewTimer(time.Minute)
+	defer deadline.Stop()
 	for i := 0; i < numExpected; i++ {
 		select {
 		case id := <-g.connectionIDChan:
@@ -1208,9 +1222,8 @@ func (g *GravityClient) establishTunnelStreams() error {
 				machineID = id
 			}
 			g.logger.Debug("session hello response %d/%d received (machine ID: %s)", i+1, numExpected, id)
-		case <-time.After(time.Minute):
+		case <-deadline.C:
 			if machineID != "" && i > 0 {
-				// Got at least one response — proceed with what we have.
 				g.logger.Warn("timeout waiting for session hello response %d/%d, proceeding with %d responses", i+1, numExpected, i)
 				goto proceed
 			}

@@ -25,10 +25,14 @@ type PooledBuffer struct {
 
 // GravityConfig contains configuration for the Gravity client
 type GravityConfig struct {
-	Context              context.Context
-	Logger               logger.Logger
-	Provider             provider.Provider
-	URL                  string
+	Context  context.Context
+	Logger   logger.Logger
+	Provider provider.Provider
+	URL      string
+	// GravityURLs is a list of Gravity server URLs to connect to.
+	// If set, this takes precedence over URL.
+	// Hadron connects to up to MaxGravityPeers servers from this list.
+	GravityURLs          []string
 	CACert               string
 	IP4Address           string
 	IP6Address           string
@@ -49,6 +53,21 @@ type GravityConfig struct {
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)
 	DefaultServerName    string   // Fallback TLS ServerName when connecting via IP address (default: "gravity.agentuity.com")
+
+	// DiscoveryResolveFunc is called periodically to re-resolve the set of
+	// available Gravity server URLs. If nil, no re-resolution or cycling occurs.
+	// The function should return ALL available URLs (not capped by MaxGravityPeers).
+	// The GravityClient handles selection and capping internally.
+	DiscoveryResolveFunc func() []string
+
+	// PeerDiscoveryInterval is how often to re-resolve DNS for new Gravity peers.
+	// Default: 30 minutes.
+	PeerDiscoveryInterval time.Duration
+
+	// PeerCycleInterval is how often to rotate one connection when there are more
+	// available Gravities than active connections. Only cycles if DNS returns more
+	// IPs than MaxGravityPeers. Default: 2 hours.
+	PeerCycleInterval time.Duration
 
 	// MaxReconnectAttempts is the maximum number of reconnection attempts before
 	// invoking ReconnectionFailedCallback. Default: 10

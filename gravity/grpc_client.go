@@ -417,7 +417,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		caCert:                 config.CACert,
 		defaultServerName:      config.DefaultServerName,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
-		connectionIDChan:       make(chan string, 1),
+		connectionIDChan:       make(chan string, max(1, poolConfig.PoolSize*len(config.GravityURLs))),
 		sessionReady:           make(chan struct{}),
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
@@ -1185,21 +1185,41 @@ func (g *GravityClient) establishControlStreams() error {
 
 // establishTunnelStreams creates tunnel streams for packet forwarding
 func (g *GravityClient) establishTunnelStreams() error {
-	// Wait for machine ID from primary control stream using channel
-	g.logger.Debug("waiting for machine ID from server...")
+	// Wait for machine ID from control stream(s).
+	// In multi-endpoint mode, wait for responses from ALL Gravity servers to
+	// ensure each has processed the session hello before we open tunnel streams.
+	numExpected := 1
+	if len(g.gravityURLs) > 1 {
+		numExpected = len(g.connections)
+		g.logger.Debug("waiting for session hello responses from %d Gravity servers...", numExpected)
+	} else {
+		g.logger.Debug("waiting for machine ID from server...")
+	}
 
 	var machineID string
-	select {
-	case machineID = <-g.connectionIDChan:
-		if machineID == "" {
-			g.logger.Error("session failed - authentication rejected by server")
-			return fmt.Errorf("session failed - authentication rejected by server")
+	for i := 0; i < numExpected; i++ {
+		select {
+		case id := <-g.connectionIDChan:
+			if id == "" {
+				g.logger.Error("session failed - authentication rejected by server (response %d/%d)", i+1, numExpected)
+				return fmt.Errorf("session failed - authentication rejected by server")
+			}
+			if machineID == "" {
+				machineID = id
+			}
+			g.logger.Debug("session hello response %d/%d received (machine ID: %s)", i+1, numExpected, id)
+		case <-time.After(time.Minute):
+			if machineID != "" && i > 0 {
+				// Got at least one response — proceed with what we have.
+				g.logger.Warn("timeout waiting for session hello response %d/%d, proceeding with %d responses", i+1, numExpected, i)
+				goto proceed
+			}
+			g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
+			return fmt.Errorf("timeout waiting for machine ID from server")
 		}
-		g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
-	case <-time.After(time.Minute):
-		g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
-		return fmt.Errorf("timeout waiting for machine ID from server")
 	}
+proceed:
+	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
 
 	// Use configured streams per connection
 	streamsPerConnection := g.poolConfig.StreamsPerConnection

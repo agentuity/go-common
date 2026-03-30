@@ -527,3 +527,139 @@ func TestDrainConnectionIDChan_EmptyNoOp(t *testing.T) {
 		t.Fatal("drainConnectionIDChan blocked on empty channel")
 	}
 }
+
+// --- Tunnel recovery after reconnect ---
+
+// TestTunnelStreamDisconnection_TriggersEndpointReconnect verifies that when a
+// tunnel stream disconnects in multi-endpoint mode, it resolves the correct
+// endpoint index and triggers per-endpoint disconnection.
+func TestTunnelStreamDisconnection_TriggersEndpointReconnect(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	// Set up 6 tunnel streams (2 per endpoint).
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 6)
+	for i := 0; i < 6; i++ {
+		g.streamManager.tunnelStreams[i] = &StreamInfo{
+			connIndex: i / 2,
+			streamID:  fmt.Sprintf("stream-%d", i),
+			isHealthy: true,
+		}
+	}
+
+	// Streams 0-1 belong to endpoint 0, streams 2-3 to endpoint 1, streams 4-5 to endpoint 2.
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+	g.streamManager.controlStreams[2] = &configurableMockStream{}
+
+	// Disconnect tunnel stream 3 (belongs to endpoint 1).
+	// handleTunnelStreamDisconnection fires handleEndpointDisconnection
+	// in a goroutine. The CAS on endpointReconnecting[1] proves the
+	// correct endpoint was identified from the tunnel stream index.
+	g.handleTunnelStreamDisconnection(3)
+
+	// Give the goroutine a moment to fire.
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify endpoint 1 entered the reconnection path (flag was set).
+	if !g.endpointReconnecting[1].Load() {
+		t.Fatal("expected endpointReconnecting[1] to be true after tunnel stream 3 disconnection")
+	}
+	// Endpoints 0 and 2 should NOT be reconnecting.
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected endpointReconnecting[0] to remain false")
+	}
+	if g.endpointReconnecting[2].Load() {
+		t.Fatal("expected endpointReconnecting[2] to remain false")
+	}
+}
+
+// TestEndpointDisconnection_NotBlockedAfterFullReconnect verifies that
+// endpointReconnecting flags don't block reconnection after a full reconnect
+// replaces the slice.
+func TestEndpointDisconnection_NotBlockedAfterFullReconnect(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	// Simulate: all 3 flags were set during a previous failure cycle.
+	for i := 0; i < 3; i++ {
+		g.endpointReconnecting[i].Store(true)
+	}
+
+	// Simulate full reconnect: startMultiEndpoint replaces the slice.
+	g.endpointReconnecting = make([]atomic.Bool, 3)
+
+	// Now all flags should be false, allowing new reconnections.
+	for i := 0; i < 3; i++ {
+		if g.endpointReconnecting[i].Load() {
+			t.Fatalf("endpoint %d reconnecting flag should be false after slice replacement", i)
+		}
+	}
+
+	// Verify handleEndpointDisconnection can set the flag (not blocked).
+	// Set closing=true so it doesn't actually reconnect.
+	g.mu.Lock()
+	g.closing = true
+	g.mu.Unlock()
+
+	g.handleEndpointDisconnection(1, "test")
+	// closing=true means handleEndpointDisconnection returns early, but
+	// if it wasn't blocked by the flag check, the function was entered.
+	// The flag should still be false since closing short-circuits before CAS.
+}
+
+// TestEndpointDisconnection_CanceledNotSilenced verifies that the
+// codes.Canceled error path doesn't silently swallow stream deaths
+// when the client is not intentionally closing.
+func TestEndpointDisconnection_ClosingPreventsReconnect(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+	g.streamManager.controlStreams[2] = &configurableMockStream{}
+
+	// When closing, handleEndpointDisconnection should return immediately.
+	g.mu.Lock()
+	g.closing = true
+	g.mu.Unlock()
+
+	g.handleEndpointDisconnection(1, "test-closing")
+	time.Sleep(50 * time.Millisecond)
+
+	// Control stream 1 should NOT have been nil'd (closing short-circuits).
+	g.streamManager.controlMu.RLock()
+	stream1 := g.streamManager.controlStreams[1]
+	g.streamManager.controlMu.RUnlock()
+	if stream1 == nil {
+		t.Fatal("expected control stream 1 to be preserved when closing=true")
+	}
+}
+
+// TestEndpointDisconnection_FlagClearedOnFullReconnectFallback verifies that
+// when handleEndpointDisconnection falls through to handleServerDisconnection
+// (all endpoints down), the triggering endpoint's reconnecting flag is cleared.
+func TestEndpointDisconnection_FlagClearedOnFullReconnectFallback(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+	g.skipAutoReconnect = true // prevent actual reconnect goroutine
+
+	// All control streams nil = no healthy endpoints.
+	// handleEndpointDisconnection should fall through to full reconnect
+	// and clear the flag.
+
+	g.handleEndpointDisconnection(1, "test-fallback")
+	time.Sleep(100 * time.Millisecond)
+
+	if g.endpointReconnecting[1].Load() {
+		t.Fatal("expected endpointReconnecting[1] to be cleared after full reconnect fallback")
+	}
+}

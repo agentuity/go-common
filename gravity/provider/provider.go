@@ -55,6 +55,10 @@ type Configuration struct {
 	MachineID string
 	// MachineCertBundle is the server-assigned machine certificate bundle (cert, ca, key)
 	MachineCertBundle string
+	// SigningPublicKey is the PEM-encoded ECDSA public key used by the ion proxy
+	// to sign HTTP requests forwarded to agents. Agents use this key to verify
+	// that incoming requests originated from a trusted upstream proxy.
+	SigningPublicKey []byte
 }
 
 // DeprovisionReason specifies why a resource is being deprovisioned

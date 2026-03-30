@@ -52,6 +52,27 @@ func init() {
 // Error variables for consistency with old implementation
 var ErrConnectionClosed = errors.New("gravity connection closed")
 
+const (
+	// DefaultMaxGravityPeers is the maximum number of Gravity servers
+	// a single Hadron will connect to simultaneously.
+	DefaultMaxGravityPeers = 3
+
+	// DefaultPeerDiscoveryInterval controls how often DNS is re-resolved
+	// to discover additional Gravity peers.
+	DefaultPeerDiscoveryInterval = 30 * time.Minute
+
+	// DefaultPeerCycleInterval controls how often one connection is rotated
+	// when more Gravity peers are available than active connections.
+	DefaultPeerCycleInterval = 2 * time.Hour
+
+	// DefaultStreamsPerGravity is the number of tunnel streams established
+	// per Gravity server connection.
+	DefaultStreamsPerGravity = 2
+
+	// DefaultBindingTTL is how long a flow stays pinned to the same Gravity.
+	DefaultBindingTTL = 5 * time.Second
+)
+
 // isContextCanceled checks if an error is due to context cancellation
 // This includes both direct context.Canceled errors and gRPC Canceled status codes
 func isContextCanceled(ctx context.Context, err error) bool {
@@ -81,6 +102,14 @@ type ConnectionPoolConfig struct {
 	// Health check and failover settings
 	HealthCheckInterval time.Duration
 	FailoverTimeout     time.Duration
+
+	// MaxGravityPeers caps how many Gravity servers Hadron connects to.
+	// Default: DefaultMaxGravityPeers (3).
+	MaxGravityPeers int
+
+	// StreamsPerGravity is tunnel streams per Gravity host.
+	// Default: DefaultStreamsPerGravity (2).
+	StreamsPerGravity int
 }
 
 // StreamAllocationStrategy defines how streams are selected for load distribution
@@ -111,6 +140,23 @@ type checkpointURLResult struct {
 	Error    string
 }
 
+// GravityEndpoint represents a connection to a single Gravity server.
+type GravityEndpoint struct {
+	// URL is the address of this Gravity server.
+	URL string
+
+	// healthy indicates whether this endpoint is currently reachable.
+	healthy atomic.Bool
+
+	// lastHeartbeat is the Unix timestamp of the last successful health check.
+	lastHeartbeat atomic.Int64
+}
+
+// IsHealthy returns true if the endpoint is currently reachable.
+func (e *GravityEndpoint) IsHealthy() bool {
+	return e.healthy.Load()
+}
+
 // GravityClient implements the provider.Server interface using gRPC transport
 type GravityClient struct {
 	// Configuration
@@ -118,6 +164,7 @@ type GravityClient struct {
 	logger             logger.Logger
 	provider           provider.Provider
 	url                string
+	gravityURLs        []string
 	ecdsaPrivateKey    *ecdsa.PrivateKey
 	instanceID         string
 	authorizationToken string
@@ -139,6 +186,24 @@ type GravityClient struct {
 	connections    []*grpc.ClientConn // Connection pool (4-8 connections)
 	sessionClients []pb.GravitySessionServiceClient
 	streamManager  *StreamManager
+
+	// Multi-endpoint support: one endpoint per Gravity server
+	endpoints   []*GravityEndpoint
+	endpointsMu sync.RWMutex
+	selector    *EndpointSelector
+
+	// Peer discovery and cycling
+	discoveryResolveFunc  func() []string
+	peerDiscoveryInterval time.Duration
+	peerCycleInterval     time.Duration
+	lastCycleTime         atomic.Int64 // unix timestamp of last cycle
+
+	// Per-connection endpoint URL for multi-endpoint routing.
+	connectionURLs []string
+
+	// Endpoint URL -> tunnel stream indices.
+	endpointStreamIndices map[string][]int
+	bindingCleanupOnce    sync.Once
 
 	// Fault tolerance
 	retryConfig     RetryConfig
@@ -331,6 +396,10 @@ func New(config GravityConfig) (*GravityClient, error) {
 		logger:                 config.Logger,
 		provider:               config.Provider,
 		url:                    config.URL,
+		gravityURLs:            append([]string(nil), config.GravityURLs...),
+		discoveryResolveFunc:   config.DiscoveryResolveFunc,
+		peerDiscoveryInterval:  config.PeerDiscoveryInterval,
+		peerCycleInterval:      config.PeerCycleInterval,
 		ecdsaPrivateKey:        config.ECDSAPrivateKey,
 		instanceID:             config.InstanceID,
 		ip4Address:             config.IP4Address,
@@ -355,6 +424,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		pendingCheckpointURL:   make(map[string]chan checkpointURLResult),
+		endpointStreamIndices:  make(map[string][]int),
 		inboundPackets:         make(chan *PooledBuffer, 1000),
 		outboundPackets:        make(chan []byte, 1000),
 		textMessages:           make(chan *PooledBuffer, 100),
@@ -385,7 +455,10 @@ func New(config GravityConfig) (*GravityClient, error) {
 	return g, nil
 }
 
-// Start establishes gRPC connections and starts the client
+// Start establishes gRPC connections and starts the client.
+// When GravityURLs is configured with multiple URLs, the multi-endpoint path
+// is used (multiple Gravity servers, sticky tunnel selection, peer cycling).
+// Otherwise, the original single-URL path is used — identical to pre-multi-tunnel behavior.
 func (g *GravityClient) Start() error {
 	g.logger.Debug("starting gRPC Gravity client...")
 	g.mu.Lock()
@@ -394,6 +467,14 @@ func (g *GravityClient) Start() error {
 		g.mu.Unlock()
 		return fmt.Errorf("already connected")
 	}
+
+	// Multi-endpoint mode: opt-in via GravityURLs with >1 URL.
+	if len(g.gravityURLs) > 1 {
+		g.mu.Unlock()
+		return g.startMultiEndpoint()
+	}
+
+	// ── Original single-URL path (unchanged) ──────────────────────────────
 
 	g.logger.Debug("parsing gRPC URL: %s", g.url)
 	// Parse gRPC URL
@@ -542,7 +623,7 @@ func (g *GravityClient) Start() error {
 	g.connected = true
 	g.mu.Unlock()
 
-	g.logger.Debug("connected to Gravity server via gRPC: %s", grpcURL)
+	g.logger.Debug("connected to Gravity server: %s", g.url)
 
 	g.logger.Debug("starting background goroutines...")
 	// Start background goroutines
@@ -557,6 +638,515 @@ func (g *GravityClient) Start() error {
 
 	g.logger.Debug("gRPC Gravity client startup completed successfully")
 	return nil
+}
+
+// startMultiEndpoint is the multi-Gravity connection path, activated when
+// GravityURLs has >1 URL. Creates connections to multiple Gravity servers
+// with sticky tunnel selection and peer cycling.
+func (g *GravityClient) startMultiEndpoint() error {
+	// Resolve URLs under g.mu (reads gravityURLs), then release before
+	// acquiring g.endpointsMu to avoid nested lock ordering issues.
+	g.mu.Lock()
+	urls := g.resolveGravityURLs()
+	if len(urls) == 0 {
+		g.mu.Unlock()
+		return fmt.Errorf("no gravity URL configured")
+	}
+	g.mu.Unlock()
+
+	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
+
+	g.endpointsMu.Lock()
+	g.endpoints = make([]*GravityEndpoint, 0, len(urls))
+	for _, endpointURL := range urls {
+		ep := &GravityEndpoint{URL: endpointURL}
+		ep.healthy.Store(false)
+		g.endpoints = append(g.endpoints, ep)
+	}
+	g.selector = NewEndpointSelector(DefaultBindingTTL)
+	g.endpointsMu.Unlock()
+
+	g.mu.Lock()
+
+	g.bindingCleanupOnce.Do(func() {
+		go g.bindingCleanupLoop()
+	})
+
+	// Start peer discovery and connection cycling when a resolver is configured.
+	if g.discoveryResolveFunc != nil {
+		go g.peerDiscoveryLoop()
+	}
+
+	g.logger.Debug("loading CA certificate for TLS...")
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		g.logger.Warn("failed to load system cert pool, using empty pool: %v", err)
+		pool = x509.NewCertPool()
+	}
+	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
+		g.logger.Error("failed to load embedded CA certificate")
+		g.mu.Unlock()
+		return fmt.Errorf("failed to load embedded CA certificate")
+	}
+
+	g.logger.Debug("creating TLS configuration...")
+	if g.tlsCert == nil {
+		g.logger.Error("failed to load TLS certificate")
+		g.mu.Unlock()
+		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
+	}
+
+	connectionCount := g.poolConfig.PoolSize * len(urls)
+	g.logger.Debug("creating connection pool with %d connections across %d endpoints", connectionCount, len(urls))
+	g.connections = make([]*grpc.ClientConn, connectionCount)
+	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
+	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
+	g.connectionURLs = make([]string, connectionCount)
+	g.endpointStreamIndices = make(map[string][]int)
+
+	// Initialize connection health tracking
+	g.streamManager.connectionHealth = make([]bool, connectionCount)
+	for i := range g.streamManager.connectionHealth {
+		g.streamManager.connectionHealth[i] = true
+	}
+
+	g.logger.Debug("establishing %d gRPC connections across %d gravity endpoint(s)", connectionCount, len(urls))
+	for i := range connectionCount {
+		endpointURL := urls[i%len(urls)]
+		grpcURL, err := g.parseGRPCURL(endpointURL)
+		if err != nil {
+			g.cleanup()
+			g.mu.Unlock()
+			return fmt.Errorf("invalid URL %q: %w", endpointURL, err)
+		}
+
+		hostname, err := g.extractHostnameFromURL(endpointURL)
+		if err != nil {
+			g.cleanup()
+			g.mu.Unlock()
+			return fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err)
+		}
+
+		cert := *g.tlsCert
+		tlsConfig := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			ServerName:   hostname,
+			MinVersion:   tls.VersionTLS13,
+			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				if g.tlsCert != nil {
+					return g.tlsCert, nil
+				}
+				return nil, fmt.Errorf("no client certificate available")
+			},
+			RootCAs: pool,
+		}
+
+		creds := credentials.NewTLS(tlsConfig)
+
+		g.logger.Debug("creating gRPC client %d to %s with TLS", i+1, grpcURL)
+		conn, err := grpc.NewClient(grpcURL,
+			grpc.WithTransportCredentials(creds),
+			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+			grpc.WithInitialWindowSize(1<<20),
+			grpc.WithInitialConnWindowSize(4<<20),
+		)
+		if err != nil {
+			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
+			g.cleanup()
+			g.mu.Unlock()
+			return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)
+		}
+
+		g.connections[i] = conn
+		g.sessionClients[i] = pb.NewGravitySessionServiceClient(conn)
+		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
+		g.connectionURLs[i] = endpointURL
+	}
+	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
+
+	g.mu.Unlock()
+
+	g.logger.Debug("establishing control streams...")
+	err = g.establishControlStreams()
+	if err != nil {
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("control streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to establish control streams: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to establish control streams: %w", err)
+	}
+	g.logger.Debug("control streams established successfully")
+
+	g.logger.Debug("sending session hello...")
+	err = g.sendSessionHello()
+	if err != nil {
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("session hello cancelled due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to send session hello: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to send session hello: %w", err)
+	}
+	g.logger.Debug("session hello sent successfully")
+
+	g.logger.Debug("establishing tunnel streams...")
+	err = g.establishTunnelStreams()
+	if err != nil {
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("tunnel streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to establish tunnel streams: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to establish tunnel streams: %w", err)
+	}
+	g.logger.Debug("tunnel streams established successfully")
+	g.rebuildEndpointStreamIndices()
+	g.refreshEndpointHealth()
+
+	g.mu.Lock()
+	g.connected = true
+	g.mu.Unlock()
+
+	g.logger.Info("connected to %d Gravity servers: %v", len(urls), urls)
+
+	go g.handleInboundPackets()
+	go g.handleOutboundPackets()
+	go g.handleTextMessages()
+	go g.monitorConnectionHealth()
+	go g.handlePingHeartbeat()
+
+	g.logger.Debug("gRPC Gravity client multi-endpoint startup completed successfully")
+	return nil
+}
+
+func (g *GravityClient) resolveGravityURLs() []string {
+	if len(g.gravityURLs) == 0 {
+		if strings.TrimSpace(g.url) == "" {
+			return nil
+		}
+		return []string{g.url}
+	}
+
+	maxPeers := g.poolConfig.MaxGravityPeers
+	if maxPeers <= 0 {
+		maxPeers = DefaultMaxGravityPeers
+	}
+
+	seen := make(map[string]struct{}, len(g.gravityURLs))
+	urls := make([]string, 0, len(g.gravityURLs))
+	for _, raw := range g.gravityURLs {
+		u := strings.TrimSpace(raw)
+		if u == "" {
+			continue
+		}
+		if _, ok := seen[u]; ok {
+			continue
+		}
+		seen[u] = struct{}{}
+		urls = append(urls, u)
+		if len(urls) >= maxPeers {
+			break
+		}
+	}
+
+	if len(urls) == 0 {
+		if strings.TrimSpace(g.url) == "" {
+			return nil
+		}
+		return []string{g.url}
+	}
+
+	return urls
+}
+
+func (g *GravityClient) bindingCleanupLoop() {
+	ticker := time.NewTicker(DefaultBindingTTL)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		case <-ticker.C:
+			g.endpointsMu.RLock()
+			selector := g.selector
+			g.endpointsMu.RUnlock()
+			if selector != nil {
+				selector.ExpireBindings()
+			}
+		}
+	}
+}
+
+func (g *GravityClient) peerDiscoveryLoop() {
+	discoveryInterval := g.peerDiscoveryInterval
+	if discoveryInterval <= 0 {
+		discoveryInterval = DefaultPeerDiscoveryInterval
+	}
+	cycleInterval := g.peerCycleInterval
+	if cycleInterval <= 0 {
+		cycleInterval = DefaultPeerCycleInterval
+	}
+
+	ticker := time.NewTicker(discoveryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		case <-ticker.C:
+			g.checkPeerDiscovery(cycleInterval)
+		}
+	}
+}
+
+func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
+	if g.discoveryResolveFunc == nil {
+		return
+	}
+
+	allURLs := g.discoveryResolveFunc()
+	if len(allURLs) == 0 {
+		g.logger.Debug("peer discovery: resolve returned no URLs")
+		return
+	}
+
+	maxPeers := g.poolConfig.MaxGravityPeers
+	if maxPeers <= 0 {
+		maxPeers = DefaultMaxGravityPeers
+	}
+
+	connectedURLs := make(map[string]bool)
+	g.endpointsMu.RLock()
+	for _, ep := range g.endpoints {
+		if ep == nil || strings.TrimSpace(ep.URL) == "" {
+			continue
+		}
+		connectedURLs[ep.URL] = true
+	}
+	currentCount := len(connectedURLs)
+	g.endpointsMu.RUnlock()
+
+	g.mu.Lock()
+	g.gravityURLs = append([]string(nil), allURLs...)
+	g.mu.Unlock()
+
+	g.logger.Debug("peer discovery: resolved %d URLs, connected to %d/%d",
+		len(allURLs), currentCount, maxPeers)
+
+	// If DNS doesn't expose more hosts than we are already connected to,
+	// there is nothing to rotate.
+	if len(allURLs) <= currentCount {
+		g.logger.Debug("peer discovery: full coverage (%d URLs, %d connections), no cycling needed",
+			len(allURLs), currentCount)
+		return
+	}
+
+	// Find URLs we're not currently connected to.
+	var newURLs []string
+	for _, u := range allURLs {
+		u = strings.TrimSpace(u)
+		if u == "" {
+			continue
+		}
+		if !connectedURLs[u] {
+			newURLs = append(newURLs, u)
+		}
+	}
+
+	if len(newURLs) == 0 {
+		g.logger.Debug("peer discovery: no new URLs found")
+		return
+	}
+
+	// Identify currently connected endpoints that are no longer present in DNS.
+	dnsSet := make(map[string]bool, len(allURLs))
+	for _, u := range allURLs {
+		u = strings.TrimSpace(u)
+		if u != "" {
+			dnsSet[u] = true
+		}
+	}
+
+	var staleURLs []string
+	g.endpointsMu.RLock()
+	for _, ep := range g.endpoints {
+		if ep == nil || strings.TrimSpace(ep.URL) == "" {
+			continue
+		}
+		if !dnsSet[ep.URL] {
+			staleURLs = append(staleURLs, ep.URL)
+		}
+	}
+	g.endpointsMu.RUnlock()
+
+	// Priority 1: replace stale endpoints immediately.
+	if len(staleURLs) > 0 {
+		evictURL := staleURLs[0]
+		newURL := pickRandomURL(newURLs)
+		if newURL == "" {
+			g.logger.Debug("peer discovery: no candidate URL available to replace stale endpoint %s", evictURL)
+			return
+		}
+		g.logger.Info("peer discovery: replacing stale connection %s (no longer in DNS) with %s", evictURL, newURL)
+		g.cycleEndpoint(evictURL, newURL)
+		return
+	}
+
+	now := time.Now()
+	lastCycleUnix := g.lastCycleTime.Load()
+	if lastCycleUnix > 0 {
+		lastCycle := time.Unix(lastCycleUnix, 0)
+		if now.Sub(lastCycle) < cycleInterval {
+			g.logger.Debug("peer discovery: %d new URLs available but cycle interval not reached (last cycle: %s ago)",
+				len(newURLs), now.Sub(lastCycle).Round(time.Minute))
+			return
+		}
+	}
+
+	g.endpointsMu.RLock()
+	if len(g.endpoints) == 0 {
+		g.endpointsMu.RUnlock()
+		g.logger.Debug("peer discovery: no active endpoints available to cycle")
+		return
+	}
+	evictURL := g.endpoints[randIndex(len(g.endpoints))].URL
+	g.endpointsMu.RUnlock()
+
+	newURL := pickRandomURL(newURLs)
+	if newURL == "" {
+		g.logger.Debug("peer discovery: no candidate URL available for cycle")
+		return
+	}
+
+	g.logger.Info("peer discovery: cycling connection %s -> %s (%d total Gravities available, connected to %d)",
+		evictURL, newURL, len(allURLs), currentCount)
+	g.cycleEndpoint(evictURL, newURL)
+	g.lastCycleTime.Store(now.Unix())
+}
+
+// cycleEndpoint replaces one endpoint with another.
+// It removes the old endpoint and adds the new one.
+func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
+	if strings.TrimSpace(oldURL) == "" || strings.TrimSpace(newURL) == "" {
+		g.logger.Debug("peer discovery: cycle skipped due to empty URL(s): old=%q new=%q", oldURL, newURL)
+		return
+	}
+
+	g.endpointsMu.Lock()
+	oldIdx := -1
+	for i, ep := range g.endpoints {
+		if ep != nil && ep.URL == oldURL {
+			oldIdx = i
+			break
+		}
+	}
+	if oldIdx < 0 {
+		g.endpointsMu.Unlock()
+		g.logger.Debug("peer discovery: endpoint %s already removed", oldURL)
+		return
+	}
+
+	newEp := &GravityEndpoint{URL: newURL}
+	newEp.healthy.Store(false)
+	g.endpoints[oldIdx] = newEp
+	g.endpointsMu.Unlock()
+
+	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
+	g.logger.Debug("peer discovery: new endpoint %s will connect on next connection attempt", newURL)
+}
+
+func pickRandomURL(urls []string) string {
+	if len(urls) == 0 {
+		return ""
+	}
+	if len(urls) == 1 {
+		return urls[0]
+	}
+	return urls[randIndex(len(urls))]
+}
+
+func randIndex(n int) int {
+	if n <= 1 {
+		return 0
+	}
+	return int(time.Now().UnixNano() % int64(n))
+}
+
+func (g *GravityClient) rebuildEndpointStreamIndices() {
+	// Snapshot connectionURLs under g.mu to avoid racing with reconnect().
+	g.mu.RLock()
+	connURLs := make([]string, len(g.connectionURLs))
+	copy(connURLs, g.connectionURLs)
+	g.mu.RUnlock()
+
+	m := make(map[string][]int)
+
+	g.streamManager.tunnelMu.RLock()
+	for idx, stream := range g.streamManager.tunnelStreams {
+		if stream == nil {
+			continue
+		}
+		if stream.connIndex < 0 || stream.connIndex >= len(connURLs) {
+			continue
+		}
+		endpointURL := connURLs[stream.connIndex]
+		if endpointURL == "" {
+			continue
+		}
+		m[endpointURL] = append(m[endpointURL], idx)
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	g.mu.Lock()
+	g.endpointStreamIndices = m
+	g.mu.Unlock()
+}
+
+func (g *GravityClient) refreshEndpointHealth() {
+	g.endpointsMu.RLock()
+	endpoints := make([]*GravityEndpoint, len(g.endpoints))
+	copy(endpoints, g.endpoints)
+	g.endpointsMu.RUnlock()
+
+	if len(endpoints) == 0 {
+		return
+	}
+
+	connectionHealth := make([]bool, len(g.streamManager.connectionHealth))
+	g.streamManager.healthMu.RLock()
+	copy(connectionHealth, g.streamManager.connectionHealth)
+	g.streamManager.healthMu.RUnlock()
+
+	g.mu.RLock()
+	connectionURLs := make([]string, len(g.connectionURLs))
+	copy(connectionURLs, g.connectionURLs)
+	g.mu.RUnlock()
+
+	for _, endpoint := range endpoints {
+		healthy := false
+		for connIndex, endpointURL := range connectionURLs {
+			if endpointURL != endpoint.URL {
+				continue
+			}
+			if connIndex >= 0 && connIndex < len(connectionHealth) && connectionHealth[connIndex] {
+				healthy = true
+				break
+			}
+		}
+		endpoint.healthy.Store(healthy)
+		if healthy {
+			endpoint.lastHeartbeat.Store(time.Now().Unix())
+		}
+	}
 }
 
 // establishControlStreams creates control streams for each connection
@@ -1859,6 +2449,8 @@ func (g *GravityClient) reconnect() error {
 
 	// Reset connections slice to avoid conflicts in Start()
 	g.connections = nil
+	g.connectionURLs = nil
+	g.endpointStreamIndices = make(map[string][]int)
 
 	// Reset stream manager state
 	g.streamManager.tunnelStreams = nil
@@ -2311,89 +2903,170 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		}
 	}
 
-	// Select optimal stream using configured allocation strategy
-	g.streamManager.tunnelMu.Lock()
-	if len(g.streamManager.tunnelStreams) == 0 {
-		g.streamManager.tunnelMu.Unlock()
-		g.logger.Error("writePacket failed: no healthy tunnel streams available")
-		return fmt.Errorf("no healthy tunnel streams available")
+	// Multi-endpoint routing: sticky flow binding to selected endpoint.
+	if stream, err := g.selectStreamForPacket(payload); err != nil {
+		g.logger.Error("writePacket failed to select stream: %v", err)
+		return err
+	} else {
+		if g.tracePackets {
+			g.tracePacketLogger.Debug("writePacket selected stream: %s", stream.streamID)
+		}
+
+		// Ensure load count is decremented in all exit paths
+		defer g.streamManager.releaseStream(stream)
+
+		tunnelPacket := &pb.TunnelPacket{
+			Data:     payload,
+			StreamId: stream.streamID,
+		}
+		if isSynAck {
+			tunnelPacket.EnqueuedAtUs = time.Now().UnixMicro()
+		}
+
+		sendStart := time.Now()
+		stream.sendMu.Lock()
+		err = stream.stream.Send(tunnelPacket)
+		stream.sendMu.Unlock()
+		sendLatency := time.Since(sendStart)
+		if err != nil {
+			// Mark stream unhealthy and record per-stream error metrics,
+			// mirroring the error handling in sendTunnelPacket.
+			g.streamManager.tunnelMu.Lock()
+			stream.isHealthy = false
+			g.streamManager.tunnelMu.Unlock()
+			g.outboundErrors.Add(1)
+			now := time.Now()
+			g.streamManager.metricsMu.Lock()
+			if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
+				metrics.ErrorCount++
+				metrics.LastError = now
+			}
+			g.streamManager.metricsMu.Unlock()
+
+			if errors.Is(err, io.EOF) {
+				g.logger.Debug("gravity server closed, exiting")
+				return nil
+			}
+			g.logger.Error("writePacket stream.Send failed: %v", err)
+		} else {
+			if g.tracePackets {
+				g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
+			}
+			g.outboundSent.Add(1)
+			g.outboundBytes.Add(uint64(len(payload)))
+			g.streamManager.metricsMu.Lock()
+			if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
+				metrics.PacketsSent++
+				metrics.BytesSent += int64(len(payload))
+				metrics.LastSendUs = time.Now().UnixMicro()
+				metrics.LastLatency = sendLatency
+			}
+			g.streamManager.metricsMu.Unlock()
+		}
+
+		return err
 	}
+}
+
+func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, error) {
+	g.endpointsMu.RLock()
+	selector := g.selector
+	endpoints := make([]*GravityEndpoint, len(g.endpoints))
+	copy(endpoints, g.endpoints)
+	g.endpointsMu.RUnlock()
+
+	if selector != nil && len(endpoints) > 1 {
+		endpoint := selector.Select(payload, endpoints)
+		if endpoint == nil {
+			return nil, fmt.Errorf("no healthy gravity endpoints")
+		}
+		return g.selectStreamForEndpoint(payload, endpoint.URL)
+	}
+
+	// Backward-compatible path: existing global stream selection.
+	g.streamManager.tunnelMu.Lock()
+	defer g.streamManager.tunnelMu.Unlock()
+
+	if len(g.streamManager.tunnelStreams) == 0 {
+		return nil, fmt.Errorf("no healthy tunnel streams available")
+	}
+
 	streamIndex, err := g.selectOptimalStream(payload)
 	if err != nil {
-		g.streamManager.tunnelMu.Unlock()
-		g.logger.Error("writePacket failed to select stream: %v", err)
-		return fmt.Errorf("failed to select stream: %w", err)
+		return nil, fmt.Errorf("failed to select stream: %w", err)
 	}
+
 	stream := g.streamManager.tunnelStreams[streamIndex]
 	if !stream.isHealthy {
 		streamIndex, err = g.selectHealthyStream()
 		if err != nil {
-			g.streamManager.tunnelMu.Unlock()
-			g.logger.Error("writePacket failed: no healthy tunnel streams available")
-			return fmt.Errorf("no healthy tunnel streams available")
+			return nil, fmt.Errorf("no healthy tunnel streams available")
 		}
 		stream = g.streamManager.tunnelStreams[streamIndex]
 	}
+
 	stream.loadCount++
 	stream.lastUsed = time.Now()
-	g.streamManager.tunnelMu.Unlock()
-	if g.tracePackets {
-		g.tracePacketLogger.Debug("writePacket selected stream: %s", stream.streamID)
+	return stream, nil
+}
+
+func (g *GravityClient) selectStreamForEndpoint(payload []byte, endpointURL string) (*StreamInfo, error) {
+	g.mu.RLock()
+	candidateIndexes := append([]int(nil), g.endpointStreamIndices[endpointURL]...)
+	g.mu.RUnlock()
+	if len(candidateIndexes) == 0 {
+		return nil, fmt.Errorf("no tunnel streams available for endpoint %s", endpointURL)
 	}
 
-	// Ensure load count is decremented in all exit paths
-	defer g.streamManager.releaseStream(stream)
+	g.streamManager.tunnelMu.Lock()
+	defer g.streamManager.tunnelMu.Unlock()
 
-	tunnelPacket := &pb.TunnelPacket{
-		Data:     payload,
-		StreamId: stream.streamID,
-	}
-	if isSynAck {
-		tunnelPacket.EnqueuedAtUs = time.Now().UnixMicro()
-	}
-
-	sendStart := time.Now()
-	stream.sendMu.Lock()
-	err = stream.stream.Send(tunnelPacket)
-	stream.sendMu.Unlock()
-	sendLatency := time.Since(sendStart)
-	if err != nil {
-		// Mark stream unhealthy and record per-stream error metrics,
-		// mirroring the error handling in sendTunnelPacket.
-		g.streamManager.tunnelMu.Lock()
-		stream.isHealthy = false
-		g.streamManager.tunnelMu.Unlock()
-		g.outboundErrors.Add(1)
-		now := time.Now()
-		g.streamManager.metricsMu.Lock()
-		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
-			metrics.ErrorCount++
-			metrics.LastError = now
+	selectedIndex := -1
+	switch g.streamManager.allocationStrategy {
+	case HashBased:
+		hash := simpleHashBytes(payload)
+		for i := 0; i < len(candidateIndexes); i++ {
+			idx := candidateIndexes[(hash+i)%len(candidateIndexes)]
+			if idx >= 0 && idx < len(g.streamManager.tunnelStreams) && g.streamManager.tunnelStreams[idx] != nil && g.streamManager.tunnelStreams[idx].isHealthy {
+				selectedIndex = idx
+				break
+			}
 		}
-		g.streamManager.metricsMu.Unlock()
-
-		if errors.Is(err, io.EOF) {
-			g.logger.Debug("gravity server closed, exiting")
-			return nil
+	case LeastConnections:
+		minLoad := int64(^uint64(0) >> 1)
+		for _, idx := range candidateIndexes {
+			if idx < 0 || idx >= len(g.streamManager.tunnelStreams) {
+				continue
+			}
+			stream := g.streamManager.tunnelStreams[idx]
+			if stream == nil || !stream.isHealthy {
+				continue
+			}
+			if stream.loadCount < minLoad {
+				minLoad = stream.loadCount
+				selectedIndex = idx
+			}
 		}
-		g.logger.Error("writePacket stream.Send failed: %v", err)
-	} else {
-		if g.tracePackets {
-			g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
+	default:
+		start := g.streamManager.nextTunnelIndex
+		g.streamManager.nextTunnelIndex++
+		for i := 0; i < len(candidateIndexes); i++ {
+			idx := candidateIndexes[(start+i)%len(candidateIndexes)]
+			if idx >= 0 && idx < len(g.streamManager.tunnelStreams) && g.streamManager.tunnelStreams[idx] != nil && g.streamManager.tunnelStreams[idx].isHealthy {
+				selectedIndex = idx
+				break
+			}
 		}
-		g.outboundSent.Add(1)
-		g.outboundBytes.Add(uint64(len(payload)))
-		g.streamManager.metricsMu.Lock()
-		if metrics := g.streamManager.streamMetrics[stream.streamID]; metrics != nil {
-			metrics.PacketsSent++
-			metrics.BytesSent += int64(len(payload))
-			metrics.LastSendUs = time.Now().UnixMicro()
-			metrics.LastLatency = sendLatency
-		}
-		g.streamManager.metricsMu.Unlock()
 	}
 
-	return err
+	if selectedIndex == -1 {
+		return nil, fmt.Errorf("no healthy tunnel streams available for endpoint %s", endpointURL)
+	}
+
+	stream := g.streamManager.tunnelStreams[selectedIndex]
+	stream.loadCount++
+	stream.lastUsed = time.Now()
+	return stream, nil
 }
 
 // Background packet handlers
@@ -2678,6 +3351,8 @@ func (g *GravityClient) performHealthCheck() {
 			}
 		}
 	}
+
+	go g.refreshEndpointHealth()
 }
 
 // GetConnectionPoolStats returns current connection pool statistics for monitoring

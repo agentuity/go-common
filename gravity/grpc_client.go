@@ -711,7 +711,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
 	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
 	g.connectionURLs = make([]string, connectionCount)
-	g.endpointReconnecting = make([]atomic.Bool, len(urls))
+	g.endpointReconnecting = make([]atomic.Bool, connectionCount)
 	g.endpointStreamIndices = make(map[string][]int)
 
 	// Initialize connection health tracking

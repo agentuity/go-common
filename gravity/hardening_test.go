@@ -109,6 +109,7 @@ func TestHardening_BufferPoolLeak(t *testing.T) {
 func TestHardening_GetConnectionPoolStatsReturnsLiveMap(t *testing.T) {
 	g := newHardeningGravityClient(t, 1)
 	g.streamManager.streamMetrics["s0"] = &StreamMetrics{PacketsSent: 1}
+	g.streamManager.streamMetrics["s1"] = &StreamMetrics{PacketsSent: 42, BytesSent: 100}
 
 	stats := g.GetConnectionPoolStats()
 	returned, ok := stats["stream_metrics"].(map[string]*StreamMetrics)
@@ -116,15 +117,36 @@ func TestHardening_GetConnectionPoolStatsReturnsLiveMap(t *testing.T) {
 		t.Fatalf("unexpected stream_metrics type: %T", stats["stream_metrics"])
 	}
 
+	// Map header must be a different object.
 	internalPtr := reflect.ValueOf(g.streamManager.streamMetrics).Pointer()
 	returnedPtr := reflect.ValueOf(returned).Pointer()
 	if internalPtr == returnedPtr {
 		t.Fatalf("expected defensive copy of stream metrics map, got live reference")
 	}
 
+	// Each *StreamMetrics value must be a deep copy, not a shared pointer.
+	for key, retVal := range returned {
+		origVal, exists := g.streamManager.streamMetrics[key]
+		if !exists {
+			continue
+		}
+		retPtr := reflect.ValueOf(retVal).Pointer()
+		origPtr := reflect.ValueOf(origVal).Pointer()
+		if retPtr == origPtr {
+			t.Fatalf("stream_metrics[%q] shares pointer with internal map (shallow copy)", key)
+		}
+	}
+
+	// Mutating a returned value must not affect internal state.
+	returned["s0"].PacketsSent = 9999
+	if g.streamManager.streamMetrics["s0"].PacketsSent == 9999 {
+		t.Fatalf("mutating returned StreamMetrics value changed internal state (values not deep-copied)")
+	}
+
+	// Inserting a new key must not affect internal state.
 	returned["injected"] = &StreamMetrics{PacketsSent: 999}
 	if _, exists := g.streamManager.streamMetrics["injected"]; exists {
-		t.Fatalf("mutating returned map modified internal state (data race hazard)")
+		t.Fatalf("inserting into returned map modified internal state (data race hazard)")
 	}
 }
 
@@ -192,24 +214,19 @@ func TestHardening_RandIndexNotRandom(t *testing.T) {
 }
 
 func TestHardening_ReconnectDrainsAllConnectionIDs(t *testing.T) {
-	connectionIDChan := make(chan string, 8)
-	connectionIDChan <- "a"
-	connectionIDChan <- "b"
-	connectionIDChan <- "c"
-	connectionIDChan <- "d"
+	g := newHardeningGravityClient(t, 1)
 
-	// Drain loop matching the production code in reconnect().
-	for {
-		select {
-		case <-connectionIDChan:
-		default:
-			goto drained
-		}
-	}
-drained:
+	// Push multiple stale IDs into the real channel.
+	g.connectionIDChan <- "a"
+	g.connectionIDChan <- "b"
+	g.connectionIDChan <- "c"
+	g.connectionIDChan <- "d"
 
-	if got := len(connectionIDChan); got != 0 {
-		t.Fatalf("expected reconnect drain to clear channel, still has %d stale IDs", got)
+	// Call the production drain helper used by reconnect().
+	g.drainConnectionIDChan()
+
+	if got := len(g.connectionIDChan); got != 0 {
+		t.Fatalf("expected drainConnectionIDChan to clear channel, still has %d stale IDs", got)
 	}
 }
 
@@ -259,26 +276,40 @@ func TestHardening_WaitForSessionTOCTOU(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- g.WaitForSession(200 * time.Millisecond)
+		errCh <- g.WaitForSession(2 * time.Second)
 	}()
 
-	// Give WaitForSession time to snapshot old channel.
-	time.Sleep(5 * time.Millisecond)
+	// Give WaitForSession time to snapshot the old channel.
+	time.Sleep(10 * time.Millisecond)
 
+	// Simulate reconnect swapping sessionReady while WaitForSession is blocked.
 	newReady := make(chan struct{})
 	g.mu.Lock()
 	g.sessionReady = newReady
 	g.mu.Unlock()
 
+	// Close the OLD channel. WaitForSession should wake up, detect the swap,
+	// and loop back to wait on newReady — NOT return nil.
 	close(oldReady)
+
+	// WaitForSession must not have returned yet (it should be waiting on newReady).
+	select {
+	case err := <-errCh:
+		t.Fatalf("WaitForSession returned prematurely after stale channel close: %v", err)
+	case <-time.After(50 * time.Millisecond):
+		// Good — still blocking on newReady.
+	}
+
+	// Now close the real channel. WaitForSession should return nil.
+	close(newReady)
 
 	select {
 	case err := <-errCh:
-		if err == nil {
-			t.Fatalf("WaitForSession returned using stale channel while new session channel is still not ready")
+		if err != nil {
+			t.Fatalf("WaitForSession should succeed after newReady is closed, got: %v", err)
 		}
-	case <-time.After(50 * time.Millisecond):
-		// If it blocks here, race didn't trigger this run.
+	case <-time.After(time.Second):
+		t.Fatal("WaitForSession did not return after newReady was closed")
 	}
 }
 
@@ -362,6 +393,8 @@ func TestHardening_SelectWeightedRoundRobinWithEmptyHealth(t *testing.T) {
 }
 
 func TestHardening_AllStreamSelectionStrategies(t *testing.T) {
+	baseline := runtime.NumGoroutine()
+
 	cases := []struct {
 		name             string
 		strategy         StreamAllocationStrategy
@@ -432,8 +465,9 @@ func TestHardening_AllStreamSelectionStrategies(t *testing.T) {
 		})
 	}
 
-	// Sanity: this test itself shouldn't explode goroutine count unexpectedly.
-	if runtime.NumGoroutine() <= 0 {
-		t.Fatal("invalid goroutine count")
+	// Verify no goroutine leak from stream selection logic.
+	const allowedLeak = 5
+	if got := runtime.NumGoroutine(); got > baseline+allowedLeak {
+		t.Fatalf("unexpected goroutine growth: got=%d baseline=%d allowed=%d", got, baseline, allowedLeak)
 	}
 }

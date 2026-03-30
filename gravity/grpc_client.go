@@ -3063,16 +3063,7 @@ func (g *GravityClient) reconnect() error {
 	g.streamManager.cancels = nil
 
 	// Drain the connection ID channel to avoid stale data
-	for {
-		select {
-		case <-g.connectionIDChan:
-			g.logger.Debug("drained stale connection ID from channel during reconnect")
-		default:
-			goto connectionIDDrainComplete
-		}
-	}
-
-connectionIDDrainComplete:
+	g.drainConnectionIDChan()
 	g.mu.Unlock()
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
 		// Log deployment synchronization intent

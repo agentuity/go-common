@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	mathrand "math/rand/v2"
 	"net"
 	"net/url"
 	"os"
@@ -1089,7 +1090,7 @@ func randIndex(n int) int {
 	if n <= 1 {
 		return 0
 	}
-	return int(time.Now().UnixNano() % int64(n))
+	return mathrand.IntN(n)
 }
 
 func (g *GravityClient) rebuildEndpointStreamIndices() {
@@ -2389,19 +2390,32 @@ func (g *GravityClient) IsConnected() bool {
 // WaitForSession blocks until the session is fully authenticated and configured,
 // or the timeout/context expires.
 func (g *GravityClient) WaitForSession(timeout time.Duration) error {
-	// Read sessionReady under lock to avoid racing with reconnection
-	// which replaces the channel.
-	g.mu.RLock()
-	ready := g.sessionReady
-	g.mu.RUnlock()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	select {
-	case <-ready:
-		return nil
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout waiting for session to be ready")
-	case <-g.ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for session ready")
+	for {
+		// Read sessionReady under lock to avoid racing with reconnection
+		// which replaces the channel.
+		g.mu.RLock()
+		ready := g.sessionReady
+		g.mu.RUnlock()
+
+		select {
+		case <-ready:
+			// Re-check that this is still the active channel. Reconnect may have
+			// swapped sessionReady between snapshot and channel close.
+			g.mu.RLock()
+			current := g.sessionReady
+			g.mu.RUnlock()
+			if current == ready {
+				return nil
+			}
+			continue
+		case <-timer.C:
+			return fmt.Errorf("timeout waiting for session to be ready")
+		case <-g.ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for session ready")
+		}
 	}
 }
 
@@ -3049,12 +3063,16 @@ func (g *GravityClient) reconnect() error {
 	g.streamManager.cancels = nil
 
 	// Drain the connection ID channel to avoid stale data
-	select {
-	case <-g.connectionIDChan:
-		g.logger.Debug("drained stale connection ID from channel during reconnect")
-	default:
-		// Channel already empty
+	for {
+		select {
+		case <-g.connectionIDChan:
+			g.logger.Debug("drained stale connection ID from channel during reconnect")
+		default:
+			goto connectionIDDrainComplete
+		}
 	}
+
+connectionIDDrainComplete:
 	g.mu.Unlock()
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
 		// Log deployment synchronization intent
@@ -3833,6 +3851,9 @@ func (g *GravityClient) selectOptimalStream(data []byte) (int, error) {
 
 // selectRoundRobinStream implements simple round-robin selection
 func (g *GravityClient) selectRoundRobinStream() (int, error) {
+	if len(g.streamManager.tunnelStreams) == 0 {
+		return 0, fmt.Errorf("no streams available")
+	}
 	streamIndex := g.streamManager.nextTunnelIndex % len(g.streamManager.tunnelStreams)
 	g.streamManager.nextTunnelIndex++
 	return streamIndex, nil
@@ -3840,6 +3861,9 @@ func (g *GravityClient) selectRoundRobinStream() (int, error) {
 
 // selectHashBasedStream uses consistent hashing for packet distribution
 func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
+	if len(g.streamManager.tunnelStreams) == 0 {
+		return 0, fmt.Errorf("no streams available")
+	}
 	// Use simple hash of packet data for consistent routing
 	hash := simpleHashBytes(data)
 	streamIndex := hash % len(g.streamManager.tunnelStreams)
@@ -3849,7 +3873,7 @@ func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
 // selectLeastConnectionsStream chooses the stream with the lowest current load
 func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	minLoad := int64(^uint64(0) >> 1) // Max int64
-	selectedIndex := 0
+	selectedIndex := -1
 	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
@@ -3863,6 +3887,10 @@ func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 		}
 	}
 
+	if selectedStream == nil || selectedIndex < 0 {
+		return 0, fmt.Errorf("no healthy streams available")
+	}
+
 	return selectedIndex, nil
 }
 
@@ -3874,7 +3902,7 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 
 	healthyStreams := make([]int, 0)
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy && g.streamManager.connectionHealth[streamInfo.connIndex] {
+		if streamInfo.isHealthy && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.streamManager.connectionHealth) && g.streamManager.connectionHealth[streamInfo.connIndex] {
 			healthyStreams = append(healthyStreams, i)
 		}
 	}
@@ -3904,7 +3932,7 @@ func (g *GravityClient) selectHealthyStream() (int, error) {
 func simpleHashBytes(data []byte) int {
 	hash := 0
 	for i, b := range data {
-		if i >= 16 { // Hash first 16 bytes for performance
+		if i >= 40 { // Include IPv6 src+dst addresses (bytes 8..39)
 			break
 		}
 		hash = hash*31 + int(b)
@@ -3917,7 +3945,12 @@ func simpleHashBytes(data []byte) int {
 
 // monitorConnectionHealth periodically checks connection and stream health
 func (g *GravityClient) monitorConnectionHealth() {
-	ticker := time.NewTicker(g.poolConfig.HealthCheckInterval)
+	interval := g.poolConfig.HealthCheckInterval
+	if interval <= 0 {
+		g.logger.Warn("invalid health check interval %v, skipping health monitor", interval)
+		return
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -3960,16 +3993,27 @@ func (g *GravityClient) performHealthCheck() {
 		if streamInfo != nil {
 			// Reset streams that have been unhealthy for too long
 			if !streamInfo.isHealthy && now.Sub(streamInfo.lastUsed) > g.poolConfig.FailoverTimeout {
-				g.logger.Debug("attempting to recover stream %s", streamInfo.streamID)
-				streamInfo.isHealthy = true // Try again
-				streamInfo.loadCount = 0    // Reset load
-
-				// Reset error metrics
-				g.streamManager.metricsMu.Lock()
-				if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
-					metrics.ErrorCount = 0
+				connReady := false
+				if streamInfo.stream != nil && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.connections) {
+					if conn := g.connections[streamInfo.connIndex]; conn != nil {
+						connReady = conn.GetState().String() == "READY"
+					}
 				}
-				g.streamManager.metricsMu.Unlock()
+
+				if connReady {
+					g.logger.Debug("attempting to recover stream %s", streamInfo.streamID)
+					streamInfo.isHealthy = true // Try again
+					streamInfo.loadCount = 0    // Reset load
+
+					// Reset error metrics
+					g.streamManager.metricsMu.Lock()
+					if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
+						metrics.ErrorCount = 0
+					}
+					g.streamManager.metricsMu.Unlock()
+				} else {
+					g.logger.Debug("stream %s remains unhealthy: stream nil=%v conn ready=%v", streamInfo.streamID, streamInfo.stream == nil, connReady)
+				}
 			}
 
 			// Log unhealthy streams
@@ -4016,10 +4060,26 @@ func (g *GravityClient) GetConnectionPoolStats() map[string]any {
 		"healthy_streams":        healthyStreams,
 		"total_streams":          len(g.streamManager.tunnelStreams),
 		"total_load":             totalLoad,
-		"stream_metrics":         g.streamManager.streamMetrics,
+		"stream_metrics":         copyStreamMetrics(g.streamManager.streamMetrics),
 	}
 
 	return stats
+}
+
+func copyStreamMetrics(metrics map[string]*StreamMetrics) map[string]*StreamMetrics {
+	if metrics == nil {
+		return nil
+	}
+	copied := make(map[string]*StreamMetrics, len(metrics))
+	for key, value := range metrics {
+		if value == nil {
+			copied[key] = nil
+			continue
+		}
+		v := *value
+		copied[key] = &v
+	}
+	return copied
 }
 
 // TunnelStatsSnapshot is a point-in-time snapshot of tunnel counters.
@@ -4489,8 +4549,18 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 // Buffer management
 
 func (g *GravityClient) getBuffer(payload []byte) *PooledBuffer {
+	if len(payload) > maxBufferSize {
+		buf := make([]byte, len(payload))
+		copy(buf, payload)
+		return &PooledBuffer{
+			Buffer: buf,
+			Length: len(payload),
+		}
+	}
+
 	buf := g.bufferPool.Get().([]byte)
 	if len(payload) > len(buf) {
+		g.bufferPool.Put(buf)
 		buf = make([]byte, len(payload))
 	}
 	copy(buf, payload)

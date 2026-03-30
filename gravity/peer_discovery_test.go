@@ -2,6 +2,7 @@ package gravity
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func TestResolveGravityURLs_MultipleURLs(t *testing.T) {
 func TestResolveGravityURLs_CapsAtMaxPeers(t *testing.T) {
 	urls := make([]string, 10)
 	for i := range urls {
-		urls[i] = "grpc://g" + string(rune('0'+i)) + ".example.com"
+		urls[i] = fmt.Sprintf("grpc://g%d.example.com", i)
 	}
 	g := &GravityClient{
 		gravityURLs: urls,

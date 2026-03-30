@@ -102,9 +102,11 @@ func TestEndpointSelector_SameFlowSameEndpoint(t *testing.T) {
 
 func TestEndpointSelector_ExpiredBinding(t *testing.T) {
 	selector := NewEndpointSelector(20 * time.Millisecond)
+	// Use 3+ endpoints so round-robin cannot land on the same one after re-bind.
 	endpoints := []*GravityEndpoint{
 		makeEndpoint("g1", true),
 		makeEndpoint("g2", true),
+		makeEndpoint("g3", true),
 	}
 
 	packet := makeIPv6TCPPacket([16]byte{1}, [16]byte{3}, 1111, 2222)
@@ -115,6 +117,8 @@ func TestEndpointSelector_ExpiredBinding(t *testing.T) {
 	if first == nil || second == nil {
 		t.Fatal("expected non-nil endpoint selections")
 	}
+	// After TTL expiry, the binding is removed and pickHealthy advances the
+	// round-robin counter, so the new endpoint must differ from the original.
 	if first == second {
 		t.Fatalf("expected endpoint rebinding after TTL expiry, got same endpoint %s", first.URL)
 	}

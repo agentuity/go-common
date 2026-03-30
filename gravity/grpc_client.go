@@ -1462,20 +1462,29 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 		g.logger.Trace("control stream %d waiting for message", streamIndex)
 		msg, err := stream.Recv()
 		if err != nil {
-			// Check if this is a context cancellation (graceful shutdown)
+			// Determine if this is a recoverable disconnection
+			isCanceled := false
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
+				isCanceled = true
 				g.logger.Debug("control stream %d closed due to context cancellation", streamIndex)
 			} else {
 				g.logger.Error("control stream %d receive error: %v", streamIndex, err)
-				// Check if this is a connection error that requires reconnection
-				if errors.Is(err, io.EOF) {
-					g.logger.Warn("control stream %d connection lost, triggering reconnection", streamIndex)
-					if len(g.gravityURLs) > 1 {
-						go g.handleEndpointDisconnection(streamIndex, fmt.Sprintf("control_stream_%d_error", streamIndex))
-					} else {
-						go g.handleServerDisconnection(fmt.Sprintf("control_stream_%d_error", streamIndex))
+			}
+
+			// Trigger reconnection for any stream death unless we're
+			// intentionally closing. Context cancellation (codes.Canceled)
+			// can happen during server restarts — not just graceful shutdown.
+			g.mu.RLock()
+			closing := g.closing
+			g.mu.RUnlock()
+			if !closing {
+				isConnectionLost := isCanceled || errors.Is(err, io.EOF)
+				if !isConnectionLost {
+					if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+						isConnectionLost = true
 					}
-				} else if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+				}
+				if isConnectionLost {
 					g.logger.Warn("control stream %d connection lost, triggering reconnection", streamIndex)
 					if len(g.gravityURLs) > 1 {
 						go g.handleEndpointDisconnection(streamIndex, fmt.Sprintf("control_stream_%d_error", streamIndex))
@@ -1517,13 +1526,23 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		}
 		packet, err := stream.Recv()
 		if err != nil {
-			// Check if this is a context cancellation (graceful shutdown)
+			// Determine if this is a recoverable disconnection
+			isCanceled := false
 			if st, ok := status.FromError(err); ok && st.Code() == codes.Canceled {
+				isCanceled = true
 				g.logger.Debug("tunnel stream %d closed due to context cancellation", streamIndex)
 			} else {
 				g.logger.Error("tunnel stream %d receive error: %v", streamIndex, err)
-				// Check if this is a connection error that requires reconnection
-				isConnectionLost := errors.Is(err, io.EOF)
+			}
+
+			// Trigger reconnection for any stream death unless we're
+			// intentionally closing. Context cancellation can happen
+			// during server restarts — not just graceful shutdown.
+			g.mu.RLock()
+			closing := g.closing
+			g.mu.RUnlock()
+			if !closing {
+				isConnectionLost := isCanceled || errors.Is(err, io.EOF)
 				if !isConnectionLost {
 					if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
 						isConnectionLost = true

@@ -200,8 +200,12 @@ func TestHardening_CircuitBreakerExecuteContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	start := time.Now()
 	err := cb.Execute(ctx, func() error {
+		defer wg.Done()
 		time.Sleep(50 * time.Millisecond)
 		return nil
 	})
@@ -213,4 +217,8 @@ func TestHardening_CircuitBreakerExecuteContextCancellation(t *testing.T) {
 	if d > 100*time.Millisecond {
 		t.Fatalf("expected fast cancellation path, took %v", d)
 	}
+
+	// Ensure the worker goroutine spawned by Execute completes before
+	// the test exits, preventing interference with other tests.
+	wg.Wait()
 }

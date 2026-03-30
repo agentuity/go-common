@@ -1293,7 +1293,6 @@ func (g *GravityClient) sendSessionHello() error {
 		InstanceId:      g.instanceID,
 	}
 
-	// Send on the first control stream
 	msg := &pb.SessionMessage{
 		Id:       "session_hello",
 		StreamId: "session_hello",
@@ -1302,8 +1301,47 @@ func (g *GravityClient) sendSessionHello() error {
 		},
 	}
 
-	g.logger.Debug("sending session hello on primary control stream")
+	// In multi-endpoint mode, send session hello on ALL control streams so
+	// every Gravity server registers this Hadron. Each Gravity independently
+	// authenticates and creates a Machine for this session.
+	g.streamManager.controlMu.RLock()
+	numStreams := len(g.streamManager.controlStreams)
+	g.streamManager.controlMu.RUnlock()
 
+	if numStreams > 1 && len(g.gravityURLs) > 1 {
+		g.logger.Debug("sending session hello on all %d control streams (multi-endpoint)", numStreams)
+		var firstErr error
+		for i := 0; i < numStreams; i++ {
+			g.streamManager.controlMu.RLock()
+			stream := g.streamManager.controlStreams[i]
+			g.streamManager.controlMu.RUnlock()
+
+			if stream == nil {
+				continue
+			}
+
+			cb := g.circuitBreakers[i]
+			err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, cb, func() error {
+				return stream.Send(msg)
+			})
+			if err != nil {
+				g.logger.Warn("session hello failed on control stream %d: %v", i, err)
+				if firstErr == nil {
+					firstErr = err
+				}
+			} else {
+				g.logger.Debug("session hello sent on control stream %d", i)
+			}
+		}
+		if firstErr != nil && numStreams == 1 {
+			return fmt.Errorf("failed to send session hello: %w", firstErr)
+		}
+		// At least one succeeded — that's enough for multi-endpoint
+		return nil
+	}
+
+	// Single-endpoint: send on primary control stream only (original path)
+	g.logger.Debug("sending session hello on primary control stream")
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 

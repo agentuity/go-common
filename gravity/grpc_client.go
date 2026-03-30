@@ -459,7 +459,10 @@ func New(config GravityConfig) (*GravityClient, error) {
 	return g, nil
 }
 
-// Start establishes gRPC connections and starts the client
+// Start establishes gRPC connections and starts the client.
+// When GravityURLs is configured with multiple URLs, the multi-endpoint path
+// is used (multiple Gravity servers, sticky tunnel selection, peer cycling).
+// Otherwise, the original single-URL path is used — identical to pre-multi-tunnel behavior.
 func (g *GravityClient) Start() error {
 	g.logger.Debug("starting gRPC Gravity client...")
 	g.mu.Lock()
@@ -469,11 +472,191 @@ func (g *GravityClient) Start() error {
 		return fmt.Errorf("already connected")
 	}
 
+	// Multi-endpoint mode: opt-in via GravityURLs with >1 URL.
+	if len(g.gravityURLs) > 1 {
+		g.mu.Unlock()
+		return g.startMultiEndpoint()
+	}
+
+	// ── Original single-URL path (unchanged) ──────────────────────────────
+
+	g.logger.Debug("parsing gRPC URL: %s", g.url)
+	// Parse gRPC URL
+	grpcURL, err := g.parseGRPCURL(g.url)
+	if err != nil {
+		g.logger.Error("failed to parse gRPC URL: %v", err)
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+	g.logger.Debug("parsed gRPC URL successfully: %s", grpcURL)
+
+	// Extract hostname for TLS ServerName
+	hostname, err := g.extractHostnameFromURL(g.url)
+	if err != nil {
+		g.logger.Error("failed to extract hostname from URL: %v", err)
+		return fmt.Errorf("failed to extract hostname: %w", err)
+	}
+
+	g.logger.Debug("loading CA certificate for TLS...")
+	pool, err := x509.SystemCertPool()
+	if err != nil {
+		g.logger.Warn("failed to load system cert pool, using empty pool: %v", err)
+		pool = x509.NewCertPool()
+	}
+	if ok := pool.AppendCertsFromPEM([]byte(g.caCert)); !ok {
+		g.logger.Error("failed to load embedded CA certificate")
+		return fmt.Errorf("failed to load embedded CA certificate")
+	}
+
+	g.logger.Debug("creating TLS configuration...")
+	if g.tlsCert == nil {
+		g.logger.Error("failed to load TLS certificate")
+		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
+	}
+	cert := *g.tlsCert
+
+	// Create TLS config that includes both client certificates (mTLS) and server verification
+	tlsConfig := &tls.Config{
+		Certificates: []tls.Certificate{cert}, // Client certificates for mTLS (self-signed)
+		ServerName:   hostname,                // Dynamic server name for SNI and verification
+		MinVersion:   tls.VersionTLS13,
+		// GetClientCertificate ensures the client always sends its cert when requested
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			if g.tlsCert != nil {
+				return g.tlsCert, nil
+			}
+			return nil, fmt.Errorf("no client certificate available")
+		},
+		RootCAs: pool,
+	}
+
+	creds := credentials.NewTLS(tlsConfig)
+	g.logger.Debug("TLS credentials created successfully")
+
+	// Create connection pool using configuration
+	connectionCount := g.poolConfig.PoolSize
+	g.logger.Debug("creating connection pool with %d connections", connectionCount)
+	g.connections = make([]*grpc.ClientConn, connectionCount)
+	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
+	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
+
+	// Initialize connection health tracking
+	g.streamManager.connectionHealth = make([]bool, connectionCount)
+	for i := range g.streamManager.connectionHealth {
+		g.streamManager.connectionHealth[i] = true // Start assuming healthy
+	}
+
+	g.logger.Debug("establishing %d gRPC connections to %s", connectionCount, grpcURL)
+	// Establish connections using modern gRPC client API
+	for i := range connectionCount {
+		g.logger.Debug("establishing connection %d/%d...", i+1, connectionCount)
+
+		g.logger.Debug("creating gRPC client %d to %s with TLS", i+1, grpcURL)
+		conn, err := grpc.NewClient(grpcURL,
+			grpc.WithTransportCredentials(creds),
+			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
+			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
+		)
+		if err != nil {
+			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
+			// Cleanup partial connections
+			g.cleanup()
+			return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)
+		}
+		g.logger.Debug("gRPC client %d created successfully", i+1)
+
+		g.connections[i] = conn
+		g.sessionClients[i] = pb.NewGravitySessionServiceClient(conn)
+		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
+	}
+	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
+
+	// Release mutex before blocking operations (control streams, connect, tunnel streams)
+	g.mu.Unlock()
+
+	g.logger.Debug("establishing control streams...")
+	// Establish control streams (one per connection)
+	err = g.establishControlStreams()
+	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("control streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to establish control streams: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to establish control streams: %w", err)
+	}
+	g.logger.Debug("control streams established successfully")
+
+	g.logger.Debug("sending session hello...")
+	// Send session hello to authenticate and get session info
+	err = g.sendSessionHello()
+	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("session hello cancelled due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to send session hello: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to send session hello: %w", err)
+	}
+	g.logger.Debug("session hello sent successfully")
+
+	g.logger.Debug("establishing tunnel streams...")
+	// Establish tunnel streams (multiple per connection) - after connect message
+	err = g.establishTunnelStreams()
+	if err != nil {
+		// Check if this is due to context cancellation (graceful shutdown)
+		if isContextCanceled(g.ctx, err) {
+			g.logger.Debug("tunnel streams closed due to context cancellation")
+			g.cleanup()
+			return context.Canceled
+		}
+		g.logger.Error("failed to establish tunnel streams: %v", err)
+		g.cleanup()
+		return fmt.Errorf("failed to establish tunnel streams: %w", err)
+	}
+	g.logger.Debug("tunnel streams established successfully")
+
+	// Re-acquire mutex for final state updates
+	g.mu.Lock()
+	g.connected = true
+	g.mu.Unlock()
+
+	g.logger.Debug("connected to Gravity server: %s", g.url)
+
+	g.logger.Debug("starting background goroutines...")
+	// Start background goroutines
+	go g.handleInboundPackets()
+	go g.handleOutboundPackets()
+	go g.handleTextMessages()
+
+	go g.monitorConnectionHealth()
+	go g.handlePingHeartbeat()
+
+	g.logger.Debug("all background goroutines started successfully")
+
+	g.logger.Debug("gRPC Gravity client startup completed successfully")
+	return nil
+}
+
+// startMultiEndpoint is the multi-Gravity connection path, activated when
+// GravityURLs has >1 URL. Creates connections to multiple Gravity servers
+// with sticky tunnel selection and peer cycling.
+func (g *GravityClient) startMultiEndpoint() error {
+	g.mu.Lock()
+
 	urls := g.resolveGravityURLs()
 	if len(urls) == 0 {
 		g.mu.Unlock()
 		return fmt.Errorf("no gravity URL configured")
 	}
+
+	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
 	g.endpointsMu.Lock()
 	g.endpoints = make([]*GravityEndpoint, 0, len(urls))
@@ -482,18 +665,12 @@ func (g *GravityClient) Start() error {
 		ep.healthy.Store(false)
 		g.endpoints = append(g.endpoints, ep)
 	}
-	if len(urls) > 1 {
-		g.selector = NewEndpointSelector(DefaultBindingTTL)
-	} else {
-		g.selector = nil
-	}
+	g.selector = NewEndpointSelector(DefaultBindingTTL)
 	g.endpointsMu.Unlock()
 
-	if len(urls) > 1 {
-		g.bindingCleanupOnce.Do(func() {
-			go g.bindingCleanupLoop()
-		})
-	}
+	g.bindingCleanupOnce.Do(func() {
+		go g.bindingCleanupLoop()
+	})
 
 	// Start peer discovery and connection cycling when a resolver is configured.
 	if g.discoveryResolveFunc != nil {
@@ -519,11 +696,8 @@ func (g *GravityClient) Start() error {
 		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
 	}
 
-	connectionCount := g.poolConfig.PoolSize
-	if len(urls) > 1 {
-		connectionCount = g.poolConfig.PoolSize * len(urls)
-	}
-	g.logger.Debug("creating connection pool with %d connections", connectionCount)
+	connectionCount := g.poolConfig.PoolSize * len(urls)
+	g.logger.Debug("creating connection pool with %d connections across %d endpoints", connectionCount, len(urls))
 	g.connections = make([]*grpc.ClientConn, connectionCount)
 	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
 	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
@@ -533,7 +707,7 @@ func (g *GravityClient) Start() error {
 	// Initialize connection health tracking
 	g.streamManager.connectionHealth = make([]bool, connectionCount)
 	for i := range g.streamManager.connectionHealth {
-		g.streamManager.connectionHealth[i] = true // Start assuming healthy
+		g.streamManager.connectionHealth[i] = true
 	}
 
 	g.logger.Debug("establishing %d gRPC connections across %d gravity endpoint(s)", connectionCount, len(urls))
@@ -590,14 +764,11 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("all %d gRPC clients created successfully", connectionCount)
 
-	// Release mutex before blocking operations (control streams, connect, tunnel streams)
 	g.mu.Unlock()
 
 	g.logger.Debug("establishing control streams...")
-	// Establish control streams (one per connection)
 	err = g.establishControlStreams()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("control streams closed due to context cancellation")
 			g.cleanup()
@@ -610,10 +781,8 @@ func (g *GravityClient) Start() error {
 	g.logger.Debug("control streams established successfully")
 
 	g.logger.Debug("sending session hello...")
-	// Send session hello to authenticate and get session info
 	err = g.sendSessionHello()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("session hello cancelled due to context cancellation")
 			g.cleanup()
@@ -626,10 +795,8 @@ func (g *GravityClient) Start() error {
 	g.logger.Debug("session hello sent successfully")
 
 	g.logger.Debug("establishing tunnel streams...")
-	// Establish tunnel streams (multiple per connection) - after connect message
 	err = g.establishTunnelStreams()
 	if err != nil {
-		// Check if this is due to context cancellation (graceful shutdown)
 		if isContextCanceled(g.ctx, err) {
 			g.logger.Debug("tunnel streams closed due to context cancellation")
 			g.cleanup()
@@ -643,25 +810,19 @@ func (g *GravityClient) Start() error {
 	g.rebuildEndpointStreamIndices()
 	g.refreshEndpointHealth()
 
-	// Re-acquire mutex for final state updates
 	g.mu.Lock()
 	g.connected = true
 	g.mu.Unlock()
 
-	g.logger.Debug("connected to Gravity server(s): %v", urls)
+	g.logger.Info("connected to %d Gravity servers: %v", len(urls), urls)
 
-	g.logger.Debug("starting background goroutines...")
-	// Start background goroutines
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()
 	go g.handleTextMessages()
-
 	go g.monitorConnectionHealth()
 	go g.handlePingHeartbeat()
 
-	g.logger.Debug("all background goroutines started successfully")
-
-	g.logger.Debug("gRPC Gravity client startup completed successfully")
+	g.logger.Debug("gRPC Gravity client multi-endpoint startup completed successfully")
 	return nil
 }
 

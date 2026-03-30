@@ -71,25 +71,38 @@ func newHardeningGravityClient(t *testing.T, n int) *GravityClient {
 	return g
 }
 
-func slicePtr(b []byte) uintptr {
-	if len(b) == 0 {
-		return 0
-	}
-	return reflect.ValueOf(&b[0]).Pointer()
-}
-
 func TestHardening_BufferPoolLeak(t *testing.T) {
 	g := newHardeningGravityClient(t, 1)
-	original := make([]byte, maxBufferSize)
-	g.bufferPool.Put(original)
+
+	// Track whether the pool's New function is called during getBuffer.
+	// For oversized payloads, getBuffer should bypass the pool entirely —
+	// no Get (and therefore no New) should be invoked.
+	var newCalls atomic.Int64
+	g.bufferPool.New = func() any {
+		newCalls.Add(1)
+		return make([]byte, maxBufferSize)
+	}
+
+	// Pre-warm: ensure the pool is empty so any Get would trigger New.
+	_ = g.bufferPool.Get()
+	newCalls.Store(0) // reset after warm-up
 
 	largePayload := make([]byte, maxBufferSize+1)
 	pb := g.getBuffer(largePayload)
-	g.returnBuffer(pb)
 
-	retrieved := g.bufferPool.Get().([]byte)
-	if slicePtr(retrieved) != slicePtr(original) {
-		t.Fatalf("expected original pooled buffer to be returned; got different buffer (pool leak)")
+	if newCalls.Load() != 0 {
+		t.Fatalf("getBuffer for oversized payload should bypass pool, but pool.New was called %d times", newCalls.Load())
+	}
+	if len(pb.Buffer) != maxBufferSize+1 {
+		t.Fatalf("expected buffer length %d for oversized payload, got %d", maxBufferSize+1, len(pb.Buffer))
+	}
+
+	// returnBuffer should NOT put oversized buffers back into the pool.
+	g.returnBuffer(pb)
+	newCalls.Store(0)
+	buf := g.bufferPool.Get().([]byte)
+	if len(buf) != maxBufferSize {
+		t.Fatalf("expected pool to return maxBufferSize buffer, got %d (oversized buffer leaked into pool)", len(buf))
 	}
 }
 

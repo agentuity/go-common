@@ -205,10 +205,6 @@ type GravityClient struct {
 	endpointStreamIndices map[string][]int
 	bindingCleanupOnce    sync.Once
 
-	// Sticky tunnel selection: flow → endpoint binding
-	flowBindings   map[FlowKey]*TunnelBinding
-	flowBindingsMu sync.RWMutex
-
 	// Fault tolerance
 	retryConfig     RetryConfig
 	circuitBreakers []*CircuitBreaker // One per connection
@@ -648,13 +644,15 @@ func (g *GravityClient) Start() error {
 // GravityURLs has >1 URL. Creates connections to multiple Gravity servers
 // with sticky tunnel selection and peer cycling.
 func (g *GravityClient) startMultiEndpoint() error {
+	// Resolve URLs under g.mu (reads gravityURLs), then release before
+	// acquiring g.endpointsMu to avoid nested lock ordering issues.
 	g.mu.Lock()
-
 	urls := g.resolveGravityURLs()
 	if len(urls) == 0 {
 		g.mu.Unlock()
 		return fmt.Errorf("no gravity URL configured")
 	}
+	g.mu.Unlock()
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
@@ -667,6 +665,8 @@ func (g *GravityClient) startMultiEndpoint() error {
 	}
 	g.selector = NewEndpointSelector(DefaultBindingTTL)
 	g.endpointsMu.Unlock()
+
+	g.mu.Lock()
 
 	g.bindingCleanupOnce.Do(func() {
 		go g.bindingCleanupLoop()
@@ -1082,6 +1082,12 @@ func randIndex(n int) int {
 }
 
 func (g *GravityClient) rebuildEndpointStreamIndices() {
+	// Snapshot connectionURLs under g.mu to avoid racing with reconnect().
+	g.mu.RLock()
+	connURLs := make([]string, len(g.connectionURLs))
+	copy(connURLs, g.connectionURLs)
+	g.mu.RUnlock()
+
 	m := make(map[string][]int)
 
 	g.streamManager.tunnelMu.RLock()
@@ -1089,10 +1095,10 @@ func (g *GravityClient) rebuildEndpointStreamIndices() {
 		if stream == nil {
 			continue
 		}
-		if stream.connIndex < 0 || stream.connIndex >= len(g.connectionURLs) {
+		if stream.connIndex < 0 || stream.connIndex >= len(connURLs) {
 			continue
 		}
-		endpointURL := g.connectionURLs[stream.connIndex]
+		endpointURL := connURLs[stream.connIndex]
 		if endpointURL == "" {
 			continue
 		}

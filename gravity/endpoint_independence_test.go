@@ -642,24 +642,32 @@ func TestEndpointDisconnection_ClosingPreventsReconnect(t *testing.T) {
 	}
 }
 
-// TestEndpointDisconnection_FlagClearedOnFullReconnectFallback verifies that
-// when handleEndpointDisconnection falls through to handleServerDisconnection
-// (all endpoints down), the triggering endpoint's reconnecting flag is cleared.
-func TestEndpointDisconnection_FlagClearedOnFullReconnectFallback(t *testing.T) {
+// TestEndpointDisconnection_AllDownStillPerEndpoint verifies that when all
+// endpoints are down, handleEndpointDisconnection still uses per-endpoint
+// reconnection (not full reconnect) so each endpoint recovers independently.
+func TestEndpointDisconnection_AllDownStillPerEndpoint(t *testing.T) {
 	t.Parallel()
 
 	g := newEndpointTestClient(t, 3)
 	g.gravityURLs = []string{"a", "b", "c"}
-	g.skipAutoReconnect = true // prevent actual reconnect goroutine
 
 	// All control streams nil = no healthy endpoints.
-	// handleEndpointDisconnection should fall through to full reconnect
-	// and clear the flag.
+	// handleEndpointDisconnection should still use per-endpoint reconnect,
+	// setting the reconnecting flag (reconnectEndpoint will run in a goroutine
+	// and eventually fail, clearing the flag via defer).
 
-	g.handleEndpointDisconnection(1, "test-fallback")
-	time.Sleep(100 * time.Millisecond)
+	g.handleEndpointDisconnection(1, "test-all-down")
+	time.Sleep(50 * time.Millisecond)
 
-	if g.endpointReconnecting[1].Load() {
-		t.Fatal("expected endpointReconnecting[1] to be cleared after full reconnect fallback")
+	// The reconnecting flag should be set (per-endpoint reconnect was started).
+	if !g.endpointReconnecting[1].Load() {
+		t.Fatal("expected endpointReconnecting[1] to be true — per-endpoint reconnect should have started")
+	}
+	// Other endpoints should NOT be affected.
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected endpointReconnecting[0] to remain false")
+	}
+	if g.endpointReconnecting[2].Load() {
+		t.Fatal("expected endpointReconnecting[2] to remain false")
 	}
 }

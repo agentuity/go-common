@@ -329,6 +329,7 @@ type StreamInfo struct {
 type StreamManager struct {
 	// Control streams (one per connection) - using session service
 	controlStreams []pb.GravitySessionService_EstablishSessionClient
+	controlSendMu  []sync.Mutex // Per-stream send serialization (gRPC Send is not concurrent-safe)
 	controlMu      sync.RWMutex
 
 	// Enhanced tunnel stream management
@@ -1163,6 +1164,7 @@ func (g *GravityClient) refreshEndpointHealth() {
 func (g *GravityClient) establishControlStreams() error {
 	g.logger.Debug("creating control streams for %d connections", len(g.connections))
 	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, len(g.connections))
+	g.streamManager.controlSendMu = make([]sync.Mutex, len(g.connections))
 	g.streamManager.contexts = make([]context.Context, len(g.connections))
 	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
 
@@ -1199,9 +1201,11 @@ func (g *GravityClient) establishTunnelStreams() error {
 	// In multi-endpoint mode, wait for responses from ALL Gravity servers
 	// (one per endpoint, not per pooled connection) to ensure each has
 	// processed the session hello before we open tunnel streams.
+	// Use len(g.connections) rather than raw g.gravityURLs because
+	// resolveGravityURLs() deduplicates and trims to MaxGravityPeers.
 	numExpected := 1
-	if len(g.gravityURLs) > 1 {
-		numExpected = len(g.gravityURLs)
+	if len(g.connections) > 1 {
+		numExpected = len(g.connections)
 		g.logger.Debug("waiting for session hello responses from %d Gravity servers...", numExpected)
 	} else {
 		g.logger.Debug("waiting for machine ID from server...")
@@ -1239,7 +1243,7 @@ proceed:
 
 	// Use configured streams per connection / gravity.
 	streamsPerConnection := g.poolConfig.StreamsPerConnection
-	if len(g.gravityURLs) > 1 {
+	if len(g.connections) > 1 {
 		streamsPerConnection = g.poolConfig.StreamsPerGravity
 		if streamsPerConnection <= 0 {
 			streamsPerConnection = DefaultStreamsPerGravity
@@ -1340,6 +1344,10 @@ func (g *GravityClient) sendSessionHello() error {
 	circuitBreaker := g.circuitBreakers[0]
 
 	err := RetryWithCircuitBreaker(context.Background(), g.retryConfig, circuitBreaker, func() error {
+		if len(g.streamManager.controlSendMu) > 0 {
+			g.streamManager.controlSendMu[0].Lock()
+			defer g.streamManager.controlSendMu[0].Unlock()
+		}
 		return stream.Send(msg)
 	})
 
@@ -1417,6 +1425,10 @@ func (g *GravityClient) sendSessionHelloOnStream(streamIndex int, stream pb.Grav
 
 	msg := g.buildSessionHelloMessage()
 	return RetryWithCircuitBreaker(context.Background(), g.retryConfig, cb, func() error {
+		if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
+			g.streamManager.controlSendMu[streamIndex].Lock()
+			defer g.streamManager.controlSendMu[streamIndex].Unlock()
+		}
 		return stream.Send(msg)
 	})
 }
@@ -2313,7 +2325,11 @@ func (g *GravityClient) sendOnControlStream(streamIndex int, msg *pb.SessionMess
 	if stream == nil {
 		return fmt.Errorf("control stream %d is nil", streamIndex)
 	}
-	return stream.Send(msg)
+	// gRPC Send is not safe for concurrent use; serialize per stream.
+	g.streamManager.controlSendMu[streamIndex].Lock()
+	err := stream.Send(msg)
+	g.streamManager.controlSendMu[streamIndex].Unlock()
+	return err
 }
 
 // Interface methods
@@ -2696,17 +2712,15 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 	g.connectionURLs[endpointIndex] = endpointURL
 	g.mu.Unlock()
 
+	// Publish the control stream so handleControlStream can receive the
+	// hello response, but do NOT mark it healthy yet — that happens after
+	// the handshake completes so sendSessionMessageAsync won't route
+	// messages to a half-open endpoint.
 	g.streamManager.controlMu.Lock()
 	g.streamManager.controlStreams[endpointIndex] = stream
 	g.streamManager.contexts[endpointIndex] = ctx
 	g.streamManager.cancels[endpointIndex] = cancel
 	g.streamManager.controlMu.Unlock()
-
-	g.streamManager.healthMu.Lock()
-	if endpointIndex >= 0 && endpointIndex < len(g.streamManager.connectionHealth) {
-		g.streamManager.connectionHealth[endpointIndex] = true
-	}
-	g.streamManager.healthMu.Unlock()
 
 	go g.handleControlStream(endpointIndex, stream)
 
@@ -2735,6 +2749,14 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		return g.ctx.Err()
 	}
 
+	// Handshake succeeded — now mark the connection healthy so
+	// sendSessionMessageAsync and stream selectors can use it.
+	g.streamManager.healthMu.Lock()
+	if endpointIndex >= 0 && endpointIndex < len(g.streamManager.connectionHealth) {
+		g.streamManager.connectionHealth[endpointIndex] = true
+	}
+	g.streamManager.healthMu.Unlock()
+
 	streamsPerGravity := g.poolConfig.StreamsPerGravity
 	if streamsPerGravity <= 0 {
 		streamsPerGravity = DefaultStreamsPerGravity
@@ -2747,7 +2769,16 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		streamID string
 	}, 0, streamsPerGravity)
 
-	g.streamManager.tunnelMu.Lock()
+	// Build tunnel streams locally first so a partial failure doesn't
+	// leave orphaned isHealthy=true entries in the shared slice.
+	type pendingTunnel struct {
+		idx      int
+		info     *StreamInfo
+		streamID string
+		stream   pb.GravitySessionService_StreamSessionPacketsClient
+	}
+	pending := make([]pendingTunnel, 0, streamsPerGravity)
+
 	for i := 0; i < streamsPerGravity; i++ {
 		tunnelIdx := tunnelOffset + i
 		if tunnelIdx < 0 || tunnelIdx >= len(g.streamManager.tunnelStreams) {
@@ -2762,36 +2793,51 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 
 		tstream, terr := client.StreamSessionPackets(tctx)
 		if terr != nil {
-			g.streamManager.tunnelMu.Unlock()
 			cancel()
 			_ = conn.Close()
 			return fmt.Errorf("failed to create tunnel stream %d: %w", i, terr)
 		}
 
-		g.streamManager.tunnelStreams[tunnelIdx] = &StreamInfo{
-			stream:    tstream,
-			connIndex: endpointIndex,
-			streamID:  streamID,
-			isHealthy: true,
-			loadCount: 0,
-			lastUsed:  time.Now(),
-		}
+		pending = append(pending, pendingTunnel{
+			idx: tunnelIdx,
+			info: &StreamInfo{
+				stream:    tstream,
+				connIndex: endpointIndex,
+				streamID:  streamID,
+				isHealthy: true,
+				loadCount: 0,
+				lastUsed:  time.Now(),
+			},
+			streamID: streamID,
+			stream:   tstream,
+		})
+	}
 
-		g.streamManager.metricsMu.Lock()
-		g.streamManager.streamMetrics[streamID] = &StreamMetrics{}
-		g.streamManager.metricsMu.Unlock()
+	// All tunnel streams created successfully — commit into shared state.
+	g.streamManager.tunnelMu.Lock()
+	for _, p := range pending {
+		g.streamManager.tunnelStreams[p.idx] = p.info
+	}
+	g.streamManager.tunnelMu.Unlock()
 
+	g.streamManager.metricsMu.Lock()
+	for _, p := range pending {
+		g.streamManager.streamMetrics[p.streamID] = &StreamMetrics{}
+	}
+	g.streamManager.metricsMu.Unlock()
+
+	streamsToStart = make([]struct {
+		idx      int
+		stream   pb.GravitySessionService_StreamSessionPacketsClient
+		streamID string
+	}, 0, len(pending))
+	for _, p := range pending {
 		streamsToStart = append(streamsToStart, struct {
 			idx      int
 			stream   pb.GravitySessionService_StreamSessionPacketsClient
 			streamID string
-		}{
-			idx:      tunnelIdx,
-			stream:   tstream,
-			streamID: streamID,
-		})
+		}{idx: p.idx, stream: p.stream, streamID: p.streamID})
 	}
-	g.streamManager.tunnelMu.Unlock()
 
 	for _, s := range streamsToStart {
 		go g.handleTunnelStream(s.idx, s.stream, s.streamID)
@@ -3067,15 +3113,34 @@ func generateMessageID() string {
 // sendSessionMessageAsync sends a session message without waiting for response (async)
 func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 	g.streamManager.controlMu.RLock()
+	g.streamManager.healthMu.RLock()
 	var stream pb.GravitySessionService_EstablishSessionClient
 	streamIndex := -1
 	for i, s := range g.streamManager.controlStreams {
-		if s != nil {
-			stream = s
-			streamIndex = i
-			break
+		if s == nil {
+			continue
+		}
+		// Prefer healthy streams; during reconnection a stream may be
+		// published but not yet past the hello handshake.
+		if i < len(g.streamManager.connectionHealth) && !g.streamManager.connectionHealth[i] {
+			continue
+		}
+		stream = s
+		streamIndex = i
+		break
+	}
+	if stream == nil {
+		// Fallback: pick any non-nil stream even if not yet marked healthy
+		// (single-endpoint mode or all endpoints mid-handshake).
+		for i, s := range g.streamManager.controlStreams {
+			if s != nil {
+				stream = s
+				streamIndex = i
+				break
+			}
 		}
 	}
+	g.streamManager.healthMu.RUnlock()
 	g.streamManager.controlMu.RUnlock()
 
 	if stream == nil || streamIndex < 0 {
@@ -3087,8 +3152,12 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(g.ctx), 10*time.Second)
 	defer cancel()
 
+	sendMu := &g.streamManager.controlSendMu[streamIndex]
 	return RetryWithCircuitBreaker(ctx, g.retryConfig, circuitBreaker, func() error {
-		return stream.Send(msg)
+		sendMu.Lock()
+		err := stream.Send(msg)
+		sendMu.Unlock()
+		return err
 	})
 }
 
@@ -4207,6 +4276,10 @@ func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 	// Use a bounded send so controlStream.Send cannot block indefinitely.
 	done := make(chan error, 1)
 	go func() {
+		if len(g.streamManager.controlSendMu) > 0 {
+			g.streamManager.controlSendMu[0].Lock()
+			defer g.streamManager.controlSendMu[0].Unlock()
+		}
 		done <- controlStream.Send(msg)
 	}()
 
@@ -4319,7 +4392,13 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 		}
 	})
 
+	if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
+		g.streamManager.controlSendMu[streamIndex].Lock()
+	}
 	err := controlStream.Send(pingMsg)
+	if streamIndex >= 0 && streamIndex < len(g.streamManager.controlSendMu) {
+		g.streamManager.controlSendMu[streamIndex].Unlock()
+	}
 	sendBlocked.Stop()
 
 	if err != nil {

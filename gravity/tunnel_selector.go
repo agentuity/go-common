@@ -118,6 +118,33 @@ func (s *EndpointSelector) pickHealthy(endpoints []*GravityEndpoint) *GravityEnd
 	return nil // all unhealthy
 }
 
+// RecordInboundFlow records a reverse-flow binding for an inbound packet so
+// that the response (e.g., SYNACK for a SYN) routes back through the same
+// endpoint. Without this, the outbound SYNACK's flow key (src/dst swapped)
+// wouldn't match the original SYN's binding and would be round-robined to
+// a random endpoint, breaking the TCP handshake.
+func (s *EndpointSelector) RecordInboundFlow(packet []byte, endpoint *GravityEndpoint) {
+	if endpoint == nil {
+		return
+	}
+	key := ExtractFlowKey(packet)
+	// The response will have src/dst swapped, so store under the reverse key.
+	reverseKey := FlowKey{
+		SrcIP:   key.DstIP,
+		DstIP:   key.SrcIP,
+		SrcPort: key.DstPort,
+		DstPort: key.SrcPort,
+		Proto:   key.Proto,
+	}
+	now := time.Now()
+	s.mu.Lock()
+	s.bindings[reverseKey] = &TunnelBinding{
+		Endpoint: endpoint,
+		LastUsed: now,
+	}
+	s.mu.Unlock()
+}
+
 // ExpireBindings removes bindings older than the TTL.
 // Called periodically from a background goroutine.
 func (s *EndpointSelector) ExpireBindings() {

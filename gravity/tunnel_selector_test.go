@@ -316,6 +316,73 @@ func TestRecordInboundFlow_MultipleFlows(t *testing.T) {
 	}
 }
 
+// TestRecordInboundFlow_UnhealthyDrops verifies that return traffic is dropped
+// (nil) when the originating endpoint is unhealthy, rather than misrouting to
+// a different endpoint that doesn't have the NAT/conntrack entry.
+func TestRecordInboundFlow_UnhealthyDrops(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2}
+
+	ionIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Record inbound flow from ep1
+	selector.RecordInboundFlow(makeIPv6TCPPacket(ionIP, containerIP, 33628, 443), ep1)
+
+	// Mark ep1 as unhealthy (tunnel went down)
+	ep1.healthy.Store(false)
+
+	// Response should be nil (dropped), NOT routed to ep2
+	response := makeIPv6TCPPacket(containerIP, ionIP, 443, 33628)
+	selected := selector.Select(response, endpoints)
+	if selected != nil {
+		t.Fatalf("expected nil (drop) for return traffic with unhealthy originator, got %s", selected.URL)
+	}
+}
+
+// TestRecordInboundFlow_ForwardUnhealthyFailsOver verifies that forward flows
+// (not return traffic) DO failover to a healthy endpoint when the sticky
+// endpoint goes down.
+func TestRecordInboundFlow_ForwardUnhealthyFailsOver(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2}
+
+	srcIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	dstIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Create a forward flow binding to ep1
+	packet := makeIPv6TCPPacket(srcIP, dstIP, 5000, 80)
+	selected := selector.Select(packet, endpoints)
+	if selected == nil {
+		t.Fatal("expected a selected endpoint")
+	}
+	boundTo := selected
+
+	// Mark the bound endpoint as unhealthy
+	boundTo.healthy.Store(false)
+
+	// Forward flow should failover to the other healthy endpoint
+	selected = selector.Select(packet, endpoints)
+	if selected == nil {
+		t.Fatal("expected failover to healthy endpoint, got nil")
+	}
+	if selected == boundTo {
+		t.Fatal("expected failover to a DIFFERENT endpoint, got the same unhealthy one")
+	}
+}
+
 // TestRecordInboundFlow_NilEndpoint is a safety check.
 func TestRecordInboundFlow_NilEndpoint(t *testing.T) {
 	t.Parallel()

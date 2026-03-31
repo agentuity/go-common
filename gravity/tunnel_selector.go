@@ -21,6 +21,7 @@ type FlowKey struct {
 type TunnelBinding struct {
 	Endpoint *GravityEndpoint
 	LastUsed time.Time
+	IsReturn bool // true = reverse-flow binding from RecordInboundFlow
 }
 
 // EndpointSelector manages sticky flow-to-endpoint bindings.
@@ -55,15 +56,24 @@ func (s *EndpointSelector) Select(packet []byte, endpoints []*GravityEndpoint) *
 	binding, ok := s.bindings[key]
 	s.mu.RUnlock()
 
-	if ok && now.Sub(binding.LastUsed) < s.ttl && binding.Endpoint.IsHealthy() {
-		// Update LastUsed under write lock to avoid races.
-		s.mu.Lock()
-		if current, ok := s.bindings[key]; ok && current.Endpoint == binding.Endpoint && now.Sub(current.LastUsed) < s.ttl && current.Endpoint.IsHealthy() {
-			current.LastUsed = now
+	if ok && now.Sub(binding.LastUsed) < s.ttl {
+		if binding.Endpoint.IsHealthy() {
+			// Update LastUsed under write lock to avoid races.
+			s.mu.Lock()
+			if current, ok := s.bindings[key]; ok && current.Endpoint == binding.Endpoint && now.Sub(current.LastUsed) < s.ttl && current.Endpoint.IsHealthy() {
+				current.LastUsed = now
+				s.mu.Unlock()
+				return current.Endpoint
+			}
 			s.mu.Unlock()
-			return current.Endpoint
+		} else if binding.IsReturn {
+			// Return traffic (response to inbound) with unhealthy originator:
+			// routing to a different endpoint won't help — it doesn't have the
+			// NAT/conntrack entry. Drop the packet; the TCP connection is already
+			// broken and the client will retry through a healthy endpoint.
+			return nil
 		}
-		s.mu.Unlock()
+		// Forward flow with unhealthy endpoint: fall through to pick a new one.
 	}
 
 	// Slow path: pick new endpoint, store binding.
@@ -141,6 +151,7 @@ func (s *EndpointSelector) RecordInboundFlow(packet []byte, endpoint *GravityEnd
 	s.bindings[reverseKey] = &TunnelBinding{
 		Endpoint: endpoint,
 		LastUsed: now,
+		IsReturn: true,
 	}
 	s.mu.Unlock()
 }

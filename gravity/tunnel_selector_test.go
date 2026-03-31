@@ -247,3 +247,153 @@ func TestEndpointSelector_Len(t *testing.T) {
 		t.Fatalf("expected two bindings, got %d", selector.Len())
 	}
 }
+
+// TestRecordInboundFlow_StickyReturn verifies that when an inbound packet
+// is recorded via RecordInboundFlow, the response (with src/dst swapped)
+// routes back through the same endpoint — not round-robined to a random one.
+func TestRecordInboundFlow_StickyReturn(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep3 := &GravityEndpoint{URL: "grpc://ion-3:445"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	ep3.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2, ep3}
+
+	ionIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Simulate inbound SYN from ion-1: src=ionIP:33628, dst=containerIP:443
+	inboundSYN := makeIPv6TCPPacket(ionIP, containerIP, 33628, 443)
+	selector.RecordInboundFlow(inboundSYN, ep1)
+
+	// The response SYNACK has reversed src/dst: src=containerIP:443, dst=ionIP:33628
+	outboundSYNACK := makeIPv6TCPPacket(containerIP, ionIP, 443, 33628)
+
+	// Select should return ep1 (not round-robin to ep2/ep3)
+	for i := 0; i < 10; i++ {
+		selected := selector.Select(outboundSYNACK, endpoints)
+		if selected != ep1 {
+			t.Fatalf("iteration %d: expected response routed to ep1 (%s), got %s", i, ep1.URL, selected.URL)
+		}
+	}
+}
+
+// TestRecordInboundFlow_MultipleFlows verifies that different inbound flows
+// from different endpoints create independent return bindings.
+func TestRecordInboundFlow_MultipleFlows(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2}
+
+	ion1IP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	ion2IP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3}
+	containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Inbound flow 1: ion-1 → container (port 33628)
+	selector.RecordInboundFlow(makeIPv6TCPPacket(ion1IP, containerIP, 33628, 443), ep1)
+	// Inbound flow 2: ion-2 → container (port 44100)
+	selector.RecordInboundFlow(makeIPv6TCPPacket(ion2IP, containerIP, 44100, 443), ep2)
+
+	// Response to flow 1 should go to ep1
+	resp1 := makeIPv6TCPPacket(containerIP, ion1IP, 443, 33628)
+	if sel := selector.Select(resp1, endpoints); sel != ep1 {
+		t.Fatalf("flow 1 response: expected ep1, got %s", sel.URL)
+	}
+
+	// Response to flow 2 should go to ep2
+	resp2 := makeIPv6TCPPacket(containerIP, ion2IP, 443, 44100)
+	if sel := selector.Select(resp2, endpoints); sel != ep2 {
+		t.Fatalf("flow 2 response: expected ep2, got %s", sel.URL)
+	}
+}
+
+// TestRecordInboundFlow_UnhealthyDrops verifies that return traffic is dropped
+// (nil) when the originating endpoint is unhealthy, rather than misrouting to
+// a different endpoint that doesn't have the NAT/conntrack entry.
+func TestRecordInboundFlow_UnhealthyDrops(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2}
+
+	ionIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Record inbound flow from ep1
+	selector.RecordInboundFlow(makeIPv6TCPPacket(ionIP, containerIP, 33628, 443), ep1)
+
+	// Mark ep1 as unhealthy (tunnel went down)
+	ep1.healthy.Store(false)
+
+	// Response should be nil (dropped), NOT routed to ep2
+	response := makeIPv6TCPPacket(containerIP, ionIP, 443, 33628)
+	selected := selector.Select(response, endpoints)
+	if selected != nil {
+		t.Fatalf("expected nil (drop) for return traffic with unhealthy originator, got %s", selected.URL)
+	}
+}
+
+// TestRecordInboundFlow_ForwardUnhealthyFailsOver verifies that forward flows
+// (not return traffic) DO failover to a healthy endpoint when the sticky
+// endpoint goes down.
+func TestRecordInboundFlow_ForwardUnhealthyFailsOver(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+	ep1.healthy.Store(true)
+	ep2.healthy.Store(true)
+	endpoints := []*GravityEndpoint{ep1, ep2}
+
+	srcIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+	dstIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+
+	// Create a forward flow binding to ep1
+	packet := makeIPv6TCPPacket(srcIP, dstIP, 5000, 80)
+	selected := selector.Select(packet, endpoints)
+	if selected == nil {
+		t.Fatal("expected a selected endpoint")
+	}
+	boundTo := selected
+
+	// Mark the bound endpoint as unhealthy
+	boundTo.healthy.Store(false)
+
+	// Forward flow should failover to the other healthy endpoint
+	selected = selector.Select(packet, endpoints)
+	if selected == nil {
+		t.Fatal("expected failover to healthy endpoint, got nil")
+	}
+	if selected == boundTo {
+		t.Fatal("expected failover to a DIFFERENT endpoint, got the same unhealthy one")
+	}
+}
+
+// TestRecordInboundFlow_NilEndpoint is a safety check.
+func TestRecordInboundFlow_NilEndpoint(t *testing.T) {
+	t.Parallel()
+
+	selector := NewEndpointSelector(time.Minute)
+	packet := makeIPv6TCPPacket([16]byte{1}, [16]byte{2}, 1000, 80)
+
+	// Should not panic
+	selector.RecordInboundFlow(packet, nil)
+
+	if selector.Len() != 0 {
+		t.Fatal("expected no binding for nil endpoint")
+	}
+}

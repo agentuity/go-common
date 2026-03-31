@@ -1597,6 +1597,27 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			g.logger.Info("gravity.packet.delivered dst=%s src_port=%d enqueued_at=%s tunnel_latency=%s", dstIP, srcPort, enqueuedAt.Format(time.RFC3339Nano), tunnelLatency)
 		}
 
+		// Record reverse-flow binding so the response routes back through
+		// the same endpoint that sent this inbound packet.
+		if g.selector != nil && len(g.gravityURLs) > 1 {
+			g.streamManager.tunnelMu.RLock()
+			var ep *GravityEndpoint
+			if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
+				if si := g.streamManager.tunnelStreams[streamIndex]; si != nil {
+					connIdx := si.connIndex
+					g.endpointsMu.RLock()
+					if connIdx >= 0 && connIdx < len(g.endpoints) {
+						ep = g.endpoints[connIdx]
+					}
+					g.endpointsMu.RUnlock()
+				}
+			}
+			g.streamManager.tunnelMu.RUnlock()
+			if ep != nil {
+				g.selector.RecordInboundFlow(packet.Data, ep)
+			}
+		}
+
 		// Track inbound packet from gravity stream
 		g.inboundReceived.Add(1)
 		g.inboundBytes.Add(uint64(len(packet.Data)))

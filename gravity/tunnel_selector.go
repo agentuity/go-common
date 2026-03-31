@@ -21,6 +21,7 @@ type FlowKey struct {
 type TunnelBinding struct {
 	Endpoint *GravityEndpoint
 	LastUsed time.Time
+	IsReturn bool // true = reverse-flow binding from RecordInboundFlow
 }
 
 // EndpointSelector manages sticky flow-to-endpoint bindings.
@@ -55,15 +56,24 @@ func (s *EndpointSelector) Select(packet []byte, endpoints []*GravityEndpoint) *
 	binding, ok := s.bindings[key]
 	s.mu.RUnlock()
 
-	if ok && now.Sub(binding.LastUsed) < s.ttl && binding.Endpoint.IsHealthy() {
-		// Update LastUsed under write lock to avoid races.
-		s.mu.Lock()
-		if current, ok := s.bindings[key]; ok && current.Endpoint == binding.Endpoint && now.Sub(current.LastUsed) < s.ttl && current.Endpoint.IsHealthy() {
-			current.LastUsed = now
+	if ok && now.Sub(binding.LastUsed) < s.ttl {
+		if binding.Endpoint.IsHealthy() {
+			// Update LastUsed under write lock to avoid races.
+			s.mu.Lock()
+			if current, ok := s.bindings[key]; ok && current.Endpoint == binding.Endpoint && now.Sub(current.LastUsed) < s.ttl && current.Endpoint.IsHealthy() {
+				current.LastUsed = now
+				s.mu.Unlock()
+				return current.Endpoint
+			}
 			s.mu.Unlock()
-			return current.Endpoint
+		} else if binding.IsReturn {
+			// Return traffic (response to inbound) with unhealthy originator:
+			// routing to a different endpoint won't help — it doesn't have the
+			// NAT/conntrack entry. Drop the packet; the TCP connection is already
+			// broken and the client will retry through a healthy endpoint.
+			return nil
 		}
-		s.mu.Unlock()
+		// Forward flow with unhealthy endpoint: fall through to pick a new one.
 	}
 
 	// Slow path: pick new endpoint, store binding.
@@ -116,6 +126,34 @@ func (s *EndpointSelector) pickHealthy(endpoints []*GravityEndpoint) *GravityEnd
 		}
 	}
 	return nil // all unhealthy
+}
+
+// RecordInboundFlow records a reverse-flow binding for an inbound packet so
+// that the response (e.g., SYNACK for a SYN) routes back through the same
+// endpoint. Without this, the outbound SYNACK's flow key (src/dst swapped)
+// wouldn't match the original SYN's binding and would be round-robined to
+// a random endpoint, breaking the TCP handshake.
+func (s *EndpointSelector) RecordInboundFlow(packet []byte, endpoint *GravityEndpoint) {
+	if endpoint == nil {
+		return
+	}
+	key := ExtractFlowKey(packet)
+	// The response will have src/dst swapped, so store under the reverse key.
+	reverseKey := FlowKey{
+		SrcIP:   key.DstIP,
+		DstIP:   key.SrcIP,
+		SrcPort: key.DstPort,
+		DstPort: key.SrcPort,
+		Proto:   key.Proto,
+	}
+	now := time.Now()
+	s.mu.Lock()
+	s.bindings[reverseKey] = &TunnelBinding{
+		Endpoint: endpoint,
+		LastUsed: now,
+		IsReturn: true,
+	}
+	s.mu.Unlock()
 }
 
 // ExpireBindings removes bindings older than the TTL.

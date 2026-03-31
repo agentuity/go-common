@@ -2729,40 +2729,43 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 
 	g.logger.Info("starting endpoint %d (%s) reconnection due to: %s", endpointIndex, endpointURL, reason)
 
-	maxAttempts := g.maxReconnectAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 10
-	}
+	// Retry indefinitely with capped exponential backoff. Per-endpoint
+	// reconnection must never give up — the Gravity server may be down
+	// for minutes (restart, deploy, OOM) and hadron should recover as
+	// soon as it comes back. Only stop on client shutdown or context
+	// cancellation.
+	backoff := time.Second
+	maxBackoff := 30 * time.Second
+	attempt := 0
 
-	var attempt int
-	err := ExponentialBackoff(g.ctx, maxAttempts-1, time.Second, func() error {
+	for {
 		g.mu.RLock()
 		closing := g.closing
 		g.mu.RUnlock()
 		if closing {
-			return context.Canceled
+			return
 		}
 
 		attempt++
-		g.logger.Info("endpoint %d reconnection attempt %d/%d", endpointIndex, attempt, maxAttempts)
+		g.logger.Info("endpoint %d reconnection attempt %d", endpointIndex, attempt)
 		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err != nil {
 			g.logger.Warn("endpoint %d reconnection attempt %d failed: %v", endpointIndex, attempt, err)
-			return err
+		} else {
+			g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
+			return
 		}
-		return nil
-	})
 
-	if err == nil {
-		g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
-		return
+		// Jitter: 10% of backoff
+		jitter := time.Duration(float64(backoff) * 0.1 * (float64(time.Now().UnixNano()%100) / 100.0))
+		select {
+		case <-time.After(backoff + jitter):
+			if backoff < maxBackoff {
+				backoff = min(backoff*2, maxBackoff)
+			}
+		case <-g.ctx.Done():
+			return
+		}
 	}
-
-	// Context cancellation or client closing — expected, no error log needed.
-	if g.ctx.Err() != nil {
-		return
-	}
-
-	g.logger.Error("endpoint %d (%s) reconnection failed after %d attempts", endpointIndex, endpointURL, maxAttempts)
 }
 
 func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL string) error {

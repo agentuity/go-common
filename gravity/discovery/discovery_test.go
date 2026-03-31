@@ -93,7 +93,7 @@ func TestGCEDiscoverer_InterfaceCompliance(t *testing.T) {
 }
 
 // newFakeGCEServer creates a test HTTP server that serves both the metadata
-// token endpoint and the compute instances.list endpoint.
+// token endpoint and the compute instances.aggregatedList endpoint.
 func newFakeGCEServer(t *testing.T, instances []gceInstance) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -111,12 +111,17 @@ func newFakeGCEServer(t *testing.T, instances []gceInstance) *httptest.Server {
 		json.NewEncoder(w).Encode(resp)
 	})
 
-	mux.HandleFunc("/compute/v1/projects/test-project/zones/us-central1-a/instances", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/compute/v1/projects/test-project/aggregated/instances", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer fake-token-12345" {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		list := gceInstanceList{Items: instances}
+		// Wrap instances in the aggregatedList response shape.
+		list := gceAggregatedList{
+			Items: map[string]gceInstancesScopedList{
+				"zones/us-central1-a": {Instances: instances},
+			},
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(list)
 	})

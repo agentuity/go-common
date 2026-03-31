@@ -49,6 +49,17 @@ type gceInstanceList struct {
 	Items []gceInstance `json:"items"`
 }
 
+// gceAggregatedList is a subset of the GCE instances.aggregatedList response.
+type gceAggregatedList struct {
+	Items         map[string]gceInstancesScopedList `json:"items"`
+	NextPageToken string                            `json:"nextPageToken"`
+}
+
+// gceInstancesScopedList is the per-zone instance list in an aggregatedList response.
+type gceInstancesScopedList struct {
+	Instances []gceInstance `json:"instances"`
+}
+
 // gceInstance is a subset of the GCE instance resource.
 type gceInstance struct {
 	Name              string                `json:"name"`
@@ -64,7 +75,8 @@ type gceInstanceTags struct {
 
 // gceNetworkInterface is a subset of the GCE network interface resource.
 type gceNetworkInterface struct {
-	NetworkIP string `json:"networkIP"`
+	NetworkIP   string `json:"networkIP"`
+	IPv6Address string `json:"ipv6Address"`
 }
 
 // Discover lists GCE instances matching the configured tag, excludes self,
@@ -99,8 +111,13 @@ func (g *GCEDiscoverer) Discover(ctx context.Context) ([]string, error) {
 		if !g.hasTag(inst) {
 			continue
 		}
-		// Extract the primary internal IP.
+		// Extract the internal IP, preferring IPv6 (memberlist binds to IPv6
+		// when available, so peers must be reachable on their IPv6 address).
 		for _, iface := range inst.NetworkInterfaces {
+			if iface.IPv6Address != "" {
+				peers = append(peers, iface.IPv6Address)
+				break
+			}
 			if iface.NetworkIP != "" {
 				peers = append(peers, iface.NetworkIP)
 				break
@@ -141,37 +158,60 @@ func (g *GCEDiscoverer) fetchToken(ctx context.Context, client *http.Client) (st
 	return tokenResp.AccessToken, nil
 }
 
-// listInstances calls the GCE compute instances.list API.
+// listInstances calls the GCE compute instances.aggregatedList API to discover
+// peers across all zones in the project. This is necessary because instances in
+// the same region may be spread across different zones (e.g., us-west1-a, -b, -c).
+// The API paginates at 500 instances by default, so we loop on nextPageToken.
 func (g *GCEDiscoverer) listInstances(ctx context.Context, client *http.Client, token string) ([]gceInstance, error) {
 	baseURL := g.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
 
-	url := fmt.Sprintf("%s/compute/v1/projects/%s/zones/%s/instances", baseURL, g.ProjectID, g.Zone)
+	baseRequestURL := fmt.Sprintf("%s/compute/v1/projects/%s/aggregated/instances", baseURL, g.ProjectID)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	var instances []gceInstance
+	pageToken := ""
+	for {
+		requestURL := baseRequestURL
+		if pageToken != "" {
+			requestURL += "?pageToken=" + pageToken
+		}
 
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("compute API returned %d: %s", resp.StatusCode, string(body))
-	}
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
 
-	var list gceInstanceList
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return nil, fmt.Errorf("failed to decode instance list: %w", err)
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("compute API returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		var list gceAggregatedList
+		err = json.NewDecoder(resp.Body).Decode(&list)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode aggregated instance list: %w", err)
+		}
+
+		for _, scoped := range list.Items {
+			instances = append(instances, scoped.Instances...)
+		}
+
+		if list.NextPageToken == "" {
+			break
+		}
+		pageToken = list.NextPageToken
 	}
-	return list.Items, nil
+	return instances, nil
 }
 
 // hasTag reports whether the instance has the configured tag.

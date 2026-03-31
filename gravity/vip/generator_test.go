@@ -302,7 +302,10 @@ func TestGenerateDeterministicIPV6_DifferentSubnets(t *testing.T) {
 
 func TestCollisionCheck_NoCollision(t *testing.T) {
 	t.Parallel()
-	_, subnet, _ := net.ParseCIDR("fd00:1::/96")
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
 	srcIP := net.ParseIP("fd00::1")
 	dstIP := net.ParseIP("fd00::2")
 
@@ -317,12 +320,18 @@ func TestCollisionCheck_NoCollision(t *testing.T) {
 
 func TestCollisionCheck_RehashesOnCollision(t *testing.T) {
 	t.Parallel()
-	_, subnet, _ := net.ParseCIDR("fd00:1::/96")
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
 	srcIP := net.ParseIP("fd00::1")
 	dstIP := net.ParseIP("fd00::2")
 
 	// Get the base IP (no collision check)
-	baseIP, _ := GenerateDeterministicIPV6("machine-1", srcIP, 1000, dstIP, 80, *subnet)
+	baseIP, err := GenerateDeterministicIPV6("machine-1", srcIP, 1000, dstIP, 80, *subnet)
+	if err != nil {
+		t.Fatalf("GenerateDeterministicIPV6: %v", err)
+	}
 
 	// Force collision on the base IP — should rehash with salt
 	calls := 0
@@ -348,15 +357,22 @@ func TestCollisionCheck_RehashesOnCollision(t *testing.T) {
 
 func TestCollisionCheck_ExhaustsAttempts(t *testing.T) {
 	t.Parallel()
-	_, subnet, _ := net.ParseCIDR("fd00:1::/96")
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
 	srcIP := net.ParseIP("fd00::1")
 	dstIP := net.ParseIP("fd00::2")
 
-	// Always collide — should exhaust attempts
-	_, err := GenerateDeterministicIPV6WithCollisionCheck("machine-1", srcIP, 1000, dstIP, 80, *subnet,
-		func(net.IP) bool { return true },
+	// Always collide — verify the loop runs exactly maxAttempts (8) times
+	calls := 0
+	_, err = GenerateDeterministicIPV6WithCollisionCheck("machine-1", srcIP, 1000, dstIP, 80, *subnet,
+		func(net.IP) bool { calls++; return true },
 	)
 	if err == nil {
 		t.Fatal("expected error after exhausting collision attempts")
+	}
+	if calls != 8 {
+		t.Fatalf("expected 8 collision check calls, got %d", calls)
 	}
 }

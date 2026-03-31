@@ -58,10 +58,10 @@ func GenerateDeterministicIPV6(machineID string, srcIP net.IP, srcPort uint16, d
 }
 
 // GenerateDeterministicIPV6WithCollisionCheck generates a unique IP and verifies
-// it doesn't collide with an existing entry in the provided map. If a collision
-// is detected (same IP, different flow), it rehashes with an incrementing salt
-// up to maxAttempts times. The isCollision function should return true if the
-// generated IP is already in use for a different flow.
+// it doesn't collide with an existing allocation via the isCollision callback.
+// isCollision receives each candidate IP and should return true if that IP is
+// already in use by a different flow. On collision the function rehashes with
+// an incrementing salt, up to 8 attempts, before returning an error.
 func GenerateDeterministicIPV6WithCollisionCheck(
 	machineID string,
 	srcIP net.IP, srcPort uint16,
@@ -95,6 +95,5 @@ func GenerateDeterministicIPV6WithCollisionCheck(
 		}
 	}
 
-	return nil, fmt.Errorf("VIP collision after %d rehash attempts for machine=%s flow=%s:%d→%s:%d",
-		maxAttempts, machineID, srcIP, srcPort, dstIP, dstPort)
+	return nil, fmt.Errorf("VIP collision after %d rehash attempts", maxAttempts)
 }

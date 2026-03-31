@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"time"
 )
 
 // GCEDiscoverer discovers peers by listing GCE instances with a specific tag.
@@ -71,7 +72,7 @@ type gceNetworkInterface struct {
 func (g *GCEDiscoverer) Discover(ctx context.Context) ([]string, error) {
 	client := g.HTTPClient
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: 10 * time.Second}
 	}
 
 	token, err := g.fetchToken(ctx, client)

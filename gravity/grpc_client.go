@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	mathrand "math/rand/v2"
 	"net"
 	"net/url"
 	"os"
@@ -222,6 +223,8 @@ type GravityClient struct {
 	closing                    bool
 	ctx                        context.Context
 	cancel                     context.CancelFunc
+	connectionCtx              context.Context
+	connectionCancel           context.CancelFunc
 	tlsCert                    *tls.Certificate
 	skipAutoReconnect          bool
 	closed                     chan struct{}
@@ -247,7 +250,7 @@ type GravityClient struct {
 	evacuationCallback    func()
 	monitorCommandHandler func(cmd *pb.MonitorCommand) // Monitor command handler (set via SetMonitorCommandHandler)
 	handlerWg             sync.WaitGroup               // tracks in-flight checkpoint/restore goroutines
-	response              chan *pb.ProtocolResponse
+	response              chan *pb.ProtocolResponse    // Reserved for legacy response fan-out; intentionally kept for API compatibility.
 	pending               map[string]chan *pb.ProtocolResponse
 	pendingMu             sync.RWMutex
 
@@ -267,7 +270,7 @@ type GravityClient struct {
 	droppedPackets  atomic.Int64 // counts consecutive dropped inbound packets
 	inboundPackets  chan *PooledBuffer
 	outboundPackets chan []byte
-	textMessages    chan *PooledBuffer
+	textMessages    chan *PooledBuffer // Reserved for future text-message handling; currently drained to return pooled buffers.
 
 	// ── Tunnel health counters (lock-free, read by external monitor) ──
 
@@ -452,6 +455,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		reconnectionFailedCallback: config.ReconnectionFailedCallback,
 		tracer:                     otel.Tracer("@agentuity/gravity/client"),
 	}
+	g.connectionCtx, g.connectionCancel = context.WithCancel(ctx)
 
 	if config.TraceLogPackets {
 		g.tracePacketLogger = logger.NewConsoleLogger()
@@ -463,6 +467,27 @@ func New(config GravityConfig) (*GravityClient, error) {
 	}
 
 	return g, nil
+}
+
+func (g *GravityClient) ensureConnectionContextLocked() {
+	if g.connectionCancel != nil {
+		g.connectionCancel()
+	}
+	g.connectionCtx, g.connectionCancel = context.WithCancel(g.ctx)
+}
+
+func (g *GravityClient) currentConnectionContext() context.Context {
+	g.mu.RLock()
+	ctx := g.connectionCtx
+	base := g.ctx
+	g.mu.RUnlock()
+	if ctx == nil {
+		if base == nil {
+			return context.Background()
+		}
+		return base
+	}
+	return ctx
 }
 
 // Start establishes gRPC connections and starts the client.
@@ -477,6 +502,8 @@ func (g *GravityClient) Start() error {
 		g.mu.Unlock()
 		return fmt.Errorf("already connected")
 	}
+
+	g.ensureConnectionContextLocked()
 
 	// Multi-endpoint mode: opt-in via GravityURLs with >1 URL.
 	if len(g.gravityURLs) > 1 {
@@ -1089,7 +1116,7 @@ func randIndex(n int) int {
 	if n <= 1 {
 		return 0
 	}
-	return int(time.Now().UnixNano() % int64(n))
+	return mathrand.IntN(n)
 }
 
 func (g *GravityClient) rebuildEndpointStreamIndices() {
@@ -1734,13 +1761,28 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 
 	g.mu.Unlock()
 
-	// Send machine ID to channel to unblock tunnel stream establishment
-	select {
-	case g.connectionIDChan <- response.MachineId:
-		g.logger.Debug("machine ID sent to channel successfully")
-	default:
-		g.logger.Error("machine ID channel full - this should not happen!")
-		return
+	signalConnectionID := func(id string) {
+		select {
+		case g.connectionIDChan <- id:
+			if id == "" {
+				g.logger.Debug("sent empty machine ID to signal session hello failure")
+			} else {
+				g.logger.Debug("machine ID sent to channel successfully")
+			}
+		default:
+			g.logger.Warn("connectionIDChan full, dropped machine ID signal")
+		}
+	}
+
+	closeSessionReady := func() {
+		g.mu.Lock()
+		select {
+		case <-g.sessionReady:
+			// Already closed
+		default:
+			close(g.sessionReady)
+		}
+		g.mu.Unlock()
 	}
 
 	// Configure provider with session info
@@ -1765,15 +1807,27 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		SigningPublicKey:  response.SigningPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
+		signalConnectionID("")
+		closeSessionReady()
 		return
 	}
 	g.logger.Debug("provider configured successfully")
 
 	g.logger.Debug("configuring subnet routing for routes %v", response.SubnetRoutes)
-	if err := g.networkInterface.RouteTraffic(response.SubnetRoutes); err != nil {
-		g.logger.Error("failed to route traffic for gravity subnet: %v", err)
-		return
+	if g.networkInterface != nil {
+		if err := g.networkInterface.RouteTraffic(response.SubnetRoutes); err != nil {
+			g.logger.Error("failed to route traffic for gravity subnet: %v", err)
+			signalConnectionID("")
+			closeSessionReady()
+			return
+		}
+	} else {
+		g.logger.Debug("no network interface configured, skipping route setup")
 	}
+
+	// Send machine ID to channel to unblock tunnel stream establishment only
+	// after provider/network setup is complete.
+	signalConnectionID(response.MachineId)
 
 	g.logger.Debug("session established successfully with machine ID: %s", response.MachineId)
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
@@ -1785,14 +1839,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		}
 	}
 
-	g.mu.Lock()
-	select {
-	case <-g.sessionReady:
-		// Already closed
-	default:
-		close(g.sessionReady)
-	}
-	g.mu.Unlock()
+	closeSessionReady()
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
@@ -1805,6 +1852,7 @@ func (g *GravityClient) handleGenericResponse(msgID string, response *pb.Protoco
 		select {
 		case g.connectionIDChan <- "":
 		default:
+			g.logger.Warn("session hello failure: connectionIDChan full, failure signal dropped")
 		}
 		return
 	}
@@ -2149,14 +2197,16 @@ func (g *GravityClient) handleEvacuationPlan(msgID string, plan *pb.EvacuationPl
 				continue
 			}
 
+			ackTimer := time.NewTimer(10 * time.Second)
 			select {
 			case resp := <-responseChan:
+				ackTimer.Stop()
 				if resp.Success {
 					g.logger.Info("SandboxCheckpointed acknowledged for %s", result.SandboxId)
 				} else {
 					g.logger.Warn("SandboxCheckpointed failed for %s: %s", result.SandboxId, resp.Error)
 				}
-			case <-time.After(10 * time.Second):
+			case <-ackTimer.C:
 				g.logger.Warn("timeout waiting for SandboxCheckpointed ack for %s", result.SandboxId)
 			}
 
@@ -2389,19 +2439,32 @@ func (g *GravityClient) IsConnected() bool {
 // WaitForSession blocks until the session is fully authenticated and configured,
 // or the timeout/context expires.
 func (g *GravityClient) WaitForSession(timeout time.Duration) error {
-	// Read sessionReady under lock to avoid racing with reconnection
-	// which replaces the channel.
-	g.mu.RLock()
-	ready := g.sessionReady
-	g.mu.RUnlock()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
 
-	select {
-	case <-ready:
-		return nil
-	case <-time.After(timeout):
-		return fmt.Errorf("timeout waiting for session to be ready")
-	case <-g.ctx.Done():
-		return fmt.Errorf("context cancelled while waiting for session ready")
+	for {
+		// Read sessionReady under lock to avoid racing with reconnection
+		// which replaces the channel.
+		g.mu.RLock()
+		ready := g.sessionReady
+		g.mu.RUnlock()
+
+		select {
+		case <-ready:
+			// Re-check that this is still the active channel. Reconnect may have
+			// swapped sessionReady between snapshot and channel close.
+			g.mu.RLock()
+			current := g.sessionReady
+			g.mu.RUnlock()
+			if current == ready {
+				return nil
+			}
+			continue
+		case <-timer.C:
+			return fmt.Errorf("timeout waiting for session to be ready")
+		case <-g.ctx.Done():
+			return fmt.Errorf("context cancelled while waiting for session ready")
+		}
 	}
 }
 
@@ -2420,6 +2483,9 @@ func (g *GravityClient) stop() error {
 	g.handlerWg.Wait()
 
 	g.mu.Lock()
+	if g.connectionCancel != nil {
+		g.connectionCancel()
+	}
 	g.cancel()
 
 	g.cleanup()
@@ -2456,44 +2522,49 @@ func (g *GravityClient) Disconnected(ctx context.Context) {
 // handleServerDisconnection handles server-initiated disconnection for HA
 func (g *GravityClient) handleServerDisconnection(reason string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
 	if g.closing {
 		g.logger.Debug("already closing, ignoring disconnection event")
+		g.mu.Unlock()
 		return
 	}
 
 	if g.reconnecting {
 		g.logger.Debug("reconnection already in progress, ignoring additional disconnection event: %s", reason)
+		g.mu.Unlock()
 		return
 	}
 
 	wasConnected := g.connected
+	ni := g.networkInterface
 
 	g.logger.Info("handling server disconnection: %s", reason)
 
 	// Mark as disconnected but don't close completely
 	g.connected = false
 	g.sessionReady = make(chan struct{})
+	g.mu.Unlock()
 
-	if g.networkInterface != nil {
-		if err := g.networkInterface.UnrouteTraffic(); err != nil {
+	if ni != nil {
+		if err := ni.UnrouteTraffic(); err != nil {
 			g.logger.Error("failed to unroute traffic: %v", err)
 		}
 	} else {
 		g.logger.Debug("no tunInterface present, skipping traffic unrouting")
 	}
 
+	g.mu.Lock()
 	// Clean up current connections without full shutdown
 	g.disconnectStreams()
 
 	if wasConnected && g.skipAutoReconnect {
 		g.logger.Debug("client is configured to skip auto-reconnect")
 		g.closed <- struct{}{}
+		g.mu.Unlock()
 		return
 	}
 
 	g.reconnecting = true
+	g.mu.Unlock()
 
 	// Start reconnection process in background
 	go g.attemptReconnection(reason)
@@ -2823,6 +2894,11 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 
 		tstream, terr := client.StreamSessionPackets(tctx)
 		if terr != nil {
+			// This cancel may cause the in-flight handleControlStream goroutine to
+			// observe a disconnection. That path is safe: reconnectEndpoint already
+			// set endpointReconnecting[endpointIndex]=true, and
+			// handleEndpointDisconnection uses a CAS guard to avoid re-entrant
+			// reconnection for the same endpoint.
 			cancel()
 			_ = conn.Close()
 			return fmt.Errorf("failed to create tunnel stream %d: %w", i, terr)
@@ -3007,6 +3083,10 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 		return err
 	case <-time.After(timeout):
 		g.logger.Warn("reconnection attempt timed out after %v, cleaning up stale connections", timeout)
+		// reconnectWithTimeout is only used by attemptReconnection(), which is the
+		// single-endpoint reconnect path (handleServerDisconnection). Multi-endpoint
+		// reconnection uses reconnectEndpoint/reconnectSingleEndpoint and does not
+		// call this function, so full cleanup here is scoped to single-endpoint mode.
 		// Cancel in-progress stream contexts and close connections to unblock
 		// the gRPC operations inside Start(). This causes EstablishSession,
 		// StreamSessionPackets, etc. to return with errors, allowing the
@@ -3030,6 +3110,7 @@ func (g *GravityClient) reconnect() error {
 	g.logger.Debug("reconnect called")
 	// Reset connection state without holding lock during Start()
 	g.mu.Lock()
+	g.ensureConnectionContextLocked()
 	g.connected = false
 	g.closing = false // Reset closing flag to allow reconnection
 	g.sessionReady = make(chan struct{})
@@ -3049,12 +3130,7 @@ func (g *GravityClient) reconnect() error {
 	g.streamManager.cancels = nil
 
 	// Drain the connection ID channel to avoid stale data
-	select {
-	case <-g.connectionIDChan:
-		g.logger.Debug("drained stale connection ID from channel during reconnect")
-	default:
-		// Channel already empty
-	}
+	g.drainConnectionIDChan()
 	g.mu.Unlock()
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
 		// Log deployment synchronization intent
@@ -3699,9 +3775,10 @@ func (g *GravityClient) selectStreamForEndpoint(payload []byte, endpointURL stri
 // Background packet handlers
 
 func (g *GravityClient) handleInboundPackets() {
+	connCtx := g.currentConnectionContext()
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			g.logger.Debug("handleInboundPackets is done and no longer reading")
 			return
 		case packet := <-g.inboundPackets:
@@ -3714,9 +3791,10 @@ func (g *GravityClient) handleInboundPackets() {
 }
 
 func (g *GravityClient) handleOutboundPackets() {
+	connCtx := g.currentConnectionContext()
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			g.logger.Debug("handleOutboundPackets is done and no longer reading")
 			return
 		case data := <-g.outboundPackets:
@@ -3730,35 +3808,10 @@ func (g *GravityClient) handleOutboundPackets() {
 }
 
 func (g *GravityClient) sendTunnelPacket(data []byte) error {
-	g.streamManager.tunnelMu.Lock()
-
-	if len(g.streamManager.tunnelStreams) == 0 {
-		g.streamManager.tunnelMu.Unlock()
-		return fmt.Errorf("no tunnel streams available")
-	}
-
-	// Select optimal stream using configured strategy
-	streamIndex, err := g.selectOptimalStream(data)
+	streamInfo, err := g.selectStreamForPacket(data)
 	if err != nil {
-		g.streamManager.tunnelMu.Unlock()
 		return fmt.Errorf("failed to select stream: %w", err)
 	}
-
-	streamInfo := g.streamManager.tunnelStreams[streamIndex]
-	if !streamInfo.isHealthy {
-		// Try to find an alternative healthy stream
-		streamIndex, err = g.selectHealthyStream()
-		if err != nil {
-			g.streamManager.tunnelMu.Unlock()
-			return fmt.Errorf("no healthy streams available: %w", err)
-		}
-		streamInfo = g.streamManager.tunnelStreams[streamIndex]
-	}
-
-	// Update stream metrics under lock, then release
-	streamInfo.loadCount++
-	streamInfo.lastUsed = time.Now()
-	g.streamManager.tunnelMu.Unlock()
 
 	// Ensure load count is decremented in all exit paths
 	defer g.streamManager.releaseStream(streamInfo)
@@ -3770,6 +3823,9 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 
 	// Send packet with retry logic and circuit breaker
 	connectionIndex := streamInfo.connIndex
+	if connectionIndex < 0 || connectionIndex >= len(g.circuitBreakers) {
+		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", connectionIndex, len(g.circuitBreakers))
+	}
 	circuitBreaker := g.circuitBreakers[connectionIndex]
 
 	sendStart := time.Now()
@@ -3833,6 +3889,9 @@ func (g *GravityClient) selectOptimalStream(data []byte) (int, error) {
 
 // selectRoundRobinStream implements simple round-robin selection
 func (g *GravityClient) selectRoundRobinStream() (int, error) {
+	if len(g.streamManager.tunnelStreams) == 0 {
+		return 0, fmt.Errorf("no streams available")
+	}
 	streamIndex := g.streamManager.nextTunnelIndex % len(g.streamManager.tunnelStreams)
 	g.streamManager.nextTunnelIndex++
 	return streamIndex, nil
@@ -3840,6 +3899,9 @@ func (g *GravityClient) selectRoundRobinStream() (int, error) {
 
 // selectHashBasedStream uses consistent hashing for packet distribution
 func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
+	if len(g.streamManager.tunnelStreams) == 0 {
+		return 0, fmt.Errorf("no streams available")
+	}
 	// Use simple hash of packet data for consistent routing
 	hash := simpleHashBytes(data)
 	streamIndex := hash % len(g.streamManager.tunnelStreams)
@@ -3849,7 +3911,7 @@ func (g *GravityClient) selectHashBasedStream(data []byte) (int, error) {
 // selectLeastConnectionsStream chooses the stream with the lowest current load
 func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	minLoad := int64(^uint64(0) >> 1) // Max int64
-	selectedIndex := 0
+	selectedIndex := -1
 	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
@@ -3863,6 +3925,10 @@ func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 		}
 	}
 
+	if selectedStream == nil || selectedIndex < 0 {
+		return 0, fmt.Errorf("no healthy streams available")
+	}
+
 	return selectedIndex, nil
 }
 
@@ -3874,7 +3940,7 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 
 	healthyStreams := make([]int, 0)
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy && g.streamManager.connectionHealth[streamInfo.connIndex] {
+		if streamInfo.isHealthy && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.streamManager.connectionHealth) && g.streamManager.connectionHealth[streamInfo.connIndex] {
 			healthyStreams = append(healthyStreams, i)
 		}
 	}
@@ -3904,7 +3970,7 @@ func (g *GravityClient) selectHealthyStream() (int, error) {
 func simpleHashBytes(data []byte) int {
 	hash := 0
 	for i, b := range data {
-		if i >= 16 { // Hash first 16 bytes for performance
+		if i >= 40 { // Include IPv6 src+dst addresses (bytes 8..39)
 			break
 		}
 		hash = hash*31 + int(b)
@@ -3917,12 +3983,18 @@ func simpleHashBytes(data []byte) int {
 
 // monitorConnectionHealth periodically checks connection and stream health
 func (g *GravityClient) monitorConnectionHealth() {
-	ticker := time.NewTicker(g.poolConfig.HealthCheckInterval)
+	connCtx := g.currentConnectionContext()
+	interval := g.poolConfig.HealthCheckInterval
+	if interval <= 0 {
+		g.logger.Warn("invalid health check interval %v, skipping health monitor", interval)
+		return
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			g.logger.Debug("monitorConnectionHealth is no and no longer processing")
 			return
 		case <-ticker.C:
@@ -3933,6 +4005,9 @@ func (g *GravityClient) monitorConnectionHealth() {
 
 // performHealthCheck checks the health of all connections and streams
 func (g *GravityClient) performHealthCheck() {
+	g.streamManager.tunnelMu.Lock()
+	defer g.streamManager.tunnelMu.Unlock()
+
 	g.streamManager.healthMu.Lock()
 	defer g.streamManager.healthMu.Unlock()
 
@@ -3952,24 +4027,32 @@ func (g *GravityClient) performHealthCheck() {
 	}
 
 	// Check stream health and reset unhealthy streams that haven't been used recently
-	g.streamManager.tunnelMu.Lock()
-	defer g.streamManager.tunnelMu.Unlock()
-
 	now := time.Now()
 	for i, streamInfo := range g.streamManager.tunnelStreams {
 		if streamInfo != nil {
 			// Reset streams that have been unhealthy for too long
 			if !streamInfo.isHealthy && now.Sub(streamInfo.lastUsed) > g.poolConfig.FailoverTimeout {
-				g.logger.Debug("attempting to recover stream %s", streamInfo.streamID)
-				streamInfo.isHealthy = true // Try again
-				streamInfo.loadCount = 0    // Reset load
-
-				// Reset error metrics
-				g.streamManager.metricsMu.Lock()
-				if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
-					metrics.ErrorCount = 0
+				connReady := false
+				if streamInfo.stream != nil && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.connections) {
+					if conn := g.connections[streamInfo.connIndex]; conn != nil {
+						connReady = conn.GetState().String() == "READY"
+					}
 				}
-				g.streamManager.metricsMu.Unlock()
+
+				if connReady {
+					g.logger.Debug("attempting to recover stream %s", streamInfo.streamID)
+					streamInfo.isHealthy = true // Try again
+					streamInfo.loadCount = 0    // Reset load
+
+					// Reset error metrics
+					g.streamManager.metricsMu.Lock()
+					if metrics := g.streamManager.streamMetrics[streamInfo.streamID]; metrics != nil {
+						metrics.ErrorCount = 0
+					}
+					g.streamManager.metricsMu.Unlock()
+				} else {
+					g.logger.Debug("stream %s remains unhealthy: stream nil=%v conn ready=%v", streamInfo.streamID, streamInfo.stream == nil, connReady)
+				}
 			}
 
 			// Log unhealthy streams
@@ -3984,11 +4067,11 @@ func (g *GravityClient) performHealthCheck() {
 
 // GetConnectionPoolStats returns current connection pool statistics for monitoring
 func (g *GravityClient) GetConnectionPoolStats() map[string]any {
-	g.streamManager.healthMu.RLock()
 	g.streamManager.tunnelMu.RLock()
+	g.streamManager.healthMu.RLock()
 	g.streamManager.metricsMu.RLock()
-	defer g.streamManager.healthMu.RUnlock()
 	defer g.streamManager.tunnelMu.RUnlock()
+	defer g.streamManager.healthMu.RUnlock()
 	defer g.streamManager.metricsMu.RUnlock()
 
 	healthyConnections := 0
@@ -4016,10 +4099,26 @@ func (g *GravityClient) GetConnectionPoolStats() map[string]any {
 		"healthy_streams":        healthyStreams,
 		"total_streams":          len(g.streamManager.tunnelStreams),
 		"total_load":             totalLoad,
-		"stream_metrics":         g.streamManager.streamMetrics,
+		"stream_metrics":         copyStreamMetrics(g.streamManager.streamMetrics),
 	}
 
 	return stats
+}
+
+func copyStreamMetrics(metrics map[string]*StreamMetrics) map[string]*StreamMetrics {
+	if metrics == nil {
+		return nil
+	}
+	copied := make(map[string]*StreamMetrics, len(metrics))
+	for key, value := range metrics {
+		if value == nil {
+			copied[key] = nil
+			continue
+		}
+		v := *value
+		copied[key] = &v
+	}
+	return copied
 }
 
 // TunnelStatsSnapshot is a point-in-time snapshot of tunnel counters.
@@ -4174,12 +4273,14 @@ func (s StreamAllocationStrategy) String() string {
 }
 
 func (g *GravityClient) handleTextMessages() {
+	connCtx := g.currentConnectionContext()
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			return
 		case msg := <-g.textMessages:
-			// Process text messages
+			// Placeholder path: currently there is no text-message producer.
+			// We still drain and return buffers so pooled memory is not leaked.
 			g.returnBuffer(msg)
 		}
 	}
@@ -4232,7 +4333,7 @@ func createSelfSignedTLSConfig(privateKey *ecdsa.PrivateKey, instanceID string) 
 			CommonName: instanceID,
 		},
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add((24 * time.Hour) * 30), // 30 days!
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year; cert regenerated each startup
 		KeyUsage:              x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 		BasicConstraintsValid: true,
@@ -4335,6 +4436,7 @@ func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 
 // handlePingHeartbeat sends periodic ping messages to maintain connection health
 func (g *GravityClient) handlePingHeartbeat() {
+	connCtx := g.currentConnectionContext()
 	if g.pingInterval <= 0 {
 		g.logger.Debug("ping interval is disabled (zero or negative), skipping heartbeat")
 		return
@@ -4347,7 +4449,7 @@ func (g *GravityClient) handlePingHeartbeat() {
 
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			g.logger.Debug("ping heartbeat goroutine stopped")
 			return
 		case <-ticker.C:
@@ -4468,6 +4570,7 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 	// doesn't arrive in time, increment pingTimeouts. The goroutine is
 	// short-lived and bounded by the deadline or client context cancellation.
 	go func() {
+		connCtx := g.currentConnectionContext()
 		defer func() {
 			g.pendingMu.Lock()
 			delete(g.pending, pingID)
@@ -4480,7 +4583,7 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 		case <-time.After(g.pingInterval):
 			g.pingTimeouts.Add(1)
 			g.logger.Info("ping %s pong timed out on control stream %d after %v", pingID, streamIndex, g.pingInterval)
-		case <-g.ctx.Done():
+		case <-connCtx.Done():
 			// Client shutting down.
 		}
 	}()
@@ -4489,8 +4592,18 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 // Buffer management
 
 func (g *GravityClient) getBuffer(payload []byte) *PooledBuffer {
+	if len(payload) > maxBufferSize {
+		buf := make([]byte, len(payload))
+		copy(buf, payload)
+		return &PooledBuffer{
+			Buffer: buf,
+			Length: len(payload),
+		}
+	}
+
 	buf := g.bufferPool.Get().([]byte)
 	if len(payload) > len(buf) {
+		g.bufferPool.Put(buf)
 		buf = make([]byte, len(payload))
 	}
 	copy(buf, payload)

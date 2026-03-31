@@ -51,7 +51,9 @@ func Identify(ctx context.Context, config IdentifyConfig) (*pb.IdentifyResponse,
 		pool = x509.NewCertPool()
 	}
 	if config.CACert != "" {
-		pool.AppendCertsFromPEM([]byte(config.CACert))
+		if ok := pool.AppendCertsFromPEM([]byte(config.CACert)); !ok {
+			return nil, fmt.Errorf("failed to parse CA certificate PEM")
+		}
 	}
 
 	tlsConfig := &tls.Config{

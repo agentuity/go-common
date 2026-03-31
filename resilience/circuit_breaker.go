@@ -94,24 +94,28 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func() error) error {
 		return err
 	}
 
-	// Execute with timeout
-	done := make(chan error, 1)
-	go func() {
-		defer cb.afterRequest()
-		err := fn()
-		done <- err
-	}()
-
-	// Wait for completion or timeout
 	var timeoutCtx context.Context
 	var cancel context.CancelFunc
 
 	if cb.config.RequestTimeout > 0 {
 		timeoutCtx, cancel = context.WithTimeout(ctx, cb.config.RequestTimeout)
-		defer cancel()
 	} else {
-		timeoutCtx = ctx
+		timeoutCtx, cancel = context.WithCancel(ctx)
 	}
+	defer cancel()
+
+	// Execute with timeout/cancellation awareness.
+	// The worker observes timeoutCtx when reporting completion to avoid blocking
+	// the caller path after timeout has already fired.
+	done := make(chan error, 1)
+	go func() {
+		defer cb.afterRequest()
+		err := fn()
+		select {
+		case done <- err:
+		case <-timeoutCtx.Done():
+		}
+	}()
 
 	select {
 	case err := <-done:
@@ -149,12 +153,15 @@ func (cb *CircuitBreaker) beforeRequest() error {
 
 	case StateHalfOpen:
 		// Limit concurrent requests in half-open state
-		currentRequests := atomic.LoadInt32(&cb.requests)
-		if currentRequests >= int32(cb.config.MaxConcurrentRequests) {
-			return ErrCircuitBreakerOpen
+		for {
+			currentRequests := atomic.LoadInt32(&cb.requests)
+			if currentRequests >= int32(cb.config.MaxConcurrentRequests) {
+				return ErrCircuitBreakerOpen
+			}
+			if atomic.CompareAndSwapInt32(&cb.requests, currentRequests, currentRequests+1) {
+				return nil
+			}
 		}
-		atomic.AddInt32(&cb.requests, 1)
-		return nil
 
 	default:
 		return ErrCircuitBreakerOpen

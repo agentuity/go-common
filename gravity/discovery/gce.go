@@ -51,7 +51,8 @@ type gceInstanceList struct {
 
 // gceAggregatedList is a subset of the GCE instances.aggregatedList response.
 type gceAggregatedList struct {
-	Items map[string]gceInstancesScopedList `json:"items"`
+	Items         map[string]gceInstancesScopedList `json:"items"`
+	NextPageToken string                            `json:"nextPageToken"`
 }
 
 // gceInstancesScopedList is the per-zone instance list in an aggregatedList response.
@@ -160,39 +161,55 @@ func (g *GCEDiscoverer) fetchToken(ctx context.Context, client *http.Client) (st
 // listInstances calls the GCE compute instances.aggregatedList API to discover
 // peers across all zones in the project. This is necessary because instances in
 // the same region may be spread across different zones (e.g., us-west1-a, -b, -c).
+// The API paginates at 500 instances by default, so we loop on nextPageToken.
 func (g *GCEDiscoverer) listInstances(ctx context.Context, client *http.Client, token string) ([]gceInstance, error) {
 	baseURL := g.BaseURL
 	if baseURL == "" {
 		baseURL = defaultBaseURL
 	}
 
-	url := fmt.Sprintf("%s/compute/v1/projects/%s/aggregated/instances", baseURL, g.ProjectID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("compute API returned %d: %s", resp.StatusCode, string(body))
-	}
-
-	var list gceAggregatedList
-	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
-		return nil, fmt.Errorf("failed to decode aggregated instance list: %w", err)
-	}
+	baseRequestURL := fmt.Sprintf("%s/compute/v1/projects/%s/aggregated/instances", baseURL, g.ProjectID)
 
 	var instances []gceInstance
-	for _, scoped := range list.Items {
-		instances = append(instances, scoped.Instances...)
+	pageToken := ""
+	for {
+		requestURL := baseRequestURL
+		if pageToken != "" {
+			requestURL += "?pageToken=" + pageToken
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, err
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("compute API returned %d: %s", resp.StatusCode, string(body))
+		}
+
+		var list gceAggregatedList
+		err = json.NewDecoder(resp.Body).Decode(&list)
+		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode aggregated instance list: %w", err)
+		}
+
+		for _, scoped := range list.Items {
+			instances = append(instances, scoped.Instances...)
+		}
+
+		if list.NextPageToken == "" {
+			break
+		}
+		pageToken = list.NextPageToken
 	}
 	return instances, nil
 }

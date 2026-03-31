@@ -299,3 +299,80 @@ func TestGenerateDeterministicIPV6_DifferentSubnets(t *testing.T) {
 		t.Errorf("IP %s not in subnet %s", ipB, subnetB.String())
 	}
 }
+
+func TestCollisionCheck_NoCollision(t *testing.T) {
+	t.Parallel()
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	srcIP := net.ParseIP("fd00::1")
+	dstIP := net.ParseIP("fd00::2")
+
+	ip, err := GenerateDeterministicIPV6WithCollisionCheck("machine-1", srcIP, 1000, dstIP, 80, *subnet, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !subnet.Contains(ip) {
+		t.Fatalf("IP %s not in subnet %s", ip, subnet)
+	}
+}
+
+func TestCollisionCheck_RehashesOnCollision(t *testing.T) {
+	t.Parallel()
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	srcIP := net.ParseIP("fd00::1")
+	dstIP := net.ParseIP("fd00::2")
+
+	// Get the base IP (no collision check)
+	baseIP, err := GenerateDeterministicIPV6("machine-1", srcIP, 1000, dstIP, 80, *subnet)
+	if err != nil {
+		t.Fatalf("GenerateDeterministicIPV6: %v", err)
+	}
+
+	// Force collision on the base IP — should rehash with salt
+	calls := 0
+	ip, err := GenerateDeterministicIPV6WithCollisionCheck("machine-1", srcIP, 1000, dstIP, 80, *subnet,
+		func(candidate net.IP) bool {
+			calls++
+			return candidate.Equal(baseIP) // first attempt collides
+		},
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ip.Equal(baseIP) {
+		t.Fatal("expected different IP after collision rehash")
+	}
+	if calls < 2 {
+		t.Fatalf("expected at least 2 collision check calls, got %d", calls)
+	}
+	if !subnet.Contains(ip) {
+		t.Fatalf("rehashed IP %s not in subnet %s", ip, subnet)
+	}
+}
+
+func TestCollisionCheck_ExhaustsAttempts(t *testing.T) {
+	t.Parallel()
+	_, subnet, err := net.ParseCIDR("fd00:1::/96")
+	if err != nil {
+		t.Fatalf("ParseCIDR: %v", err)
+	}
+	srcIP := net.ParseIP("fd00::1")
+	dstIP := net.ParseIP("fd00::2")
+
+	// Always collide — verify the loop runs exactly maxAttempts (8) times
+	calls := 0
+	_, err = GenerateDeterministicIPV6WithCollisionCheck("machine-1", srcIP, 1000, dstIP, 80, *subnet,
+		func(net.IP) bool { calls++; return true },
+	)
+	if err == nil {
+		t.Fatal("expected error after exhausting collision attempts")
+	}
+	if calls != 8 {
+		t.Fatalf("expected 8 collision check calls, got %d", calls)
+	}
+}

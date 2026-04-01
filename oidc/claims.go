@@ -66,6 +66,9 @@ type Claims struct {
 	// FamilyName is the user's last name (requires "profile" scope).
 	FamilyName string `json:"family_name,omitempty"`
 
+	// Picture is the URL of the user's profile picture (requires "profile" scope).
+	Picture string `json:"picture,omitempty"`
+
 	// OrgID is the organization this token is scoped to (Agentuity-specific).
 	OrgID string `json:"org_id,omitempty"`
 

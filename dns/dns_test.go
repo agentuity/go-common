@@ -2,11 +2,13 @@ package dns
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
 	"github.com/agentuity/go-common/cache"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDNSIsValidAndCached(t *testing.T) {
@@ -258,5 +260,102 @@ func TestLookupMulti_ReturnsAllARecords(t *testing.T) {
 	for _, ip := range ips {
 		assert.NotNil(t, ip, "each IP should not be nil")
 		assert.NotEmpty(t, ip.String(), "each IP should have a string representation")
+	}
+}
+
+func TestLookupMulti_MixedPublicAndPrivateIPs(t *testing.T) {
+	d := NewResolver(WithFailIfLocal())
+
+	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	require.NoError(t, err)
+	require.True(t, ok)
+
+	for _, ip := range ips {
+		assert.False(t, ip.IsPrivate(), "should only return public IPs")
+		assert.False(t, ip.IsLoopback(), "should not return loopback IPs")
+	}
+}
+
+func TestLookupMulti_AllPrivateIPs(t *testing.T) {
+	d := NewResolver(WithFailIfLocal())
+
+	ok, ips, err := d.LookupMulti(context.Background(), "customer1.app.localhost.my.company.127.0.0.1.nip.io")
+	assert.Error(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, ips)
+	assert.Equal(t, ErrInvalidIP, err)
+}
+
+func TestLookupMulti_AllowsPrivateIPsWhenLocal(t *testing.T) {
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Hour))
+	defer c.Close()
+	d := NewResolver(WithCache(c))
+
+	c.SetContext(context.Background(), "dns:test-private-local.example.com", []net.IP{
+		net.ParseIP("10.0.0.1"),
+		net.ParseIP("192.168.1.1"),
+	}, time.Hour)
+
+	ok, ips, err := d.LookupMulti(context.Background(), "test-private-local.example.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, ips, 2, "should return all IPs when isLocal=true")
+}
+
+func TestLookupMulti_CacheReturnsSliceDirectly(t *testing.T) {
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Hour))
+	defer c.Close()
+	d := NewResolver(WithCache(c))
+
+	originalIPs := []net.IP{
+		net.ParseIP("8.8.8.8"),
+		net.ParseIP("1.1.1.1"),
+	}
+	c.SetContext(context.Background(), "dns:test-cache.example.com", originalIPs, time.Hour)
+
+	ok, ips, err := d.LookupMulti(context.Background(), "test-cache.example.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, originalIPs, ips, "should return the cached slice directly")
+}
+
+func TestLookupMulti_ContextCancellation(t *testing.T) {
+	d := NewResolver()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	ok, ips, err := d.LookupMulti(ctx, "app.agentuity.com")
+	assert.Error(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, ips)
+}
+
+func TestLookupMulti_LookupReturnsAllIPsThenRandom(t *testing.T) {
+	d := NewResolver()
+
+	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	if assert.NoError(t, err) && assert.True(t, ok) && assert.GreaterOrEqual(t, len(ips), 1) {
+		ok2, singleIP, err := d.Lookup(context.Background(), "app.agentuity.com")
+		assert.NoError(t, err)
+		assert.True(t, ok2)
+		assert.NotNil(t, singleIP)
+
+		found := false
+		for _, ip := range ips {
+			if ip.Equal(*singleIP) {
+				found = true
+				break
+			}
+		}
+		assert.True(t, found, "Lookup should return one of the IPs from LookupMulti")
+	}
+}
+
+func TestLookupMulti_IPv6Address(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "::1")
+	if ok {
+		assert.NoError(t, err)
+		assert.NotNil(t, ips)
 	}
 }

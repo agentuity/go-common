@@ -6,6 +6,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentuity/go-common/dns"
 	"github.com/agentuity/go-common/logger"
@@ -300,4 +301,292 @@ func TestUseMultiConnect_CappedByMaxGravityPeers(t *testing.T) {
 
 	urls := g.resolveGravityURLs()
 	assert.Len(t, urls, 3, "URLs should be capped at MaxGravityPeers")
+}
+
+func TestUseMultiConnect_PortPreservation(t *testing.T) {
+	g := &GravityClient{
+		ctx:               context.Background(),
+		logger:            logger.NewTestLogger(),
+		defaultServerName: "gravity.agentuity.com",
+	}
+
+	tests := []struct {
+		name         string
+		inputURL     string
+		expectedPort string
+	}{
+		{
+			name:         "default port 443",
+			inputURL:     "grpc://gravity.example.com",
+			expectedPort: "443",
+		},
+		{
+			name:         "custom port 8443",
+			inputURL:     "grpc://gravity.example.com:8443",
+			expectedPort: "8443",
+		},
+		{
+			name:         "port 80",
+			inputURL:     "grpc://gravity.example.com:80",
+			expectedPort: "80",
+		},
+		{
+			name:         "port 9000",
+			inputURL:     "grpc://gravity.example.com:9000",
+			expectedPort: "9000",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parsedHost, err := g.parseGRPCURL(tt.inputURL)
+			require.NoError(t, err)
+
+			_, port, err := net.SplitHostPort(parsedHost)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectedPort, port)
+
+			testIP := net.ParseIP("10.0.0.1")
+			epURL := fmt.Sprintf("grpc://%s:%s", testIP, port)
+			assert.Contains(t, epURL, ":"+tt.expectedPort)
+		})
+	}
+}
+
+func TestUseMultiConnect_EndpointStartsUnhealthy(t *testing.T) {
+	g := &GravityClient{
+		ctx:    context.Background(),
+		logger: logger.NewTestLogger(),
+		gravityURLs: []string{
+			"grpc://gravity1.example.com",
+			"grpc://gravity2.example.com",
+		},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 10,
+		},
+		endpointsMu: sync.RWMutex{},
+	}
+
+	urls := g.resolveGravityURLs()
+
+	g.endpointsMu.Lock()
+	g.endpoints = make([]*GravityEndpoint, 0, len(urls))
+	for _, endpointURL := range urls {
+		ep := &GravityEndpoint{URL: endpointURL}
+		ep.healthy.Store(false)
+		g.endpoints = append(g.endpoints, ep)
+	}
+	g.endpointsMu.Unlock()
+
+	g.endpointsMu.RLock()
+	for _, ep := range g.endpoints {
+		assert.False(t, ep.IsHealthy(), "endpoint should start unhealthy")
+	}
+	g.endpointsMu.RUnlock()
+}
+
+func TestUseMultiConnect_EndpointHealthTracking(t *testing.T) {
+	ep := &GravityEndpoint{URL: "grpc://gravity.example.com:443"}
+	ep.healthy.Store(false)
+
+	assert.False(t, ep.IsHealthy())
+
+	ep.healthy.Store(true)
+	assert.True(t, ep.IsHealthy())
+
+	ep.healthy.Store(false)
+	assert.False(t, ep.IsHealthy())
+}
+
+func TestUseMultiConnect_EmptyGravityURLsFallsBackToURL(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		url:             "grpc://fallback.example.com:8443",
+		gravityURLs:     []string{},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 3,
+		},
+	}
+
+	urls := g.resolveGravityURLs()
+	assert.Len(t, urls, 1)
+	assert.Equal(t, "grpc://fallback.example.com:8443", urls[0])
+}
+
+func TestUseMultiConnect_WhitespaceURLsAreTrimmed(t *testing.T) {
+	g := &GravityClient{
+		ctx:    context.Background(),
+		logger: logger.NewTestLogger(),
+		gravityURLs: []string{
+			"  grpc://gravity1.example.com  ",
+			"grpc://gravity2.example.com",
+			"\tgrpc://gravity3.example.com\t",
+		},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 10,
+		},
+	}
+
+	urls := g.resolveGravityURLs()
+	assert.Len(t, urls, 3)
+	for _, url := range urls {
+		assert.NotContains(t, url, " ", "URL should not contain whitespace")
+		assert.NotContains(t, url, "\t", "URL should not contain tabs")
+	}
+}
+
+func TestUseMultiConnect_DuplicateURLsDeduplicated(t *testing.T) {
+	g := &GravityClient{
+		ctx:    context.Background(),
+		logger: logger.NewTestLogger(),
+		gravityURLs: []string{
+			"grpc://gravity.example.com",
+			"grpc://gravity.example.com",
+			"grpc://gravity.example.com",
+		},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 10,
+		},
+	}
+
+	urls := g.resolveGravityURLs()
+	assert.Len(t, urls, 1, "duplicate URLs should be deduplicated")
+}
+
+func TestUseMultiConnect_ZeroMaxGravityPeersUsesDefault(t *testing.T) {
+	g := &GravityClient{
+		ctx:    context.Background(),
+		logger: logger.NewTestLogger(),
+		gravityURLs: []string{
+			"grpc://g1.example.com",
+			"grpc://g2.example.com",
+			"grpc://g3.example.com",
+			"grpc://g4.example.com",
+		},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 0,
+		},
+	}
+
+	urls := g.resolveGravityURLs()
+	assert.Len(t, urls, DefaultMaxGravityPeers, "should use DefaultMaxGravityPeers when MaxGravityPeers is 0")
+}
+
+func TestUseMultiConnect_NegativeMaxGravityPeersUsesDefault(t *testing.T) {
+	g := &GravityClient{
+		ctx:    context.Background(),
+		logger: logger.NewTestLogger(),
+		gravityURLs: []string{
+			"grpc://g1.example.com",
+			"grpc://g2.example.com",
+			"grpc://g3.example.com",
+			"grpc://g4.example.com",
+		},
+		useMultiConnect: true,
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: -5,
+		},
+	}
+
+	urls := g.resolveGravityURLs()
+	assert.Len(t, urls, DefaultMaxGravityPeers, "should use DefaultMaxGravityPeers when MaxGravityPeers is negative")
+}
+
+func TestUseMultiConnect_EndpointSelectorCreated(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		gravityURLs:     []string{"grpc://gravity.example.com"},
+		useMultiConnect: true,
+		poolConfig:      ConnectionPoolConfig{MaxGravityPeers: 3},
+		endpointsMu:     sync.RWMutex{},
+	}
+
+	g.endpointsMu.Lock()
+	g.endpoints = []*GravityEndpoint{{URL: "grpc://10.0.0.1:443"}}
+	g.endpointsMu.Unlock()
+
+	g.selector = NewEndpointSelector(DefaultBindingTTL)
+	assert.NotNil(t, g.selector)
+}
+
+func TestUseMultiConnect_IPv6Addresses(t *testing.T) {
+	ipv6Tests := []struct {
+		name     string
+		ip       net.IP
+		expected string
+	}{
+		{
+			name:     "full IPv6",
+			ip:       net.ParseIP("2001:db8::1"),
+			expected: "grpc://2001:db8::1:443",
+		},
+		{
+			name:     "IPv6 loopback",
+			ip:       net.ParseIP("::1"),
+			expected: "grpc://::1:443",
+		},
+		{
+			name:     "IPv4-mapped IPv6 (renders as IPv4)",
+			ip:       net.ParseIP("::ffff:10.0.0.1"),
+			expected: "grpc://10.0.0.1:443",
+		},
+	}
+
+	for _, tt := range ipv6Tests {
+		t.Run(tt.name, func(t *testing.T) {
+			epURL := fmt.Sprintf("grpc://%s:443", tt.ip)
+			assert.Equal(t, tt.expected, epURL)
+		})
+	}
+}
+
+func TestUseMultiConnect_LastHeartbeatTracking(t *testing.T) {
+	ep := &GravityEndpoint{URL: "grpc://gravity.example.com:443"}
+	ep.healthy.Store(false)
+
+	assert.Equal(t, int64(0), ep.lastHeartbeat.Load())
+
+	now := time.Now().Unix()
+	ep.lastHeartbeat.Store(now)
+	assert.Equal(t, now, ep.lastHeartbeat.Load())
+}
+
+func TestUseMultiConnect_MultipleIPsWithDifferentPorts(t *testing.T) {
+	g := &GravityClient{
+		ctx:               context.Background(),
+		logger:            logger.NewTestLogger(),
+		defaultServerName: "gravity.agentuity.com",
+	}
+
+	inputURL := "grpc://gravity.example.com:8443"
+	parsedHost, err := g.parseGRPCURL(inputURL)
+	require.NoError(t, err)
+
+	_, port, err := net.SplitHostPort(parsedHost)
+	require.NoError(t, err)
+	assert.Equal(t, "8443", port)
+
+	testIPs := []net.IP{
+		net.ParseIP("10.0.0.1"),
+		net.ParseIP("10.0.0.2"),
+		net.ParseIP("10.0.0.3"),
+	}
+
+	var endpoints []string
+	for _, ip := range testIPs {
+		epURL := fmt.Sprintf("grpc://%s:%s", ip, port)
+		endpoints = append(endpoints, epURL)
+	}
+
+	assert.Len(t, endpoints, 3)
+	assert.Contains(t, endpoints[0], ":8443")
+	assert.Contains(t, endpoints[1], ":8443")
+	assert.Contains(t, endpoints[2], ":8443")
 }

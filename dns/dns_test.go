@@ -176,3 +176,87 @@ func TestInvalidDNSEntries(t *testing.T) {
 		})
 	}
 }
+
+func TestLookupMulti_SingleIP(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.NotNil(t, ips)
+	assert.GreaterOrEqual(t, len(ips), 1, "should return at least one IP")
+}
+
+func TestLookupMulti_Localhost(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "localhost")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, ips, 1)
+	assert.Equal(t, "127.0.0.1", ips[0].String())
+}
+
+func TestLookupMulti_IPv4Address(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "8.8.8.8")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, ips, 1)
+	assert.Equal(t, "8.8.8.8", ips[0].String())
+}
+
+func TestLookupMulti_GoogleMetadata(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), googleMetadataHostname)
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Len(t, ips, 1)
+	assert.Equal(t, magicIpAddress, ips[0].String())
+}
+
+func TestLookupMulti_InvalidDomain(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "nonexistent.invalid.domain.test")
+	assert.Error(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, ips)
+}
+
+func TestLookupMulti_Cached(t *testing.T) {
+	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Hour))
+	defer c.Close()
+	d := NewResolver(WithCache(c))
+
+	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.GreaterOrEqual(t, len(ips), 1)
+
+	ok, ips2, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.Equal(t, ips, ips2, "cached result should match")
+
+	ok, count := c.Hits("dns:app.agentuity.com")
+	assert.True(t, ok)
+	assert.Equal(t, 1, count, "should have one cache hit")
+}
+
+func TestLookupMulti_PrivateIPRejected(t *testing.T) {
+	d := NewResolver(WithFailIfLocal())
+	ok, ips, err := d.LookupMulti(context.Background(), "localhost")
+	assert.Error(t, err)
+	assert.False(t, ok)
+	assert.Nil(t, ips)
+}
+
+func TestLookupMulti_ReturnsAllARecords(t *testing.T) {
+	d := NewResolver()
+	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.NotNil(t, ips)
+	for _, ip := range ips {
+		assert.NotNil(t, ip, "each IP should not be nil")
+		assert.NotEmpty(t, ip.String(), "each IP should have a string representation")
+	}
+}

@@ -144,16 +144,16 @@ func formatFQDN(hostname string) string {
 }
 
 // Lookup performs a DNS lookup for the given hostname and returns a valid IP address for the A record.
-func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error) {
+func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP, error) {
 	if (hostname == "localhost" || hostname == "127.0.0.1") && d.isLocal {
-		return true, &net.IP{127, 0, 0, 1}, nil
+		return true, []net.IP{{127, 0, 0, 1}}, nil
 	}
 	if hostname == googleMetadataHostname {
 		val := net.ParseIP(magicIpAddress)
 		if val == nil {
 			return false, nil, ErrInvalidIP
 		}
-		return true, &val, nil
+		return true, []net.IP{val}, nil
 	}
 	if isPrivateIP(hostname) && !d.isLocal {
 		return false, nil, ErrInvalidIP
@@ -166,23 +166,21 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 		if ip == nil {
 			return false, nil, fmt.Errorf("failed to parse ip address: %s", hostname)
 		}
-		return true, &ip, nil
+		return true, []net.IP{ip}, nil
 	}
 	hostname = formatFQDN(hostname)
 	var cacheKey string
 	if d.cache != nil {
 		cacheKey = fmt.Sprintf("dns:%s", hostname)
-		ok, val, _ := d.cache.Get(cacheKey)
+		ok, val, _ := d.cache.GetContext(ctx, cacheKey)
 		if ok {
 			ip, ok := val.([]net.IP)
 			if ok {
 				// only 1 ip, return it
 				if len(ip) == 1 {
-					return true, &ip[0], nil
+					return true, []net.IP{ip[0]}, nil
 				}
-				// more than 1 ip, return a random one
-				i := rand.Int31n(int32(len(ip)))
-				return true, &ip[i], nil
+				return true, ip, nil
 			}
 		}
 	}
@@ -231,9 +229,23 @@ func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error
 	if d.cache != nil {
 		expires := time.Duration(minTTL) * time.Second
 		expires = min(expires, time.Hour*24)
-		d.cache.Set(cacheKey, ips, expires)
+		d.cache.SetContext(ctx, cacheKey, ips, expires)
 	}
-	return true, &ips[0], nil
+	return true, ips, nil
+}
+
+// Lookup performs a DNS lookup for the given hostname and returns a valid IP address for the A record.
+func (d *Dns) Lookup(ctx context.Context, hostname string) (bool, *net.IP, error) {
+	ok, ips, err := d.LookupMulti(ctx, hostname)
+	if ok && len(ips) > 0 {
+		if len(ips) > 1 {
+			// more than 1 ip, return a random one
+			i := rand.Int31n(int32(len(ips)))
+			return ok, &ips[i], nil
+		}
+		return ok, &ips[0], nil
+	}
+	return ok, nil, err
 }
 
 // NewResolver creates a new DNS caching resolver.

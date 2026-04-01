@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/agentuity/go-common/dns"
 	"github.com/agentuity/go-common/gravity/network"
 	pb "github.com/agentuity/go-common/gravity/proto"
 	"github.com/agentuity/go-common/gravity/provider"
@@ -197,9 +198,10 @@ type GravityClient struct {
 	streamManager  *StreamManager
 
 	// Multi-endpoint support: one endpoint per Gravity server
-	endpoints   []*GravityEndpoint
-	endpointsMu sync.RWMutex
-	selector    *EndpointSelector
+	endpoints       []*GravityEndpoint
+	endpointsMu     sync.RWMutex
+	selector        *EndpointSelector
+	useMultiConnect bool
 
 	// Peer discovery and cycling
 	discoveryResolveFunc  func() []string
@@ -410,6 +412,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		provider:               config.Provider,
 		url:                    config.URL,
 		gravityURLs:            append([]string(nil), config.GravityURLs...),
+		useMultiConnect:        config.UseMultiConnect,
 		discoveryResolveFunc:   config.DiscoveryResolveFunc,
 		peerDiscoveryInterval:  config.PeerDiscoveryInterval,
 		peerCycleInterval:      config.PeerCycleInterval,
@@ -506,7 +509,7 @@ func (g *GravityClient) Start() error {
 	g.ensureConnectionContextLocked()
 
 	// Multi-endpoint mode: opt-in via GravityURLs with >1 URL.
-	if len(g.gravityURLs) > 1 {
+	if len(g.gravityURLs) > 1 || g.useMultiConnect {
 		g.mu.Unlock()
 		return g.startMultiEndpoint()
 	}
@@ -695,13 +698,34 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	g.endpointsMu.Lock()
 	g.endpoints = make([]*GravityEndpoint, 0, len(urls))
+	var errs []error
 	for _, endpointURL := range urls {
-		ep := &GravityEndpoint{URL: endpointURL}
-		ep.healthy.Store(false)
-		g.endpoints = append(g.endpoints, ep)
+		if len(urls) == 1 {
+			ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, endpointURL)
+			if err != nil {
+				errs = append(errs, err)
+				continue
+			}
+			if ok {
+				for _, ip := range ips {
+					ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:443", ip)}
+					ep.healthy.Store(false)
+					g.endpoints = append(g.endpoints, ep)
+				}
+			}
+		} else {
+			ep := &GravityEndpoint{URL: endpointURL}
+			ep.healthy.Store(false)
+			g.endpoints = append(g.endpoints, ep)
+		}
 	}
-	g.selector = NewEndpointSelector(DefaultBindingTTL)
 	g.endpointsMu.Unlock()
+
+	if len(errs) > 0 && len(g.endpoints) == 0 {
+		return errors.Join(errs...)
+	}
+
+	g.selector = NewEndpointSelector(DefaultBindingTTL)
 
 	g.mu.Lock()
 
@@ -733,8 +757,13 @@ func (g *GravityClient) startMultiEndpoint() error {
 		return fmt.Errorf("failed to load TLS certificate, self-signed cert was nil")
 	}
 
-	connectionCount := len(urls)
-	g.logger.Debug("creating connection pool with %d connections across %d endpoints", connectionCount, len(urls))
+	g.endpointsMu.RLock()
+	endpoints := make([]*GravityEndpoint, len(g.endpoints))
+	copy(endpoints, g.endpoints)
+	g.endpointsMu.RUnlock()
+
+	connectionCount := len(endpoints)
+	g.logger.Debug("creating connection pool with %d connections", connectionCount)
 	g.connections = make([]*grpc.ClientConn, connectionCount)
 	g.sessionClients = make([]pb.GravitySessionServiceClient, connectionCount)
 	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
@@ -748,9 +777,9 @@ func (g *GravityClient) startMultiEndpoint() error {
 		g.streamManager.connectionHealth[i] = true
 	}
 
-	g.logger.Debug("establishing %d gRPC connections across %d gravity endpoint(s)", connectionCount, len(urls))
+	g.logger.Debug("establishing %d gRPC connections", connectionCount)
 	for i := range connectionCount {
-		endpointURL := urls[i]
+		endpointURL := endpoints[i].URL
 		grpcURL, err := g.parseGRPCURL(endpointURL)
 		if err != nil {
 			g.cleanup()
@@ -852,7 +881,11 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.connected = true
 	g.mu.Unlock()
 
-	g.logger.Info("connected to %d Gravity servers: %v", len(urls), urls)
+	var endpointURLs []string
+	for _, ep := range endpoints {
+		endpointURLs = append(endpointURLs, ep.URL)
+	}
+	g.logger.Info("connected to %d Gravity servers: %v", connectionCount, endpointURLs)
 
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()

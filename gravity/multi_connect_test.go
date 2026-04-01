@@ -2,6 +2,7 @@ package gravity
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"testing"
@@ -22,7 +23,7 @@ func (m *mockDNSResolver) LookupMulti(ctx context.Context, hostname string) (boo
 		return false, nil, m.err
 	}
 	if len(m.ips) == 0 {
-		return false, nil, nil
+		return false, nil, fmt.Errorf("no A records found for %s", hostname)
 	}
 	return true, m.ips, nil
 }
@@ -139,7 +140,8 @@ func TestUseMultiConnect_DNSEmptyResult(t *testing.T) {
 	ok, ips, err := mockDNS.LookupMulti(context.Background(), "nonexistent.example.com")
 	assert.False(t, ok)
 	assert.Nil(t, ips)
-	assert.NoError(t, err)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "no A records found")
 }
 
 func TestUseMultiConnect_DNSError(t *testing.T) {

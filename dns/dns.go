@@ -176,10 +176,6 @@ func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP,
 		if ok {
 			ip, ok := val.([]net.IP)
 			if ok {
-				// only 1 ip, return it
-				if len(ip) == 1 {
-					return true, []net.IP{ip[0]}, nil
-				}
 				return true, ip, nil
 			}
 		}
@@ -223,8 +219,17 @@ func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP,
 	if len(ips) == 0 {
 		return false, nil, fmt.Errorf("no A records found for %s", hostname)
 	}
-	if (ips[0].IsPrivate() || ips[0].IsLoopback()) && !d.isLocal {
-		return false, nil, ErrInvalidIP
+	if !d.isLocal {
+		var validIPs []net.IP
+		for _, ip := range ips {
+			if !ip.IsPrivate() && !ip.IsLoopback() {
+				validIPs = append(validIPs, ip)
+			}
+		}
+		if len(validIPs) == 0 {
+			return false, nil, ErrInvalidIP
+		}
+		ips = validIPs
 	}
 	if d.cache != nil {
 		expires := time.Duration(minTTL) * time.Second

@@ -680,6 +680,8 @@ func (g *GravityClient) Start() error {
 	return nil
 }
 
+var ErrNoGravityFound = errors.New("no available gravity URL resolved")
+
 // startMultiEndpoint is the multi-Gravity connection path, activated when
 // GravityURLs has >1 URL. Creates connections to multiple Gravity servers
 // with sticky tunnel selection and peer cycling.
@@ -690,25 +692,39 @@ func (g *GravityClient) startMultiEndpoint() error {
 	urls := g.resolveGravityURLs()
 	if len(urls) == 0 {
 		g.mu.Unlock()
-		return fmt.Errorf("no gravity URL configured")
+		return ErrNoGravityFound
 	}
 	g.mu.Unlock()
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
 	g.endpointsMu.Lock()
-	g.endpoints = make([]*GravityEndpoint, 0, len(urls))
+	g.endpoints = make([]*GravityEndpoint, 0)
 	var errs []error
 	for _, endpointURL := range urls {
 		if len(urls) == 1 {
-			ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, endpointURL)
+			hostname, err := g.extractHostnameFromURL(endpointURL)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err))
+				continue
+			}
+			ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, hostname)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
 			if ok {
+				parsedHost, err := g.parseGRPCURL(endpointURL)
+				if err != nil {
+					errs = append(errs, fmt.Errorf("failed to parse URL %q: %w", endpointURL, err))
+					continue
+				}
+				_, port, _ := net.SplitHostPort(parsedHost)
+				if port == "" {
+					port = "443"
+				}
 				for _, ip := range ips {
-					ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:443", ip)}
+					ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:%s", ip, port)}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
 				}
@@ -723,6 +739,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	if len(errs) > 0 && len(g.endpoints) == 0 {
 		return errors.Join(errs...)
+	}
+
+	if len(g.endpoints) == 0 {
+		return ErrNoGravityFound
 	}
 
 	g.selector = NewEndpointSelector(DefaultBindingTTL)

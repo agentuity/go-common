@@ -1729,7 +1729,9 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 
 // handleTunnelStream processes packets from a tunnel stream
 func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySessionService_StreamSessionPacketsClient, streamID string) {
-	g.logger.Debug("handleTunnelStream %d called", streamIndex)
+	if g.logger.IsDebugEnabled() {
+		g.logger.Debug("handleTunnelStream %d called", streamIndex)
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			g.logger.Error("tunnel stream %d panic: %v", streamIndex, r)
@@ -1745,7 +1747,9 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 		g.streamManager.tunnelMu.Unlock()
 	}()
 
-	g.logger.Debug("handleTunnelStream: starting receive loop for stream %d", streamIndex)
+	if g.logger.IsDebugEnabled() {
+		g.logger.Debug("handleTunnelStream: starting receive loop for stream %d", streamIndex)
+	}
 	for {
 		if g.tracePackets {
 			g.tracePacketLogger.Debug("handleTunnelStream: calling stream.Recv() for stream %d", streamIndex)
@@ -1793,7 +1797,9 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			dstIP := make(net.IP, 16)
 			copy(dstIP, packet.Data[24:40])
 			srcPort := binary.BigEndian.Uint16(packet.Data[40:42])
-			g.logger.Info("gravity.packet.delivered dst=%s src_port=%d enqueued_at=%s tunnel_latency=%s", dstIP, srcPort, enqueuedAt.Format(time.RFC3339Nano), tunnelLatency)
+			if g.logger.IsDebugEnabled() {
+				g.logger.Debug("gravity.packet.delivered dst=%s src_port=%d enqueued_at=%s tunnel_latency=%s", dstIP, srcPort, enqueuedAt.Format(time.RFC3339Nano), tunnelLatency)
+			}
 		}
 
 		// Record reverse-flow binding so the response routes back through
@@ -1865,7 +1871,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 // stream and triggers either per-endpoint or full-server disconnection.
 func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
 	reason := fmt.Sprintf("tunnel_stream_%d_error", streamIndex)
-	g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
+	g.logger.Debug("tunnel stream %d connection lost, triggering reconnection", streamIndex)
 
 	if g.multiEndpointMode.Load() {
 		connIdx := -1
@@ -1973,10 +1979,10 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	g.hostMapping = response.HostMapping
 
 	if len(response.SshPublicKey) > 0 {
-		g.logger.Info("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
+		g.logger.Debug("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
 	}
 	if len(response.SigningPublicKey) > 0 {
-		g.logger.Info("received signing public key from Gravity (%d bytes)", len(response.SigningPublicKey))
+		g.logger.Debug("received signing public key from Gravity (%d bytes)", len(response.SigningPublicKey))
 	}
 
 	g.mu.Unlock()
@@ -2191,7 +2197,7 @@ func (g *GravityClient) handleEvent(streamIndex int, msgID string, event *pb.Pro
 
 	switch event.Event {
 	case "close":
-		g.logger.Info("received close event from server")
+		g.logger.Debug("received close event from server")
 		// For HA: disconnect and attempt reconnection instead of full shutdown
 		if g.multiEndpointMode.Load() {
 			go g.handleEndpointDisconnection(streamIndex, "close_event")
@@ -2258,7 +2264,9 @@ func (g *GravityClient) handleUnprovisionEvent(streamIndex int, event *pb.Protoc
 }
 
 func (g *GravityClient) handlePong(msgID string, pong *pb.PongResponse) {
-	g.logger.Debug("received pong response: id=%s", msgID)
+	if g.logger.IsDebugEnabled() {
+		g.logger.Debug("received pong response: id=%s", msgID)
+	}
 	_ = pong
 
 	g.pongsReceived.Add(1)
@@ -2511,7 +2519,9 @@ func (g *GravityClient) handleRestoreSandboxTask(msgID string, task *pb.RestoreS
 }
 
 func (g *GravityClient) handlePingRequest(streamIndex int, msgID string, request *pb.PingRequest) {
-	g.logger.Debug("received ping request: id=%s", msgID)
+	if g.logger.IsDebugEnabled() {
+		g.logger.Debug("received ping request: id=%s", msgID)
+	}
 
 	pongMsg := &pb.SessionMessage{
 		Id: msgID,
@@ -2526,7 +2536,9 @@ func (g *GravityClient) handlePingRequest(streamIndex int, msgID string, request
 	if err != nil {
 		g.logger.Error("failed to send pong response on stream %d: %v", streamIndex, err)
 	} else {
-		g.logger.Debug("sent pong response for ping %s on stream %d", msgID, streamIndex)
+		if g.logger.IsDebugEnabled() {
+			g.logger.Debug("sent pong response for ping %s on stream %d", msgID, streamIndex)
+		}
 	}
 }
 
@@ -4842,7 +4854,9 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 
 	g.pingsSent.Add(1)
 	g.lastPingSentUs.Store(time.Now().UnixMicro())
-	g.logger.Debug("sent ping message on control stream %d: id=%s, took=%v", streamIndex, pingID, time.Since(started))
+	if g.logger.IsDebugEnabled() {
+		g.logger.Debug("sent ping message on control stream %d: id=%s, took=%v", streamIndex, pingID, time.Since(started))
+	}
 
 	// Wait for the pong with a deadline of one ping interval. If the pong
 	// doesn't arrive in time, increment pingTimeouts. The goroutine is

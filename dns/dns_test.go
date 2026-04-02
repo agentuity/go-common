@@ -354,33 +354,40 @@ func TestLookupMulti_LookupReturnsAllIPsThenRandom(t *testing.T) {
 
 func TestLookupMulti_IPv6Address(t *testing.T) {
 	d := NewResolver()
+	// IPv6 literals are not handled directly (only IPv4 regex is checked)
+	// They go through DNS lookup which will fail for "::1"
 	ok, ips, err := d.LookupMulti(context.Background(), "::1")
-	if ok {
-		assert.NoError(t, err)
-		assert.NotNil(t, ips)
-	}
+	// This is expected behavior: IPv6 literals require DNS resolution
+	// which fails because "::1" is not a valid DNS name
+	assert.False(t, ok)
+	assert.Error(t, err)
+	assert.Nil(t, ips)
 }
 
 // TestLookupMulti_CacheWithSerializedData tests that LookupMulti correctly
 // deserializes []net.IP from []byte when using serialized caches (e.g., SQLite).
 func TestLookupMulti_CacheWithSerializedData(t *testing.T) {
-	// Simulate a cache that returns serialized []byte (like SQLite does)
-	// The cache stores []net.IP but returns []byte on GetContext
-	c := cache.NewInMemory(context.Background(), cache.WithExpires(time.Hour))
-	defer c.Close()
-	d := NewResolver(WithCache(c))
+	// Use mockSerializedCache which simulates SQLite-backed cache that serializes to []byte
+	mockCache := newMockSerializedCache()
+	d := NewResolver(WithCache(mockCache))
 
-	// First, populate cache via normal lookup
-	ok, ips, err := d.LookupMulti(context.Background(), "app.agentuity.com")
+	// Pre-populate cache with serialized []net.IP
+	testIPs := []net.IP{
+		net.ParseIP("8.8.8.8"),
+		net.ParseIP("1.1.1.1"),
+	}
+	cacheKey := "dns:cached.example.com"
+	err := mockCache.Set(cacheKey, testIPs, time.Hour)
+	require.NoError(t, err)
+
+	// LookupMulti should deserialize from []byte and return the cached IPs
+	ok, ips, err := d.LookupMulti(context.Background(), "cached.example.com")
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.GreaterOrEqual(t, len(ips), 1)
+	require.Len(t, ips, 2)
 
-	// Verify cache hit returns the same IPs
-	ok2, ips2, err := d.LookupMulti(context.Background(), "app.agentuity.com")
-	require.NoError(t, err)
-	require.True(t, ok2)
-	assert.Equal(t, ips, ips2, "cached result should match original")
+	assert.Equal(t, "8.8.8.8", ips[0].String())
+	assert.Equal(t, "1.1.1.1", ips[1].String())
 }
 
 // mockSerializedCache simulates a SQLite-backed cache that serializes values
@@ -445,7 +452,6 @@ func (m *mockSerializedCache) CloseContext(ctx context.Context) error {
 
 // TestLookupMulti_SerializedCache tests that LookupMulti works with
 // caches that return serialized []byte instead of the original type.
-// FINDING: This test documents that LookupMulti needs to handle []byte deserialization.
 func TestLookupMulti_SerializedCache(t *testing.T) {
 	mockCache := newMockSerializedCache()
 
@@ -466,23 +472,14 @@ func TestLookupMulti_SerializedCache(t *testing.T) {
 
 	// This should work even though the cache returns []byte, not []net.IP
 	ok, ips, err := d.LookupMulti(context.Background(), "cached.example.com")
-
-	// FINDING: This test currently FAILS because LookupMulti does a direct
-	// type assertion val.([]net.IP) which fails for []byte.
-	// After the fix, this should pass.
-	if ok && err == nil {
-		assert.Len(t, ips, 2)
-		assert.Equal(t, "8.8.8.8", ips[0].String())
-		assert.Equal(t, "1.1.1.1", ips[1].String())
-	} else {
-		// Document the current broken behavior
-		t.Logf("FINDING: LookupMulti failed to deserialize from []byte: ok=%v, err=%v", ok, err)
-		t.Skip("Skipping - this test documents the bug that needs to be fixed")
-	}
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.Len(t, ips, 2)
+	assert.Equal(t, "8.8.8.8", ips[0].String())
+	assert.Equal(t, "1.1.1.1", ips[1].String())
 }
 
 // TestLookup_SerializedCache tests the same issue for Lookup()
-// FINDING: This test documents that Lookup needs to handle []byte deserialization.
 func TestLookup_SerializedCache(t *testing.T) {
 	mockCache := newMockSerializedCache()
 
@@ -501,11 +498,8 @@ func TestLookup_SerializedCache(t *testing.T) {
 
 	ok, ip, err := d.Lookup(context.Background(), "cached.example.com")
 
-	if ok && err == nil {
-		assert.NotNil(t, ip)
-		assert.Contains(t, []string{"8.8.8.8", "1.1.1.1"}, ip.String())
-	} else {
-		t.Logf("FINDING: Lookup failed to deserialize from []byte: ok=%v, err=%v", ok, err)
-		t.Skip("Skipping - this test documents the bug that needs to be fixed")
-	}
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.NotNil(t, ip)
+	assert.Contains(t, []string{"8.8.8.8", "1.1.1.1"}, ip.String())
 }

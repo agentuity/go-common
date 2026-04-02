@@ -229,7 +229,8 @@ func TestUseMultiConnect_ConnectionCountMatchesEndpoints(t *testing.T) {
 		net.ParseIP("10.0.0.3"),
 	}
 	for _, ip := range testIPs {
-		ep := &GravityEndpoint{URL: "grpc://" + ip.String() + ":443"}
+		hostPort := net.JoinHostPort(ip.String(), "443")
+		ep := &GravityEndpoint{URL: "grpc://" + hostPort}
 		ep.healthy.Store(false)
 		g.endpoints = append(g.endpoints, ep)
 	}
@@ -520,28 +521,46 @@ func TestUseMultiConnect_IPv6Addresses(t *testing.T) {
 	ipv6Tests := []struct {
 		name     string
 		ip       net.IP
+		port     string
 		expected string
 	}{
 		{
 			name:     "full IPv6",
 			ip:       net.ParseIP("2001:db8::1"),
-			expected: "grpc://2001:db8::1:443",
+			port:     "443",
+			expected: "grpc://[2001:db8::1]:443",
 		},
 		{
 			name:     "IPv6 loopback",
 			ip:       net.ParseIP("::1"),
-			expected: "grpc://::1:443",
+			port:     "443",
+			expected: "grpc://[::1]:443",
 		},
 		{
 			name:     "IPv4-mapped IPv6 (renders as IPv4)",
 			ip:       net.ParseIP("::ffff:10.0.0.1"),
+			port:     "443",
 			expected: "grpc://10.0.0.1:443",
+		},
+		{
+			name:     "IPv4 address",
+			ip:       net.ParseIP("10.0.0.1"),
+			port:     "443",
+			expected: "grpc://10.0.0.1:443",
+		},
+		{
+			name:     "custom port",
+			ip:       net.ParseIP("2001:db8::1"),
+			port:     "8443",
+			expected: "grpc://[2001:db8::1]:8443",
 		},
 	}
 
 	for _, tt := range ipv6Tests {
 		t.Run(tt.name, func(t *testing.T) {
-			epURL := fmt.Sprintf("grpc://%s:443", tt.ip)
+			// Use net.JoinHostPort like the production code does
+			hostPort := net.JoinHostPort(tt.ip.String(), tt.port)
+			epURL := "grpc://" + hostPort
 			assert.Equal(t, tt.expected, epURL)
 		})
 	}
@@ -716,14 +735,15 @@ func TestUseMultiConnect_MultiEndpointModeFlagSet(t *testing.T) {
 
 	// Simulate DNS expansion creating multiple endpoints
 	g.endpointsMu.Lock()
-	g.endpoints = make([]*GravityEndpoint, 0)
+	g.endpoints = make([]*GravityEndpoint, 0, 3)
 	testIPs := []net.IP{
 		net.ParseIP("10.0.0.1"),
 		net.ParseIP("10.0.0.2"),
 		net.ParseIP("10.0.0.3"),
 	}
 	for _, ip := range testIPs {
-		ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:443", ip)}
+		hostPort := net.JoinHostPort(ip.String(), "443")
+		ep := &GravityEndpoint{URL: "grpc://" + hostPort}
 		ep.healthy.Store(false)
 		g.endpoints = append(g.endpoints, ep)
 	}

@@ -736,7 +736,9 @@ func (g *GravityClient) startMultiEndpoint() error {
 			}
 			if ok && len(ips) > 0 {
 				for _, ip := range ips {
-					ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:%s", ip, port)}
+					// Use net.JoinHostPort to properly bracket IPv6 addresses
+					hostPort := net.JoinHostPort(ip.String(), port)
+					ep := &GravityEndpoint{URL: "grpc://" + hostPort}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
 				}

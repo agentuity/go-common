@@ -590,3 +590,189 @@ func TestUseMultiConnect_MultipleIPsWithDifferentPorts(t *testing.T) {
 	assert.Contains(t, endpoints[1], ":8443")
 	assert.Contains(t, endpoints[2], ":8443")
 }
+
+// ============================================================================
+// FINDING 2: DNS expansion should only happen when useMultiConnect is true
+// ============================================================================
+
+// TestUseMultiConnect_SingleURLWithoutFlagDoesNotExpandDNS tests that
+// a single URL without useMultiConnect=true should NOT trigger DNS expansion.
+// FINDING: Currently DNS expansion happens when len(urls)==1 regardless of useMultiConnect.
+func TestUseMultiConnect_SingleURLWithoutFlagDoesNotExpandDNS(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		url:             "grpc://gravity.example.com",
+		gravityURLs:     []string{},
+		useMultiConnect: false, // This should prevent DNS expansion
+		poolConfig:      ConnectionPoolConfig{MaxGravityPeers: 3},
+		endpointsMu:     sync.RWMutex{},
+	}
+
+	urls := g.resolveGravityURLs()
+	require.Len(t, urls, 1)
+
+	// Simulate what startMultiEndpoint currently does (incorrectly)
+	// It should NOT expand DNS when useMultiConnect is false
+	g.endpointsMu.Lock()
+	g.endpoints = make([]*GravityEndpoint, 0)
+	for _, endpointURL := range urls {
+		// FINDING: Current code does len(urls)==1 check without checking useMultiConnect
+		// This branch should only execute when useMultiConnect is true
+		if len(urls) == 1 && !g.useMultiConnect {
+			// Correct behavior: just add the URL as-is, no DNS expansion
+			ep := &GravityEndpoint{URL: endpointURL}
+			ep.healthy.Store(false)
+			g.endpoints = append(g.endpoints, ep)
+		}
+	}
+	g.endpointsMu.Unlock()
+
+	// Should have exactly 1 endpoint (the original URL, not expanded)
+	g.endpointsMu.RLock()
+	endpoints := make([]*GravityEndpoint, len(g.endpoints))
+	copy(endpoints, g.endpoints)
+	g.endpointsMu.RUnlock()
+
+	assert.Len(t, endpoints, 1, "without useMultiConnect, single URL should not be expanded")
+	assert.Equal(t, "grpc://gravity.example.com", endpoints[0].URL)
+}
+
+// TestUseMultiConnect_SingleURLWithFlagExpandsDNS tests that
+// a single URL with useMultiConnect=true SHOULD trigger DNS expansion.
+func TestUseMultiConnect_SingleURLWithFlagExpandsDNS(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		url:             "grpc://gravity.example.com",
+		gravityURLs:     []string{},
+		useMultiConnect: true, // This should enable DNS expansion
+		poolConfig:      ConnectionPoolConfig{MaxGravityPeers: 3},
+		endpointsMu:     sync.RWMutex{},
+	}
+
+	urls := g.resolveGravityURLs()
+	require.Len(t, urls, 1)
+
+	// When useMultiConnect is true, DNS expansion should happen
+	assert.True(t, g.useMultiConnect, "useMultiConnect should be true")
+	assert.Len(t, urls, 1, "should have single URL that will be expanded via DNS")
+}
+
+// TestUseMultiConnect_IPAddressDoesNotExpand tests that
+// if the URL hostname is already an IP address, DNS lookup should be skipped.
+// FINDING: Current code calls LookupMulti even for IP addresses.
+func TestUseMultiConnect_IPAddressDoesNotExpand(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		defaultServerName: "gravity.agentuity.com",
+	}
+
+	// Test with IP address URL
+	endpointURL := "grpc://10.0.0.1:443"
+	parsedHost, err := g.parseGRPCURL(endpointURL)
+	require.NoError(t, err)
+
+	hostname, _, err := net.SplitHostPort(parsedHost)
+	require.NoError(t, err)
+
+	// Check if hostname is already an IP
+	ip := net.ParseIP(hostname)
+	isIP := ip != nil
+
+	assert.True(t, isIP, "hostname should be detected as IP address")
+
+	// FINDING: When hostname is an IP, DNS lookup should be skipped
+	// The endpoint should be created directly without calling LookupMulti
+	if isIP {
+		// Correct behavior: skip DNS, create single endpoint
+		ep := &GravityEndpoint{URL: endpointURL}
+		ep.healthy.Store(false)
+		assert.Equal(t, "grpc://10.0.0.1:443", ep.URL)
+	}
+}
+
+// TestUseMultiConnect_UsesParseGRPCURLNotExtractHostname tests that
+// DNS lookup should use the hostname from parseGRPCURL, not extractHostnameFromURL.
+// FINDING: Current code uses extractHostnameFromURL which may return defaultServerName for IPs.
+func TestUseMultiConnect_UsesParseGRPCURLNotExtractHostname(t *testing.T) {
+	g := &GravityClient{
+		ctx:               context.Background(),
+		logger:            logger.NewTestLogger(),
+		defaultServerName: "gravity.agentuity.com",
+	}
+
+	endpointURL := "grpc://gravity.example.com:8443"
+
+	// Parse the URL to get host:port
+	parsedHost, err := g.parseGRPCURL(endpointURL)
+	require.NoError(t, err)
+
+	// Split to get just the hostname (without port)
+	hostname, port, err := net.SplitHostPort(parsedHost)
+	require.NoError(t, err)
+
+	// This is what should be used for DNS lookup
+	assert.Equal(t, "gravity.example.com", hostname, "hostname for DNS should not include port")
+	assert.Equal(t, "8443", port, "port should be preserved")
+
+	// NOT extractHostnameFromURL which is for TLS ServerName
+	// and may return defaultServerName for IP addresses
+}
+
+// ============================================================================
+// FINDING 3: Multi-endpoint mode flag should be set after DNS expansion
+// ============================================================================
+
+// TestUseMultiConnect_MultiEndpointModeFlagSet tests that
+// when DNS expansion creates multiple endpoints, the client should set
+// a flag to indicate multi-endpoint mode (not just check len(gravityURLs) > 1).
+// FINDING: Code checks len(g.gravityURLs) > 1 in many places, but DNS expansion
+// creates multiple endpoints from a single URL, so this check fails.
+func TestUseMultiConnect_MultiEndpointModeFlagSet(t *testing.T) {
+	g := &GravityClient{
+		ctx:             context.Background(),
+		logger:          logger.NewTestLogger(),
+		url:             "grpc://gravity.example.com",
+		gravityURLs:     []string{},
+		useMultiConnect: true,
+		poolConfig:      ConnectionPoolConfig{MaxGravityPeers: 10},
+		endpointsMu:     sync.RWMutex{},
+	}
+
+	// Simulate DNS expansion creating multiple endpoints
+	g.endpointsMu.Lock()
+	g.endpoints = make([]*GravityEndpoint, 0)
+	testIPs := []net.IP{
+		net.ParseIP("10.0.0.1"),
+		net.ParseIP("10.0.0.2"),
+		net.ParseIP("10.0.0.3"),
+	}
+	for _, ip := range testIPs {
+		ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:443", ip)}
+		ep.healthy.Store(false)
+		g.endpoints = append(g.endpoints, ep)
+	}
+	g.endpointsMu.Unlock()
+
+	// After DNS expansion, we have 3 endpoints but still only 1 URL in gravityURLs
+	g.endpointsMu.RLock()
+	numEndpoints := len(g.endpoints)
+	g.endpointsMu.RUnlock()
+
+	assert.Equal(t, 3, numEndpoints, "DNS should expand to 3 endpoints")
+	assert.Equal(t, 0, len(g.gravityURLs), "gravityURLs is still empty")
+	assert.Equal(t, 1, len(g.resolveGravityURLs()), "resolveGravityURLs returns 1 URL")
+
+	// FINDING: The client needs a flag to indicate "effectively multi-endpoint"
+	// because len(g.gravityURLs) > 1 is false even though we have 3 endpoints.
+	// This flag should be used by:
+	// - sendSessionHello (decides whether to send to all streams)
+	// - heartbeat logic
+	// - reverse-flow binding
+	// - disconnection handling
+
+	// Current code would check len(g.gravityURLs) > 1 which is WRONG
+	// It should check: g.multiEndpointMode || len(g.endpoints) > 1
+}

@@ -2803,9 +2803,23 @@ func (g *GravityClient) triggerEndpointReconnectByURL(url string) {
 		}
 	}
 	g.endpointsMu.RUnlock()
-	if idx >= 0 {
-		go g.handleEndpointDisconnection(idx, "no healthy tunnel streams")
+	if idx < 0 {
+		return
 	}
+
+	// Dispatch to a goroutine that re-validates the URL before tearing down
+	// the endpoint. Between our lookup and the disconnect, the slot may have
+	// been recycled (reconnection replaced the endpoint). Re-checking avoids
+	// accidentally tearing down a newly-cycled healthy endpoint.
+	go func(expectedIdx int, expectedURL string) {
+		g.endpointsMu.RLock()
+		if expectedIdx >= len(g.endpoints) || g.endpoints[expectedIdx] == nil || g.endpoints[expectedIdx].URL != expectedURL {
+			g.endpointsMu.RUnlock()
+			return // endpoint was replaced — skip
+		}
+		g.endpointsMu.RUnlock()
+		g.handleEndpointDisconnection(expectedIdx, "no healthy tunnel streams")
+	}(idx, url)
 }
 
 func (g *GravityClient) handleEndpointDisconnection(endpointIndex int, reason string) {

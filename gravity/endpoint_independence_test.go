@@ -688,9 +688,17 @@ func TestSelectStreamForPacket_SkipsEndpointWithNoTunnels(t *testing.T) {
 	g.endpointStreamIndices["grpc://endpoint-1"] = []int{} // no tunnels!
 	g.endpointStreamIndices["grpc://endpoint-2"] = []int{} // no tunnels!
 
-	// Build a packet (minimal IPv6 header for hash)
+	// Build a packet and pre-bind the selector to endpoint-1 (no tunnels)
+	// so the first attempt hits the empty endpoint.
 	pkt := make([]byte, 40)
 	pkt[0] = 0x60
+	key := ExtractFlowKey(pkt)
+	g.selector.mu.Lock()
+	g.selector.bindings[key] = &TunnelBinding{
+		Endpoint: g.endpoints[1],
+		LastUsed: time.Now(),
+	}
+	g.selector.mu.Unlock()
 
 	stream, err := g.selectStreamForPacket(pkt)
 	if err != nil {
@@ -699,9 +707,13 @@ func TestSelectStreamForPacket_SkipsEndpointWithNoTunnels(t *testing.T) {
 	if stream == nil {
 		t.Fatal("expected non-nil stream")
 	}
-	// Should have selected from endpoint 0 (the only one with tunnels)
+	// Should have fallen back to endpoint 0 (the only one with tunnels)
 	if stream.connIndex != 0 {
 		t.Fatalf("expected stream from endpoint 0, got connIndex=%d", stream.connIndex)
+	}
+	// Endpoint 1 should now be marked unhealthy
+	if g.endpoints[1].IsHealthy() {
+		t.Fatal("expected endpoint 1 to be marked unhealthy after tunnel failure")
 	}
 }
 
@@ -832,16 +844,27 @@ func TestTriggerEndpointReconnectByURL(t *testing.T) {
 	g := newEndpointTestClient(t, 3)
 	g.gravityURLs = []string{"a", "b", "c"}
 
-	// Set closing so handleEndpointDisconnection exits immediately
-	g.mu.Lock()
-	g.closing = true
-	g.mu.Unlock()
-
 	g.triggerEndpointReconnectByURL("grpc://endpoint-1")
-	time.Sleep(50 * time.Millisecond)
+	// The goroutine should resolve index 1 and set endpointReconnecting[1].
+	time.Sleep(100 * time.Millisecond)
 
-	// With closing=true, handleEndpointDisconnection returns early.
-	// Just verify no panic occurred (URL was resolved correctly).
+	if !g.endpointReconnecting[1].Load() {
+		t.Fatal("expected endpointReconnecting[1] to be set after triggerEndpointReconnectByURL")
+	}
+	// Endpoints 0 and 2 should NOT be affected.
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected endpointReconnecting[0] to remain false")
+	}
+	if g.endpointReconnecting[2].Load() {
+		t.Fatal("expected endpointReconnecting[2] to remain false")
+	}
+
+	// Cancel context to stop the infinite reconnect loop.
+	g.cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for g.endpointReconnecting[1].Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // TestTriggerEndpointReconnectByURL_UnknownURL verifies that an unknown

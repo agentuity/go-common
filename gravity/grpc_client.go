@@ -155,6 +155,11 @@ type GravityEndpoint struct {
 	// URL is the address of this Gravity server.
 	URL string
 
+	// TLSServerName is the hostname to use for TLS SNI when the URL contains
+	// an IP address (e.g., after DNS resolution). If empty, the hostname is
+	// extracted from URL as usual.
+	TLSServerName string
+
 	// healthy indicates whether this endpoint is currently reachable.
 	healthy atomic.Bool
 
@@ -738,7 +743,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 				for _, ip := range ips {
 					// Use net.JoinHostPort to properly bracket IPv6 addresses
 					hostPort := net.JoinHostPort(ip.String(), port)
-					ep := &GravityEndpoint{URL: "grpc://" + hostPort}
+					ep := &GravityEndpoint{
+						URL:           "grpc://" + hostPort,
+						TLSServerName: hostname, // preserve original hostname for TLS SNI
+					}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
 				}
@@ -764,10 +772,11 @@ func (g *GravityClient) startMultiEndpoint() error {
 		return ErrNoGravityFound
 	}
 
-	// Set multiEndpointMode flag if we have multiple endpoints
-	// This is used by other code paths that need to know if we're in multi-endpoint mode
-	// (e.g., sendSessionHello, heartbeat, disconnection handling)
-	g.multiEndpointMode.Store(len(g.endpoints) > 1)
+	// Set multiEndpointMode flag when we have multiple endpoints or UseMultiConnect
+	// is explicitly enabled. This is used by other code paths that need to know if
+	// we're in multi-endpoint mode (e.g., sendSessionHello, heartbeat, disconnection
+	// handling, and resilient control stream establishment).
+	g.multiEndpointMode.Store(len(g.endpoints) > 1 || g.useMultiConnect)
 
 	g.selector = NewEndpointSelector(DefaultBindingTTL)
 
@@ -831,11 +840,20 @@ func (g *GravityClient) startMultiEndpoint() error {
 			return fmt.Errorf("invalid URL %q: %w", endpointURL, err)
 		}
 
-		hostname, err := g.extractHostnameFromURL(endpointURL)
-		if err != nil {
-			g.cleanup()
-			g.mu.Unlock()
-			return fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err)
+		// Use the endpoint's TLSServerName (set during DNS resolution) if available,
+		// otherwise extract from the URL. This ensures IP-based endpoints resolved
+		// via DNS use the original hostname for TLS SNI.
+		hostname := endpoints[i].TLSServerName
+		if hostname == "" {
+			var err error
+			hostname, err = g.extractHostnameFromURL(endpointURL)
+			if err != nil {
+				g.cleanup()
+				g.mu.Unlock()
+				return fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err)
+			}
+		} else {
+			g.logger.Debug("using TLS ServerName %q for IP-based endpoint %s", hostname, endpointURL)
 		}
 
 		cert := *g.tlsCert
@@ -929,7 +947,21 @@ func (g *GravityClient) startMultiEndpoint() error {
 	for _, ep := range endpoints {
 		endpointURLs = append(endpointURLs, ep.URL)
 	}
-	g.logger.Info("connected to %d Gravity servers: %v", connectionCount, endpointURLs)
+
+	g.streamManager.controlMu.RLock()
+	healthyCount := 0
+	for _, s := range g.streamManager.controlStreams {
+		if s != nil {
+			healthyCount++
+		}
+	}
+	g.streamManager.controlMu.RUnlock()
+
+	if healthyCount < connectionCount {
+		g.logger.Info("connected to %d of %d Gravity servers (degraded mode, %d reconnecting): %v", healthyCount, connectionCount, connectionCount-healthyCount, endpointURLs)
+	} else {
+		g.logger.Info("connected to %d Gravity servers: %v", connectionCount, endpointURLs)
+	}
 
 	go g.handleInboundPackets()
 	go g.handleOutboundPackets()
@@ -1272,6 +1304,10 @@ func (g *GravityClient) establishControlStreams() error {
 	g.streamManager.contexts = make([]context.Context, len(g.connections))
 	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
 
+	if g.multiEndpointMode.Load() {
+		return g.establishControlStreamsMulti()
+	}
+
 	for i, client := range g.sessionClients {
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
@@ -1299,6 +1335,72 @@ func (g *GravityClient) establishControlStreams() error {
 	return nil
 }
 
+func (g *GravityClient) establishControlStreamsMulti() error {
+	type establishResult struct {
+		index  int
+		ctx    context.Context
+		cancel context.CancelFunc
+		stream pb.GravitySessionService_EstablishSessionClient
+		err    error
+	}
+
+	n := len(g.sessionClients)
+	results := make(chan establishResult, n)
+
+	for i, client := range g.sessionClients {
+		go func(idx int, c pb.GravitySessionServiceClient) {
+			ctx, cancel := context.WithCancel(g.ctx)
+			stream, err := c.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
+			results <- establishResult{index: idx, ctx: ctx, cancel: cancel, stream: stream, err: err}
+		}(i, client)
+	}
+
+	failed := make([]int, 0)
+	successCount := 0
+	var lastErr error
+
+	for range n {
+		result := <-results
+		if result.err != nil {
+			if !isContextCanceled(g.ctx, result.err) {
+				g.logger.Error("failed to establish control stream %d: %v", result.index+1, result.err)
+			}
+			result.cancel()
+			failed = append(failed, result.index)
+			lastErr = result.err
+			continue
+		}
+
+		g.logger.Debug("control stream %d established successfully", result.index+1)
+
+		g.streamManager.controlMu.Lock()
+		g.streamManager.contexts[result.index] = result.ctx
+		g.streamManager.cancels[result.index] = result.cancel
+		g.streamManager.controlStreams[result.index] = result.stream
+		g.streamManager.controlMu.Unlock()
+
+		go g.handleControlStream(result.index, result.stream)
+		successCount++
+	}
+
+	if successCount == 0 {
+		return fmt.Errorf("failed to establish any control streams (%d endpoints): last error: %w", n, lastErr)
+	}
+
+	if len(failed) > 0 {
+		g.logger.Warn("failed to establish %d/%d control streams; starting background reconnect for failed endpoints", len(failed), n)
+		for _, idx := range failed {
+			g.disconnectEndpointStreams(idx)
+			if idx >= 0 && idx < len(g.endpointReconnecting) && g.endpointReconnecting[idx].CompareAndSwap(false, true) {
+				go g.reconnectEndpoint(idx, "initial connection failed")
+			}
+		}
+	}
+
+	g.logger.Debug("established %d/%d control streams", successCount, n)
+	return nil
+}
+
 // establishTunnelStreams creates tunnel streams for packet forwarding
 func (g *GravityClient) establishTunnelStreams() error {
 	// Wait for machine ID from control stream(s).
@@ -1309,8 +1411,19 @@ func (g *GravityClient) establishTunnelStreams() error {
 	// resolveGravityURLs() deduplicates and trims to MaxGravityPeers.
 	numExpected := 1
 	if len(g.connections) > 1 {
-		numExpected = len(g.connections)
-		g.logger.Debug("waiting for session hello responses from %d Gravity servers...", numExpected)
+		g.streamManager.controlMu.RLock()
+		healthyCount := 0
+		for _, s := range g.streamManager.controlStreams {
+			if s != nil {
+				healthyCount++
+			}
+		}
+		g.streamManager.controlMu.RUnlock()
+		if healthyCount == 0 {
+			return fmt.Errorf("no healthy control streams available")
+		}
+		numExpected = healthyCount
+		g.logger.Debug("waiting for session hello responses from %d healthy Gravity servers (%d total)...", healthyCount, len(g.connections))
 	} else {
 		g.logger.Debug("waiting for machine ID from server...")
 	}
@@ -1353,12 +1466,21 @@ proceed:
 			streamsPerConnection = DefaultStreamsPerGravity
 		}
 	}
-	totalStreams := len(g.connections) * streamsPerConnection
+	healthyClients := 0
+	for _, c := range g.sessionClients {
+		if c != nil {
+			healthyClients++
+		}
+	}
+	totalStreams := healthyClients * streamsPerConnection
 
 	g.streamManager.tunnelStreams = make([]*StreamInfo, totalStreams)
 
 	streamIndex := 0
 	for connIndex, client := range g.sessionClients {
+		if client == nil {
+			continue
+		}
 		for range streamsPerConnection {
 			streamID := fmt.Sprintf("stream_%s", rand.Text())
 			ctx := context.WithValue(g.ctx, machineIDKey, machineID)
@@ -2851,9 +2973,19 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		return fmt.Errorf("invalid URL %q: %w", endpointURL, err)
 	}
 
-	hostname, err := g.extractHostnameFromURL(endpointURL)
-	if err != nil {
-		return fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err)
+	// Use the endpoint's TLSServerName if available (set during DNS resolution),
+	// otherwise extract from URL.
+	var hostname string
+	g.endpointsMu.RLock()
+	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+		hostname = g.endpoints[endpointIndex].TLSServerName
+	}
+	g.endpointsMu.RUnlock()
+	if hostname == "" {
+		hostname, err = g.extractHostnameFromURL(endpointURL)
+		if err != nil {
+			return fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err)
+		}
 	}
 
 	pool, err := x509.SystemCertPool()

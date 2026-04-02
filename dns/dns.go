@@ -172,12 +172,9 @@ func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP,
 	var cacheKey string
 	if d.cache != nil {
 		cacheKey = fmt.Sprintf("dns:%s", hostname)
-		ok, val, _ := d.cache.GetContext(ctx, cacheKey)
+		ok, ips, _ := cache.GetContext[[]net.IP](ctx, d.cache, cacheKey)
 		if ok {
-			ip, ok := val.([]net.IP)
-			if ok {
-				return true, ip, nil
-			}
+			return true, ips, nil
 		}
 	}
 	c, cancel := context.WithTimeout(ctx, 15*time.Second)

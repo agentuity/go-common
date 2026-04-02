@@ -198,10 +198,11 @@ type GravityClient struct {
 	streamManager  *StreamManager
 
 	// Multi-endpoint support: one endpoint per Gravity server
-	endpoints       []*GravityEndpoint
-	endpointsMu     sync.RWMutex
-	selector        *EndpointSelector
-	useMultiConnect bool
+	endpoints         []*GravityEndpoint
+	endpointsMu       sync.RWMutex
+	selector          *EndpointSelector
+	useMultiConnect   bool
+	multiEndpointMode atomic.Bool // true when client is effectively in multi-endpoint mode
 
 	// Peer discovery and cycling
 	discoveryResolveFunc  func() []string
@@ -702,32 +703,48 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.endpoints = make([]*GravityEndpoint, 0)
 	var errs []error
 	for _, endpointURL := range urls {
-		if len(urls) == 1 {
-			hostname, err := g.extractHostnameFromURL(endpointURL)
+		// Only expand single URL via DNS when useMultiConnect is explicitly enabled
+		if len(urls) == 1 && g.useMultiConnect {
+			// Parse URL to get host:port
+			parsedHost, err := g.parseGRPCURL(endpointURL)
 			if err != nil {
-				errs = append(errs, fmt.Errorf("failed to extract hostname from %q: %w", endpointURL, err))
+				errs = append(errs, fmt.Errorf("failed to parse URL %q: %w", endpointURL, err))
 				continue
 			}
+			hostname, port, err := net.SplitHostPort(parsedHost)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("failed to split host:port from %q: %w", parsedHost, err))
+				continue
+			}
+			if port == "" {
+				port = "443"
+			}
+
+			// If hostname is already an IP address, skip DNS lookup
+			if ip := net.ParseIP(hostname); ip != nil {
+				ep := &GravityEndpoint{URL: endpointURL}
+				ep.healthy.Store(false)
+				g.endpoints = append(g.endpoints, ep)
+				continue
+			}
+
+			// Perform DNS lookup on the raw hostname
 			ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, hostname)
 			if err != nil {
 				errs = append(errs, err)
 				continue
 			}
-			if ok {
-				parsedHost, err := g.parseGRPCURL(endpointURL)
-				if err != nil {
-					errs = append(errs, fmt.Errorf("failed to parse URL %q: %w", endpointURL, err))
-					continue
-				}
-				_, port, _ := net.SplitHostPort(parsedHost)
-				if port == "" {
-					port = "443"
-				}
+			if ok && len(ips) > 0 {
 				for _, ip := range ips {
 					ep := &GravityEndpoint{URL: fmt.Sprintf("grpc://%s:%s", ip, port)}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
 				}
+			} else {
+				// DNS returned no IPs, fall back to original URL
+				ep := &GravityEndpoint{URL: endpointURL}
+				ep.healthy.Store(false)
+				g.endpoints = append(g.endpoints, ep)
 			}
 		} else {
 			ep := &GravityEndpoint{URL: endpointURL}
@@ -744,6 +761,11 @@ func (g *GravityClient) startMultiEndpoint() error {
 	if len(g.endpoints) == 0 {
 		return ErrNoGravityFound
 	}
+
+	// Set multiEndpointMode flag if we have multiple endpoints
+	// This is used by other code paths that need to know if we're in multi-endpoint mode
+	// (e.g., sendSessionHello, heartbeat, disconnection handling)
+	g.multiEndpointMode.Store(len(g.endpoints) > 1)
 
 	g.selector = NewEndpointSelector(DefaultBindingTTL)
 
@@ -1397,7 +1419,7 @@ func (g *GravityClient) sendSessionHello() error {
 	numStreams := len(g.streamManager.controlStreams)
 	g.streamManager.controlMu.RUnlock()
 
-	if numStreams > 1 && len(g.gravityURLs) > 1 {
+	if numStreams > 1 && g.multiEndpointMode.Load() {
 		g.logger.Debug("sending session hello on all %d control streams (multi-endpoint)", numStreams)
 		var successCount int
 		var firstErr error
@@ -1566,7 +1588,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 				}
 				if isConnectionLost {
 					g.logger.Warn("control stream %d connection lost, triggering reconnection", streamIndex)
-					if len(g.gravityURLs) > 1 {
+					if g.multiEndpointMode.Load() {
 						go g.handleEndpointDisconnection(streamIndex, fmt.Sprintf("control_stream_%d_error", streamIndex))
 					} else {
 						go g.handleServerDisconnection(fmt.Sprintf("control_stream_%d_error", streamIndex))
@@ -1652,7 +1674,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 
 		// Record reverse-flow binding so the response routes back through
 		// the same endpoint that sent this inbound packet.
-		if g.selector != nil && len(g.gravityURLs) > 1 {
+		if g.selector != nil && g.multiEndpointMode.Load() {
 			g.streamManager.tunnelMu.RLock()
 			var ep *GravityEndpoint
 			if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
@@ -1721,7 +1743,7 @@ func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
 	reason := fmt.Sprintf("tunnel_stream_%d_error", streamIndex)
 	g.logger.Info("tunnel stream %d connection lost, triggering reconnection", streamIndex)
 
-	if len(g.gravityURLs) > 1 {
+	if g.multiEndpointMode.Load() {
 		connIdx := -1
 		g.streamManager.tunnelMu.RLock()
 		if streamIndex >= 0 && streamIndex < len(g.streamManager.tunnelStreams) {
@@ -2047,7 +2069,7 @@ func (g *GravityClient) handleEvent(streamIndex int, msgID string, event *pb.Pro
 	case "close":
 		g.logger.Info("received close event from server")
 		// For HA: disconnect and attempt reconnection instead of full shutdown
-		if len(g.gravityURLs) > 1 {
+		if g.multiEndpointMode.Load() {
 			go g.handleEndpointDisconnection(streamIndex, "close_event")
 		} else {
 			g.handleServerDisconnection("close_event")
@@ -2405,7 +2427,7 @@ func (g *GravityClient) handleSessionCloseRequest(streamIndex int, msgID string,
 	}
 
 	g.logger.Info("server requested session close, attempting reconnection for HA")
-	if len(g.gravityURLs) > 1 {
+	if g.multiEndpointMode.Load() {
 		go g.handleEndpointDisconnection(streamIndex, "session_close_request")
 	} else {
 		go g.handleServerDisconnection("session_close_request")
@@ -4549,7 +4571,7 @@ func (g *GravityClient) sendPing() {
 	copy(streams, g.streamManager.controlStreams)
 	g.streamManager.controlMu.RUnlock()
 
-	if len(g.gravityURLs) > 1 {
+	if g.multiEndpointMode.Load() {
 		for i, stream := range streams {
 			if stream == nil {
 				continue
@@ -4601,7 +4623,7 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 		g.pendingMu.Lock()
 		delete(g.pending, pingID)
 		g.pendingMu.Unlock()
-		if len(g.gravityURLs) > 1 {
+		if g.multiEndpointMode.Load() {
 			go g.handleEndpointDisconnection(streamIndex, "ping_send_blocked")
 		} else {
 			go g.handleServerDisconnection("ping_send_blocked")

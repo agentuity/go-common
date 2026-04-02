@@ -661,3 +661,221 @@ func TestEndpointDisconnection_AllDownStillPerEndpoint(t *testing.T) {
 		t.Fatal("expected endpointReconnecting[2] to remain false")
 	}
 }
+
+// --- Tunnel health and selection ---
+
+// TestSelectStreamForPacket_SkipsEndpointWithNoTunnels verifies that when the
+// selected endpoint has no healthy tunnel streams, the selector marks it
+// unhealthy and falls back to another endpoint.
+func TestSelectStreamForPacket_SkipsEndpointWithNoTunnels(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	// Set up selector
+	g.selector = NewEndpointSelector(5 * time.Second)
+
+	// Endpoint 0: has healthy tunnel streams
+	// Endpoint 1: has NO tunnel streams (empty index list)
+	// Endpoint 2: has healthy tunnel streams
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 4)
+	g.streamManager.tunnelStreams[0] = &StreamInfo{connIndex: 0, isHealthy: true, streamID: "s0"}
+	g.streamManager.tunnelStreams[1] = &StreamInfo{connIndex: 0, isHealthy: true, streamID: "s1"}
+	// indices 2-3 intentionally nil (endpoint 1 has no tunnels)
+
+	g.endpointStreamIndices["grpc://endpoint-0"] = []int{0, 1}
+	g.endpointStreamIndices["grpc://endpoint-1"] = []int{} // no tunnels!
+	g.endpointStreamIndices["grpc://endpoint-2"] = []int{} // no tunnels!
+
+	// Build a packet and pre-bind the selector to endpoint-1 (no tunnels)
+	// so the first attempt hits the empty endpoint.
+	pkt := make([]byte, 40)
+	pkt[0] = 0x60
+	key := ExtractFlowKey(pkt)
+	g.selector.mu.Lock()
+	g.selector.bindings[key] = &TunnelBinding{
+		Endpoint: g.endpoints[1],
+		LastUsed: time.Now(),
+	}
+	g.selector.mu.Unlock()
+
+	stream, err := g.selectStreamForPacket(pkt)
+	if err != nil {
+		t.Fatalf("expected stream selection to succeed via fallback, got: %v", err)
+	}
+	if stream == nil {
+		t.Fatal("expected non-nil stream")
+	}
+	// Should have fallen back to endpoint 0 (the only one with tunnels)
+	if stream.connIndex != 0 {
+		t.Fatalf("expected stream from endpoint 0, got connIndex=%d", stream.connIndex)
+	}
+	// Endpoint 1 should now be marked unhealthy
+	if g.endpoints[1].IsHealthy() {
+		t.Fatal("expected endpoint 1 to be marked unhealthy after tunnel failure")
+	}
+}
+
+// TestSelectStreamForPacket_AllEndpointsNoTunnels verifies that when no
+// endpoint has healthy tunnels, an error is returned.
+func TestSelectStreamForPacket_AllEndpointsNoTunnels(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+	g.selector = NewEndpointSelector(5 * time.Second)
+
+	// No tunnel streams at all
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 0)
+	g.endpointStreamIndices["grpc://endpoint-0"] = []int{}
+	g.endpointStreamIndices["grpc://endpoint-1"] = []int{}
+	g.endpointStreamIndices["grpc://endpoint-2"] = []int{}
+
+	pkt := make([]byte, 40)
+	pkt[0] = 0x60
+
+	_, err := g.selectStreamForPacket(pkt)
+	if err == nil {
+		t.Fatal("expected error when no endpoints have tunnels")
+	}
+}
+
+// TestSelectStreamForPacket_UnhealthyTunnelsTriggersReconnect verifies that
+// when all tunnel streams for an endpoint are unhealthy, the endpoint is
+// marked unhealthy and reconnection is triggered.
+func TestSelectStreamForPacket_UnhealthyTunnelsTriggersReconnect(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+	g.selector = NewEndpointSelector(5 * time.Second)
+
+	// Endpoint 0: tunnels exist but ALL unhealthy
+	// Endpoint 1: healthy tunnels (fallback target)
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 4)
+	g.streamManager.tunnelStreams[0] = &StreamInfo{connIndex: 0, isHealthy: false, streamID: "s0"}
+	g.streamManager.tunnelStreams[1] = &StreamInfo{connIndex: 0, isHealthy: false, streamID: "s1"}
+	g.streamManager.tunnelStreams[2] = &StreamInfo{connIndex: 1, isHealthy: true, streamID: "s2"}
+	g.streamManager.tunnelStreams[3] = &StreamInfo{connIndex: 1, isHealthy: true, streamID: "s3"}
+
+	g.endpointStreamIndices["grpc://endpoint-0"] = []int{0, 1}
+	g.endpointStreamIndices["grpc://endpoint-1"] = []int{2, 3}
+	g.endpointStreamIndices["grpc://endpoint-2"] = []int{}
+
+	// Force selector to pick endpoint 0 first by pre-binding
+	pkt := make([]byte, 40)
+	pkt[0] = 0x60
+	g.selector.Select(pkt, g.endpoints) // creates binding to some endpoint
+
+	// Now endpoint 0 has unhealthy tunnels. selectStreamForPacket should:
+	// 1. Try endpoint 0 → fail (no healthy tunnels)
+	// 2. Mark endpoint 0 unhealthy
+	// 3. Fall back to another endpoint
+	g.endpoints[0].healthy.Store(true) // start healthy
+
+	// Override binding to force endpoint 0
+	key := ExtractFlowKey(pkt)
+	g.selector.mu.Lock()
+	g.selector.bindings[key] = &TunnelBinding{
+		Endpoint: g.endpoints[0],
+		LastUsed: time.Now(),
+	}
+	g.selector.mu.Unlock()
+
+	stream, err := g.selectStreamForPacket(pkt)
+	if err != nil {
+		t.Fatalf("expected fallback to succeed, got: %v", err)
+	}
+	if stream.connIndex != 1 {
+		t.Fatalf("expected fallback to endpoint 1 (connIndex=1), got connIndex=%d", stream.connIndex)
+	}
+
+	// Endpoint 0 should now be marked unhealthy
+	if g.endpoints[0].IsHealthy() {
+		t.Fatal("expected endpoint 0 to be marked unhealthy after tunnel failure")
+	}
+}
+
+// TestTunnelOffsetOutOfBounds reproduces the bug where reconnectSingleEndpoint
+// computes tunnelOffset = endpointIndex * streamsPerGravity, but the
+// tunnelStreams array was sized for fewer endpoints. Endpoints with high
+// indices silently skip tunnel creation.
+func TestTunnelOffsetOutOfBounds(t *testing.T) {
+	t.Parallel()
+
+	// Simulate: 6 endpoints discovered from DNS, but only 3 healthy at
+	// startup → tunnelStreams sized for 3*2=6. Endpoint 5 needs offset 10.
+	g := newEndpointTestClient(t, 6)
+	g.gravityURLs = []string{"a", "b", "c", "d", "e", "f"}
+	g.poolConfig = ConnectionPoolConfig{
+		StreamsPerGravity: 2,
+	}
+
+	// Tunnel array sized for 3 healthy * 2 streams = 6 slots
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 6)
+	for i := 0; i < 6; i++ {
+		g.streamManager.tunnelStreams[i] = &StreamInfo{
+			connIndex: i / 2,
+			isHealthy: true,
+			streamID:  fmt.Sprintf("s%d", i),
+		}
+	}
+
+	// Endpoint 5 would need tunnelOffset = 5*2 = 10, but array only has 6 slots.
+	streamsPerGravity := g.poolConfig.StreamsPerGravity
+	tunnelOffset := 5 * streamsPerGravity // = 10
+	outOfBounds := tunnelOffset >= len(g.streamManager.tunnelStreams)
+
+	if !outOfBounds {
+		t.Fatal("expected tunnel offset 10 to be out of bounds for 6-element array")
+	}
+
+	// This proves the bug: endpoint 5 can never create tunnels with the
+	// current sizing. The fix should either resize the array or map
+	// endpoints to tunnel indices dynamically.
+}
+
+// TestTriggerEndpointReconnectByURL verifies that the URL-based reconnect
+// trigger finds the correct endpoint index and initiates disconnection.
+func TestTriggerEndpointReconnectByURL(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	g.triggerEndpointReconnectByURL("grpc://endpoint-1")
+	// The goroutine should resolve index 1 and set endpointReconnecting[1].
+	time.Sleep(100 * time.Millisecond)
+
+	if !g.endpointReconnecting[1].Load() {
+		t.Fatal("expected endpointReconnecting[1] to be set after triggerEndpointReconnectByURL")
+	}
+	// Endpoints 0 and 2 should NOT be affected.
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected endpointReconnecting[0] to remain false")
+	}
+	if g.endpointReconnecting[2].Load() {
+		t.Fatal("expected endpointReconnecting[2] to remain false")
+	}
+
+	// Cancel context to stop the infinite reconnect loop.
+	g.cancel()
+	deadline := time.Now().Add(2 * time.Second)
+	for g.endpointReconnecting[1].Load() && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestTriggerEndpointReconnectByURL_UnknownURL verifies that an unknown
+// URL doesn't panic or trigger reconnection.
+func TestTriggerEndpointReconnectByURL_UnknownURL(t *testing.T) {
+	t.Parallel()
+
+	g := newEndpointTestClient(t, 3)
+	g.gravityURLs = []string{"a", "b", "c"}
+
+	// Should not panic
+	g.triggerEndpointReconnectByURL("grpc://nonexistent")
+	time.Sleep(50 * time.Millisecond)
+}

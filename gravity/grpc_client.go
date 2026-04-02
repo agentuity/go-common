@@ -2790,6 +2790,38 @@ func (g *GravityClient) handleServerDisconnection(reason string) {
 	go g.attemptReconnection(reason)
 }
 
+// triggerEndpointReconnectByURL finds the endpoint index for a URL and
+// triggers disconnection + reconnection. Used when an endpoint has a
+// healthy control stream but no healthy tunnel streams.
+func (g *GravityClient) triggerEndpointReconnectByURL(url string) {
+	g.endpointsMu.RLock()
+	idx := -1
+	for i, ep := range g.endpoints {
+		if ep != nil && ep.URL == url {
+			idx = i
+			break
+		}
+	}
+	g.endpointsMu.RUnlock()
+	if idx < 0 {
+		return
+	}
+
+	// Dispatch to a goroutine that re-validates the URL before tearing down
+	// the endpoint. Between our lookup and the disconnect, the slot may have
+	// been recycled (reconnection replaced the endpoint). Re-checking avoids
+	// accidentally tearing down a newly-cycled healthy endpoint.
+	go func(expectedIdx int, expectedURL string) {
+		g.endpointsMu.RLock()
+		if expectedIdx >= len(g.endpoints) || g.endpoints[expectedIdx] == nil || g.endpoints[expectedIdx].URL != expectedURL {
+			g.endpointsMu.RUnlock()
+			return // endpoint was replaced — skip
+		}
+		g.endpointsMu.RUnlock()
+		g.handleEndpointDisconnection(expectedIdx, "no healthy tunnel streams")
+	}(idx, url)
+}
+
 func (g *GravityClient) handleEndpointDisconnection(endpointIndex int, reason string) {
 	g.mu.RLock()
 	if g.closing {
@@ -3912,11 +3944,24 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 	g.endpointsMu.RUnlock()
 
 	if selector != nil && len(endpoints) > 1 {
-		endpoint := selector.Select(payload, endpoints)
-		if endpoint == nil {
-			return nil, fmt.Errorf("no healthy gravity endpoints")
+		// Try up to len(endpoints) times to find one with healthy tunnels.
+		for attempt := 0; attempt < len(endpoints); attempt++ {
+			endpoint := selector.Select(payload, endpoints)
+			if endpoint == nil {
+				return nil, fmt.Errorf("no healthy gravity endpoints")
+			}
+			stream, err := g.selectStreamForEndpoint(payload, endpoint.URL)
+			if err == nil {
+				return stream, nil
+			}
+			// This endpoint has no healthy tunnels. Mark it unhealthy
+			// so the selector skips it on the next iteration, and
+			// trigger reconnection in the background.
+			endpoint.healthy.Store(false)
+			g.logger.Warn("endpoint %s has no healthy tunnels, marking unhealthy and triggering reconnect", endpoint.URL)
+			g.triggerEndpointReconnectByURL(endpoint.URL)
 		}
-		return g.selectStreamForEndpoint(payload, endpoint.URL)
+		return nil, fmt.Errorf("no healthy tunnel streams on any endpoint")
 	}
 
 	// Backward-compatible path: existing global stream selection.

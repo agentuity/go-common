@@ -53,6 +53,7 @@ type GravityConfig struct {
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)
 	DefaultServerName    string   // Fallback TLS ServerName when connecting via IP address (default: "gravity.agentuity.com")
+	UseMultiConnect      bool     // Use multiple connections to gravity
 
 	// DiscoveryResolveFunc is called periodically to re-resolve the set of
 	// available Gravity server URLs. If nil, no re-resolution or cycling occurs.

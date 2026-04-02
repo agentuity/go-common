@@ -99,6 +99,9 @@ func newEndpointTestClient(t *testing.T, n int) *GravityClient {
 		g.circuitBreakers[i] = NewCircuitBreaker(DefaultCircuitBreakerConfig())
 	}
 
+	// Set multiEndpointMode flag when we have multiple endpoints
+	g.multiEndpointMode.Store(n > 1)
+
 	return g
 }
 

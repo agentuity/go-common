@@ -215,6 +215,11 @@ type GravityClient struct {
 	peerCycleInterval     time.Duration
 	lastCycleTime         atomic.Int64 // unix timestamp of last cycle
 
+	// dnsLookupMulti is the function used to resolve hostnames during
+	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
+	// Overridable in tests.
+	dnsLookupMulti func(ctx context.Context, hostname string) (bool, []net.IP, error)
+
 	// Per-connection endpoint URL for multi-endpoint routing.
 	connectionURLs []string
 
@@ -3055,7 +3060,11 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 	}
 
 	// Re-resolve the original hostname
-	ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, originalHostname)
+	lookupFn := g.dnsLookupMulti
+	if lookupFn == nil {
+		lookupFn = dns.DefaultDNS.LookupMulti
+	}
+	ok, ips, err := lookupFn(g.context, originalHostname)
 	if err != nil || !ok || len(ips) == 0 {
 		g.logger.Debug("endpoint %d DNS re-resolve for %s failed: %v", endpointIndex, originalHostname, err)
 		return ""

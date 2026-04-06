@@ -36,6 +36,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials"
 	grpcgzip "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -605,6 +606,11 @@ func (g *GravityClient) Start() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
 			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                30 * time.Second, // ping every 30s if no activity
+				Timeout:             10 * time.Second, // wait 10s for pong before declaring dead
+				PermitWithoutStream: true,             // ping even with no active RPCs
+			}),
 		)
 		if err != nil {
 			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
@@ -885,6 +891,11 @@ func (g *GravityClient) startMultiEndpoint() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),
 			grpc.WithInitialConnWindowSize(4<<20),
+			grpc.WithKeepaliveParams(keepalive.ClientParameters{
+				Time:                30 * time.Second,
+				Timeout:             10 * time.Second,
+				PermitWithoutStream: true,
+			}),
 		)
 		if err != nil {
 			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
@@ -3176,6 +3187,11 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithInitialWindowSize(1<<20),
 		grpc.WithInitialConnWindowSize(4<<20),
+		grpc.WithKeepaliveParams(keepalive.ClientParameters{
+			Time:                30 * time.Second,
+			Timeout:             10 * time.Second,
+			PermitWithoutStream: true,
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)

@@ -2983,6 +2983,12 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	maxBackoff := 30 * time.Second
 	attempt := 0
 
+	// How many consecutive failures before re-resolving DNS. When ion
+	// machines are replaced during a rollout, the cached IP becomes stale
+	// and will never succeed. Re-resolving the original hostname via DNS
+	// discovers the new machine IPs.
+	const reResolveAfter = 5
+
 	for {
 		g.mu.RLock()
 		closing := g.closing
@@ -3000,6 +3006,15 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 			return
 		}
 
+		// After repeated failures, re-resolve DNS to discover new IPs.
+		// This handles ion rollouts where machines get new IP addresses.
+		if attempt%reResolveAfter == 0 {
+			if newURL := g.reResolveEndpointURL(endpointIndex, endpointURL); newURL != "" {
+				g.logger.Info("endpoint %d re-resolved DNS: %s → %s", endpointIndex, endpointURL, newURL)
+				endpointURL = newURL
+			}
+		}
+
 		// Jitter: 10% of backoff
 		jitter := time.Duration(float64(backoff) * 0.1 * (float64(time.Now().UnixNano()%100) / 100.0))
 		select {
@@ -3011,6 +3026,59 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 			return
 		}
 	}
+}
+
+// reResolveEndpointURL re-resolves DNS for an endpoint that was originally
+// resolved from a hostname to an IP. Returns the new URL if the IP changed,
+// or empty string if no change or re-resolution isn't applicable.
+func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL string) string {
+	// Get the original hostname from TLSServerName (set during initial DNS resolution)
+	g.endpointsMu.RLock()
+	var originalHostname string
+	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+		originalHostname = g.endpoints[endpointIndex].TLSServerName
+	}
+	g.endpointsMu.RUnlock()
+
+	if originalHostname == "" {
+		return "" // Not an IP-resolved endpoint, nothing to re-resolve
+	}
+
+	// Extract port from current URL
+	parsedHost, err := g.parseGRPCURL(currentURL)
+	if err != nil {
+		return ""
+	}
+	_, port, err := net.SplitHostPort(parsedHost)
+	if err != nil || port == "" {
+		port = "443"
+	}
+
+	// Re-resolve the original hostname
+	ok, ips, err := dns.DefaultDNS.LookupMulti(g.context, originalHostname)
+	if err != nil || !ok || len(ips) == 0 {
+		g.logger.Debug("endpoint %d DNS re-resolve for %s failed: %v", endpointIndex, originalHostname, err)
+		return ""
+	}
+
+	// Pick the first IP that differs from the current one (or just the first)
+	currentHost, _, _ := net.SplitHostPort(parsedHost)
+	for _, ip := range ips {
+		ipStr := ip.String()
+		if ipStr != currentHost {
+			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+			// Update the endpoint's URL so future reconnection attempts use it
+			g.endpointsMu.Lock()
+			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+				g.endpoints[endpointIndex].URL = newURL
+			}
+			g.endpointsMu.Unlock()
+			return newURL
+		}
+	}
+
+	// All resolved IPs are the same as current — no change
+	return ""
 }
 
 func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL string) error {

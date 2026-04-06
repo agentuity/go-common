@@ -2991,8 +2991,9 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	// How many consecutive failures before re-resolving DNS. When ion
 	// machines are replaced during a rollout, the cached IP becomes stale
 	// and will never succeed. Re-resolving the original hostname via DNS
-	// discovers the new machine IPs.
-	const reResolveAfter = 5
+	// discovers the new machine IPs. Set to 3 (not 5) because DNS may
+	// contain many stale IPs and we need to cycle through them quickly.
+	const reResolveAfter = 3
 
 	for {
 		g.mu.RLock()
@@ -3036,6 +3037,11 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 // reResolveEndpointURL re-resolves DNS for an endpoint that was originally
 // resolved from a hostname to an IP. Returns the new URL if the IP changed,
 // or empty string if no change or re-resolution isn't applicable.
+//
+// When DNS returns a mix of live and stale IPs (e.g., after multiple rollouts
+// without DNS cleanup), this function avoids IPs already in use by other
+// endpoints and skips the current failed IP. Each re-resolve call picks a
+// different candidate, cycling through the pool until a live one is found.
 func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL string) string {
 	// Get the original hostname from TLSServerName (set during initial DNS resolution)
 	g.endpointsMu.RLock()
@@ -3043,19 +3049,32 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 		originalHostname = g.endpoints[endpointIndex].TLSServerName
 	}
+	// Collect IPs already used by other endpoints so we don't pick a
+	// known-failing address that another endpoint is already retrying.
+	inUse := make(map[string]bool, len(g.endpoints))
+	for i, ep := range g.endpoints {
+		if ep == nil || i == endpointIndex {
+			continue
+		}
+		if parsed, err := g.parseGRPCURL(ep.URL); err == nil {
+			if h, _, splitErr := net.SplitHostPort(parsed); splitErr == nil {
+				inUse[h] = true
+			}
+		}
+	}
 	g.endpointsMu.RUnlock()
 
 	if originalHostname == "" {
 		return "" // Not an IP-resolved endpoint, nothing to re-resolve
 	}
 
-	// Extract port from current URL
+	// Extract port and current IP from URL
 	parsedHost, err := g.parseGRPCURL(currentURL)
 	if err != nil {
 		return ""
 	}
-	_, port, err := net.SplitHostPort(parsedHost)
-	if err != nil || port == "" {
+	currentHost, port, _ := net.SplitHostPort(parsedHost)
+	if port == "" {
 		port = "443"
 	}
 
@@ -3070,13 +3089,13 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		return ""
 	}
 
-	// Pick the first IP that differs from the current one (or just the first)
-	currentHost, _, _ := net.SplitHostPort(parsedHost)
+	// First pass: pick an IP that isn't our current one AND isn't already
+	// used by another endpoint. This maximizes the chance of hitting a new
+	// live machine rather than an IP another endpoint is already failing on.
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost {
+		if ipStr != currentHost && !inUse[ipStr] {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
-			// Update the endpoint's URL so future reconnection attempts use it
 			g.endpointsMu.Lock()
 			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 				g.endpoints[endpointIndex].URL = newURL
@@ -3086,7 +3105,23 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		}
 	}
 
-	// All resolved IPs are the same as current — no change
+	// Second pass: all unique IPs are taken by other endpoints. Pick any IP
+	// that differs from our current one (may overlap with another endpoint
+	// but at least we're not retrying the same dead address).
+	for _, ip := range ips {
+		ipStr := ip.String()
+		if ipStr != currentHost {
+			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+			g.endpointsMu.Lock()
+			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+				g.endpoints[endpointIndex].URL = newURL
+			}
+			g.endpointsMu.Unlock()
+			return newURL
+		}
+	}
+
+	// All resolved IPs are identical to current — no change
 	return ""
 }
 

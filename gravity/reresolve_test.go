@@ -2,6 +2,7 @@ package gravity
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -257,17 +258,17 @@ func TestReResolve_CalledAtCorrectInterval(t *testing.T) {
 
 	// Simulate the reconnectEndpoint modulo logic
 	endpointURL := "grpc://10.0.0.1:443"
-	for attempt := 1; attempt <= 15; attempt++ {
-		if attempt%5 == 0 {
+	for attempt := 1; attempt <= 9; attempt++ {
+		if attempt%3 == 0 {
 			if newURL := g.reResolveEndpointURL(0, endpointURL); newURL != "" {
 				endpointURL = newURL
 			}
 		}
 	}
 
-	// Should have been called 3 times (attempt 5, 10, 15)
+	// Should have been called 3 times (attempt 3, 6, 9)
 	if mock.callCount() != 3 {
-		t.Fatalf("expected 3 DNS lookups (at attempt 5, 10, 15), got %d", mock.callCount())
+		t.Fatalf("expected 3 DNS lookups (at attempt 3, 6, 9), got %d", mock.callCount())
 	}
 
 	// URL should have been updated on first re-resolve
@@ -405,5 +406,128 @@ func TestReResolve_SimulatesRollout(t *testing.T) {
 
 	if mock.callCount() != 3 {
 		t.Fatalf("expected 3 DNS calls, got %d", mock.callCount())
+	}
+}
+
+// --- Stale DNS pool: mix of live and dead IPs ---
+
+func TestReResolve_AvoidsIPsUsedByOtherEndpoints(t *testing.T) {
+	// 3 endpoints, all failed. DNS returns 4 IPs. Two are already in use
+	// by other endpoints. Each re-resolve should pick an IP not used by others.
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com", "10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4")
+
+	endpoints := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity.example.com"},
+	}
+	g := newReResolveTestClient(endpoints, mock)
+	defer g.cancel()
+
+	// Endpoint 0 re-resolves: should skip 10.0.0.1 (self), 10.0.0.2 (ep1), 10.0.0.3 (ep2) → pick 10.0.0.4
+	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+	if newURL != "grpc://10.0.0.4:443" {
+		t.Fatalf("expected 10.0.0.4 (only unused IP), got %q", newURL)
+	}
+}
+
+func TestReResolve_FallsBackToAnyDifferentIPWhenAllInUse(t *testing.T) {
+	// All resolved IPs are in use by other endpoints. Should still pick
+	// one that differs from current (even if overlapping with another endpoint).
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com", "10.0.0.1", "10.0.0.2", "10.0.0.3")
+
+	endpoints := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity.example.com"},
+	}
+	g := newReResolveTestClient(endpoints, mock)
+	defer g.cancel()
+
+	// All IPs are taken by other endpoints, but we still need to change
+	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+	// Should pick 10.0.0.2 (first that differs from self, even though ep1 has it)
+	if newURL != "grpc://10.0.0.2:443" {
+		t.Fatalf("expected fallback to 10.0.0.2, got %q", newURL)
+	}
+}
+
+func TestReResolve_StaleDNSPoolCycling(t *testing.T) {
+	// Simulates the real scenario: DNS returns 12 IPs, only 3 are live.
+	// 12 endpoints start with the 12 IPs. After failures, each should
+	// cycle to a different IP. After enough cycles, each endpoint should
+	// have tried most IPs in the pool.
+	mock := newMockDNSLookup()
+	// 12 IPs: 10.0.0.1-9 are dead, 10.0.1.1-3 are live
+	mock.setIPs("gravity.example.com",
+		"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4",
+		"10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8",
+		"10.0.0.9", "10.0.1.1", "10.0.1.2", "10.0.1.3",
+	)
+
+	endpoints := make([]*GravityEndpoint, 12)
+	for i := 0; i < 9; i++ {
+		endpoints[i] = &GravityEndpoint{
+			URL:           fmt.Sprintf("grpc://10.0.0.%d:443", i+1),
+			TLSServerName: "gravity.example.com",
+		}
+	}
+	endpoints[9] = &GravityEndpoint{URL: "grpc://10.0.1.1:443", TLSServerName: "gravity.example.com"}
+	endpoints[10] = &GravityEndpoint{URL: "grpc://10.0.1.2:443", TLSServerName: "gravity.example.com"}
+	endpoints[11] = &GravityEndpoint{URL: "grpc://10.0.1.3:443", TLSServerName: "gravity.example.com"}
+
+	g := newReResolveTestClient(endpoints, mock)
+	defer g.cancel()
+
+	// Simulate multiple re-resolve rounds for endpoint 0 (starts at 10.0.0.1)
+	currentURL := "grpc://10.0.0.1:443"
+	seen := map[string]bool{currentURL: true}
+	for round := 0; round < 15; round++ {
+		newURL := g.reResolveEndpointURL(0, currentURL)
+		if newURL != "" {
+			seen[newURL] = true
+			currentURL = newURL
+		}
+	}
+
+	// After 15 rounds of cycling, endpoint 0 should have visited multiple IPs.
+	// With 12 endpoints holding 12 unique IPs, the "avoid in-use" first pass
+	// won't find unused IPs, so the fallback pass picks any different IP.
+	// Over 15 rounds it will cycle through several.
+	if len(seen) < 2 {
+		t.Fatalf("expected endpoint to cycle through at least 2 IPs, only saw %d: %v", len(seen), seen)
+	}
+
+	// The key invariant: the endpoint never stays stuck on the same IP forever.
+	// It must have changed at least once.
+	if len(seen) == 1 {
+		t.Fatal("endpoint never changed IP — re-resolution is not cycling")
+	}
+}
+
+func TestReResolve_EachEndpointGetsDifferentIP(t *testing.T) {
+	// When 3 endpoints all re-resolve simultaneously, they should each
+	// pick a different IP from the pool (avoiding each other's IPs).
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com", "10.0.1.1", "10.0.1.2", "10.0.1.3", "10.0.1.4", "10.0.1.5")
+
+	endpoints := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"}, // dead
+		{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity.example.com"}, // dead
+		{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity.example.com"}, // dead
+	}
+	g := newReResolveTestClient(endpoints, mock)
+	defer g.cancel()
+
+	url0 := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+	url1 := g.reResolveEndpointURL(1, "grpc://10.0.0.2:443")
+	url2 := g.reResolveEndpointURL(2, "grpc://10.0.0.3:443")
+
+	// All should be different from each other (first pass avoids in-use IPs)
+	urls := map[string]bool{url0: true, url1: true, url2: true}
+	if len(urls) != 3 {
+		t.Fatalf("expected 3 unique URLs, got %d: %q %q %q", len(urls), url0, url1, url2)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"math/big"
 	mathrand "math/rand/v2"
 	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"runtime"
@@ -220,6 +221,11 @@ type GravityClient struct {
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
 	// Overridable in tests.
 	dnsLookupMulti func(ctx context.Context, hostname string) (bool, []net.IP, error)
+
+	// healthProbe is the function used to check if a gravity endpoint is
+	// alive before connecting. Defaults to probeHealthEndpoint (HTTP probe).
+	// Overridable in tests to avoid real network calls.
+	healthProbe func(host, port string) bool
 
 	// Per-connection endpoint URL for multi-endpoint routing.
 	connectionURLs []string
@@ -753,15 +759,41 @@ func (g *GravityClient) startMultiEndpoint() error {
 				continue
 			}
 			if ok && len(ips) > 0 {
+				// Health-probe each resolved IP to filter dead/unready nodes.
+				// This avoids creating endpoints for IPs that are unreachable
+				// (stale DNS records from previous rollouts).
+				var healthy, unhealthy int
 				for _, ip := range ips {
-					// Use net.JoinHostPort to properly bracket IPv6 addresses
-					hostPort := net.JoinHostPort(ip.String(), port)
+					ipStr := ip.String()
+					if !g.probeHealthEndpoint(ipStr, port) {
+						unhealthy++
+						g.logger.Debug("startup health probe failed for %s — skipping", ipStr)
+						continue
+					}
+					healthy++
+					hostPort := net.JoinHostPort(ipStr, port)
 					ep := &GravityEndpoint{
 						URL:           "grpc://" + hostPort,
 						TLSServerName: hostname, // preserve original hostname for TLS SNI
 					}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
+				}
+				if healthy == 0 && unhealthy > 0 {
+					// All probes failed — fall back to using all IPs unfiltered.
+					// Better to try than to have zero endpoints.
+					g.logger.Warn("all %d health probes failed for %s — using all IPs unfiltered", unhealthy, hostname)
+					for _, ip := range ips {
+						hostPort := net.JoinHostPort(ip.String(), port)
+						ep := &GravityEndpoint{
+							URL:           "grpc://" + hostPort,
+							TLSServerName: hostname,
+						}
+						ep.healthy.Store(false)
+						g.endpoints = append(g.endpoints, ep)
+					}
+				} else if unhealthy > 0 {
+					g.logger.Info("startup health probes: %d healthy, %d unhealthy (filtered) for %s", healthy, unhealthy, hostname)
 				}
 			} else {
 				// DNS returned no IPs, fall back to original URL
@@ -3100,13 +3132,15 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		return ""
 	}
 
-	// First pass: pick an IP that isn't our current one AND isn't already
-	// used by another endpoint. This maximizes the chance of hitting a new
-	// live machine rather than an IP another endpoint is already failing on.
+	// First pass: pick an IP that passes the health check, isn't our current
+	// one, and isn't used by another endpoint. The health probe (3s timeout)
+	// instantly filters dead/unready IPs instead of waiting 20s for a gRPC
+	// dial timeout.
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost && !inUse[ipStr] {
+		if ipStr != currentHost && !inUse[ipStr] && g.probeHealthEndpoint(ipStr, port) {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+			g.logger.Info("endpoint %d health probe passed for %s", endpointIndex, ipStr)
 			g.endpointsMu.Lock()
 			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 				g.endpoints[endpointIndex].URL = newURL
@@ -3116,13 +3150,28 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		}
 	}
 
-	// Second pass: all unique IPs are taken by other endpoints. Pick any IP
-	// that differs from our current one (may overlap with another endpoint
-	// but at least we're not retrying the same dead address).
+	// Second pass: relax the in-use constraint but still require health.
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost {
+		if ipStr != currentHost && g.probeHealthEndpoint(ipStr, port) {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+			g.logger.Info("endpoint %d health probe passed for %s (overlapping with another endpoint)", endpointIndex, ipStr)
+			g.endpointsMu.Lock()
+			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+				g.endpoints[endpointIndex].URL = newURL
+			}
+			g.endpointsMu.Unlock()
+			return newURL
+		}
+	}
+
+	// Third pass: no healthy IPs found. Pick any different IP without probe
+	// as a last resort (maybe the health endpoint is down but gRPC works).
+	for _, ip := range ips {
+		ipStr := ip.String()
+		if ipStr != currentHost && !inUse[ipStr] {
+			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+			g.logger.Warn("endpoint %d no healthy IPs found, falling back to %s without probe", endpointIndex, ipStr)
 			g.endpointsMu.Lock()
 			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 				g.endpoints[endpointIndex].URL = newURL
@@ -3134,6 +3183,33 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 
 	// All resolved IPs are identical to current — no change
 	return ""
+}
+
+// probeHealthEndpoint checks if a gravity endpoint is alive and ready by
+// hitting its HTTP health check endpoint. Returns true if the endpoint
+// responds with 200, false for any error, timeout, or non-200 status.
+// This filters dead/unready IPs before attempting expensive gRPC connections.
+func (g *GravityClient) probeHealthEndpoint(host, port string) bool {
+	// Use injectable probe function if set (for tests)
+	if g.healthProbe != nil {
+		return g.healthProbe(host, port)
+	}
+	// Use port 80 for the HTTP health check (matches NLB probe path).
+	// The /__health endpoint works without TLS.
+	probeURL := "http://" + net.JoinHostPort(host, "80") + "/__health"
+	ctx, cancel := context.WithTimeout(g.context, 3*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200
 }
 
 func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL string) error {

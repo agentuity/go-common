@@ -3132,13 +3132,21 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		return ""
 	}
 
-	// First pass: pick an IP that passes the health check, isn't our current
-	// one, and isn't used by another endpoint. The health probe (3s timeout)
-	// instantly filters dead/unready IPs instead of waiting 20s for a gRPC
-	// dial timeout.
+	// Precompute health probe results once per IP to avoid duplicate 3s probes
+	// across the multi-pass selection below.
+	probeOK := make(map[string]bool, len(ips))
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost && !inUse[ipStr] && g.probeHealthEndpoint(ipStr, port) {
+		if ipStr == currentHost {
+			continue // skip self — we already know it's failing
+		}
+		probeOK[ipStr] = g.probeHealthEndpoint(ipStr, port)
+	}
+
+	// First pass: healthy + not in use by another endpoint (best case).
+	for _, ip := range ips {
+		ipStr := ip.String()
+		if ipStr != currentHost && !inUse[ipStr] && probeOK[ipStr] {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
 			g.logger.Info("endpoint %d health probe passed for %s", endpointIndex, ipStr)
 			g.endpointsMu.Lock()
@@ -3150,10 +3158,10 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		}
 	}
 
-	// Second pass: relax the in-use constraint but still require health.
+	// Second pass: healthy but may overlap with another endpoint.
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost && g.probeHealthEndpoint(ipStr, port) {
+		if ipStr != currentHost && probeOK[ipStr] {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
 			g.logger.Info("endpoint %d health probe passed for %s (overlapping with another endpoint)", endpointIndex, ipStr)
 			g.endpointsMu.Lock()
@@ -3166,10 +3174,10 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 	}
 
 	// Third pass: no healthy IPs found. Pick any different IP without probe
-	// as a last resort (maybe the health endpoint is down but gRPC works).
+	// (maybe the health endpoint is down but gRPC works). Allow overlap.
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost && !inUse[ipStr] {
+		if ipStr != currentHost {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
 			g.logger.Warn("endpoint %d no healthy IPs found, falling back to %s without probe", endpointIndex, ipStr)
 			g.endpointsMu.Lock()

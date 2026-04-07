@@ -63,6 +63,10 @@ func newReResolveTestClient(endpoints []*GravityEndpoint, mock *mockDNSLookup) *
 		healthProbe:    func(host, port string) bool { return true }, // skip real HTTP probes in tests
 	}
 	g.endpoints = endpoints
+	// In multi-endpoint mode, overlapping IPs are forbidden
+	if len(endpoints) > 1 {
+		g.multiEndpointMode.Store(true)
+	}
 	return g
 }
 
@@ -433,9 +437,10 @@ func TestReResolve_AvoidsIPsUsedByOtherEndpoints(t *testing.T) {
 	}
 }
 
-func TestReResolve_FallsBackToAnyDifferentIPWhenAllInUse(t *testing.T) {
-	// All resolved IPs are in use by other endpoints. Should still pick
-	// one that differs from current (even if overlapping with another endpoint).
+func TestReResolve_RejectsOverlapInMultiEndpointMode(t *testing.T) {
+	// All resolved IPs are in use by other endpoints. In multi-endpoint mode,
+	// overlapping is forbidden — connecting two endpoints to the same ion
+	// provides no redundancy. Should return empty (wait for DNS to change).
 	mock := newMockDNSLookup()
 	mock.setIPs("gravity.example.com", "10.0.0.1", "10.0.0.2", "10.0.0.3")
 
@@ -447,45 +452,36 @@ func TestReResolve_FallsBackToAnyDifferentIPWhenAllInUse(t *testing.T) {
 	g := newReResolveTestClient(endpoints, mock)
 	defer g.cancel()
 
-	// All IPs are taken by other endpoints, but we still need to change
+	// All IPs taken — multi-endpoint mode should NOT overlap
 	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
-	// Should pick 10.0.0.2 (first that differs from self, even though ep1 has it)
-	if newURL != "grpc://10.0.0.2:443" {
-		t.Fatalf("expected fallback to 10.0.0.2, got %q", newURL)
+	if newURL != "" {
+		t.Fatalf("expected empty (no unique IP available in multi-endpoint mode), got %q", newURL)
 	}
 }
 
 func TestReResolve_StaleDNSPoolCycling(t *testing.T) {
-	// Simulates the real scenario: DNS returns 12 IPs, only 3 are live.
-	// 12 endpoints start with the 12 IPs. After failures, each should
-	// cycle to a different IP. After enough cycles, each endpoint should
-	// have tried most IPs in the pool.
+	// Realistic scenario: 3 endpoints (MaxGravityPeers=3), DNS returns 12 IPs.
+	// Only 3 IPs are live. Each endpoint starts with a dead IP. After
+	// re-resolution, each should find a unique live IP.
 	mock := newMockDNSLookup()
-	// 12 IPs: 10.0.0.1-9 are dead, 10.0.1.1-3 are live
 	mock.setIPs("gravity.example.com",
 		"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4",
 		"10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8",
 		"10.0.0.9", "10.0.1.1", "10.0.1.2", "10.0.1.3",
 	)
 
-	endpoints := make([]*GravityEndpoint, 12)
-	for i := 0; i < 9; i++ {
-		endpoints[i] = &GravityEndpoint{
-			URL:           fmt.Sprintf("grpc://10.0.0.%d:443", i+1),
-			TLSServerName: "gravity.example.com",
-		}
+	endpoints := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity.example.com"},
 	}
-	endpoints[9] = &GravityEndpoint{URL: "grpc://10.0.1.1:443", TLSServerName: "gravity.example.com"}
-	endpoints[10] = &GravityEndpoint{URL: "grpc://10.0.1.2:443", TLSServerName: "gravity.example.com"}
-	endpoints[11] = &GravityEndpoint{URL: "grpc://10.0.1.3:443", TLSServerName: "gravity.example.com"}
-
 	g := newReResolveTestClient(endpoints, mock)
 	defer g.cancel()
 
-	// Simulate multiple re-resolve rounds for endpoint 0 (starts at 10.0.0.1)
+	// Simulate re-resolve for endpoint 0 — should cycle through unused IPs
 	currentURL := "grpc://10.0.0.1:443"
 	seen := map[string]bool{currentURL: true}
-	for round := 0; round < 15; round++ {
+	for round := 0; round < 10; round++ {
 		newURL := g.reResolveEndpointURL(0, currentURL)
 		if newURL != "" {
 			seen[newURL] = true
@@ -493,18 +489,10 @@ func TestReResolve_StaleDNSPoolCycling(t *testing.T) {
 		}
 	}
 
-	// After 15 rounds of cycling, endpoint 0 should have visited multiple IPs.
-	// With 12 endpoints holding 12 unique IPs, the "avoid in-use" first pass
-	// won't find unused IPs, so the fallback pass picks any different IP.
-	// Over 15 rounds it will cycle through several.
+	// With 3 endpoints using 3 IPs and 12 in DNS, there are 9 unused IPs.
+	// Re-resolution should find different IPs each time.
 	if len(seen) < 2 {
 		t.Fatalf("expected endpoint to cycle through at least 2 IPs, only saw %d: %v", len(seen), seen)
-	}
-
-	// The key invariant: the endpoint never stays stuck on the same IP forever.
-	// It must have changed at least once.
-	if len(seen) == 1 {
-		t.Fatal("endpoint never changed IP — re-resolution is not cycling")
 	}
 }
 

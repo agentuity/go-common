@@ -60,6 +60,7 @@ func newReResolveTestClient(endpoints []*GravityEndpoint, mock *mockDNSLookup) *
 			MaxGravityPeers: 3,
 		},
 		dnsLookupMulti: mock.lookupMulti,
+		healthProbe:    func(host, port string) bool { return true }, // skip real HTTP probes in tests
 	}
 	g.endpoints = endpoints
 	return g
@@ -529,5 +530,198 @@ func TestReResolve_EachEndpointGetsDifferentIP(t *testing.T) {
 	urls := map[string]bool{url0: true, url1: true, url2: true}
 	if len(urls) != 3 {
 		t.Fatalf("expected 3 unique URLs, got %d: %q %q %q", len(urls), url0, url1, url2)
+	}
+}
+
+// --- Health probe filtering ---
+
+func TestReResolve_HealthProbeFiltersDeadIPs(t *testing.T) {
+	// DNS returns 4 IPs. Health probe only passes for 10.0.1.1.
+	// reResolveEndpointURL should skip dead IPs and pick the healthy one.
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com", "10.0.0.2", "10.0.0.3", "10.0.1.1", "10.0.0.4")
+
+	liveIPs := map[string]bool{"10.0.1.1": true}
+
+	ep := &GravityEndpoint{
+		URL:           "grpc://10.0.0.1:443",
+		TLSServerName: "gravity.example.com",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := &GravityClient{
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger.NewTestLogger(),
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 3,
+		},
+		dnsLookupMulti: mock.lookupMulti,
+		healthProbe: func(host, port string) bool {
+			return liveIPs[host]
+		},
+	}
+	g.endpoints = []*GravityEndpoint{ep}
+
+	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+
+	if newURL != "grpc://10.0.1.1:443" {
+		t.Fatalf("expected healthy IP 10.0.1.1, got %q", newURL)
+	}
+}
+
+func TestReResolve_HealthProbeAllDeadFallsBack(t *testing.T) {
+	// DNS returns 3 IPs. All health probes fail.
+	// Should fall back to picking any different IP without probe.
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com", "10.0.0.2", "10.0.0.3", "10.0.0.4")
+
+	ep := &GravityEndpoint{
+		URL:           "grpc://10.0.0.1:443",
+		TLSServerName: "gravity.example.com",
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := &GravityClient{
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger.NewTestLogger(),
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 3,
+		},
+		dnsLookupMulti: mock.lookupMulti,
+		healthProbe: func(host, port string) bool {
+			return false // all dead
+		},
+	}
+	g.endpoints = []*GravityEndpoint{ep}
+
+	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+
+	// Should still pick a different IP (fallback without probe)
+	if newURL == "" || newURL == "grpc://10.0.0.1:443" {
+		t.Fatalf("expected fallback to any different IP, got %q", newURL)
+	}
+}
+
+func TestReResolve_HealthProbeSimulatesRollout(t *testing.T) {
+	// 12 IPs from DNS: 9 dead (old rollouts), 3 live (new ions).
+	// Health probes should find the 3 live ones and each endpoint
+	// should connect to a healthy IP.
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity.example.com",
+		"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4",
+		"10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8",
+		"10.0.0.9", "10.0.1.1", "10.0.1.2", "10.0.1.3",
+	)
+
+	liveIPs := map[string]bool{"10.0.1.1": true, "10.0.1.2": true, "10.0.1.3": true}
+
+	endpoints := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity.example.com"},
+		{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity.example.com"},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := &GravityClient{
+		ctx:    ctx,
+		cancel: cancel,
+		logger: logger.NewTestLogger(),
+		poolConfig: ConnectionPoolConfig{
+			MaxGravityPeers: 3,
+		},
+		dnsLookupMulti: mock.lookupMulti,
+		healthProbe: func(host, port string) bool {
+			return liveIPs[host]
+		},
+	}
+	g.endpoints = endpoints
+
+	url0 := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
+	url1 := g.reResolveEndpointURL(1, "grpc://10.0.0.2:443")
+	url2 := g.reResolveEndpointURL(2, "grpc://10.0.0.3:443")
+
+	// All 3 should connect to live IPs
+	validURLs := map[string]bool{
+		"grpc://10.0.1.1:443": true,
+		"grpc://10.0.1.2:443": true,
+		"grpc://10.0.1.3:443": true,
+	}
+	for i, u := range []string{url0, url1, url2} {
+		if !validURLs[u] {
+			t.Fatalf("endpoint %d got %q, expected one of the 3 live IPs", i, u)
+		}
+	}
+
+	// All 3 should be different (avoid-in-use logic)
+	urls := map[string]bool{url0: true, url1: true, url2: true}
+	if len(urls) != 3 {
+		t.Fatalf("expected 3 unique URLs, got %d: %q %q %q", len(urls), url0, url1, url2)
+	}
+}
+
+// --- Adaptive peer discovery ---
+
+func TestCountHealthyEndpoints(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ep0 := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
+	ep1 := &GravityEndpoint{URL: "grpc://10.0.0.2:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://10.0.0.3:443"}
+	ep0.healthy.Store(true)
+	ep1.healthy.Store(false)
+	ep2.healthy.Store(true)
+
+	g := &GravityClient{
+		ctx:       ctx,
+		cancel:    cancel,
+		endpoints: []*GravityEndpoint{ep0, ep1, ep2},
+	}
+
+	if g.countHealthyEndpoints() != 2 {
+		t.Fatalf("expected 2 healthy, got %d", g.countHealthyEndpoints())
+	}
+}
+
+func TestCountHealthyEndpoints_NoneHealthy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eps := make([]*GravityEndpoint, 3)
+	for i := range eps {
+		eps[i] = &GravityEndpoint{URL: fmt.Sprintf("grpc://10.0.0.%d:443", i+1)}
+	}
+
+	g := &GravityClient{ctx: ctx, cancel: cancel, endpoints: eps}
+	if g.countHealthyEndpoints() != 0 {
+		t.Fatal("expected 0")
+	}
+}
+
+func TestCountHealthyEndpoints_Empty(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := &GravityClient{ctx: ctx, cancel: cancel}
+	if g.countHealthyEndpoints() != 0 {
+		t.Fatal("expected 0 for no endpoints")
+	}
+}
+
+func TestCountHealthyEndpoints_WithNilEntries(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ep := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
+	ep.healthy.Store(true)
+
+	g := &GravityClient{
+		ctx:       ctx,
+		cancel:    cancel,
+		endpoints: []*GravityEndpoint{nil, ep, nil},
+	}
+	if g.countHealthyEndpoints() != 1 {
+		t.Fatal("expected 1 with nil entries")
 	}
 }

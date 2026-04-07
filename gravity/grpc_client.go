@@ -215,7 +215,8 @@ type GravityClient struct {
 	discoveryResolveFunc  func() []string
 	peerDiscoveryInterval time.Duration
 	peerCycleInterval     time.Duration
-	lastCycleTime         atomic.Int64 // unix timestamp of last cycle
+	lastCycleTime         atomic.Int64  // unix timestamp of last cycle
+	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
 
 	// dnsLookupMulti is the function used to resolve hostnames during
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
@@ -435,6 +436,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		discoveryResolveFunc:   config.DiscoveryResolveFunc,
 		peerDiscoveryInterval:  config.PeerDiscoveryInterval,
 		peerCycleInterval:      config.PeerCycleInterval,
+		peerDiscoveryWake:      make(chan struct{}, 1),
 		ecdsaPrivateKey:        config.ECDSAPrivateKey,
 		instanceID:             config.InstanceID,
 		ip4Address:             config.IP4Address,
@@ -1105,32 +1107,46 @@ func (g *GravityClient) peerDiscoveryLoop() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	adjustInterval := func() {
+		healthyCount := g.countHealthyEndpoints()
+		var newInterval time.Duration
+		if healthyCount < maxPeers {
+			newInterval = seekInterval
+		} else {
+			newInterval = idleInterval
+		}
+		if newInterval != interval {
+			if newInterval == seekInterval {
+				g.logger.Info("peer discovery: under capacity (%d/%d healthy) — seeking every %s", healthyCount, maxPeers, seekInterval)
+			} else {
+				g.logger.Info("peer discovery: at capacity (%d/%d healthy) — idling every %s", healthyCount, maxPeers, idleInterval)
+			}
+			interval = newInterval
+			ticker.Reset(interval)
+		}
+	}
+
 	for {
 		select {
 		case <-g.ctx.Done():
 			return
+		case <-g.peerDiscoveryWake:
+			// Woken by an endpoint going unhealthy — re-check immediately.
+			g.checkPeerDiscovery(cycleInterval)
+			adjustInterval()
 		case <-ticker.C:
 			g.checkPeerDiscovery(cycleInterval)
-
-			// Adaptive interval: seek aggressively when under capacity,
-			// idle when at capacity.
-			healthyCount := g.countHealthyEndpoints()
-			var newInterval time.Duration
-			if healthyCount < maxPeers {
-				newInterval = seekInterval
-			} else {
-				newInterval = idleInterval
-			}
-			if newInterval != interval {
-				if newInterval == seekInterval {
-					g.logger.Info("peer discovery: under capacity (%d/%d healthy) — seeking every %s", healthyCount, maxPeers, seekInterval)
-				} else {
-					g.logger.Info("peer discovery: at capacity (%d/%d healthy) — idling every %s", healthyCount, maxPeers, idleInterval)
-				}
-				interval = newInterval
-				ticker.Reset(interval)
-			}
+			adjustInterval()
 		}
+	}
+}
+
+// wakePeerDiscovery signals the peer discovery loop to re-check immediately.
+// Non-blocking — safe to call from any goroutine.
+func (g *GravityClient) wakePeerDiscovery() {
+	select {
+	case g.peerDiscoveryWake <- struct{}{}:
+	default:
 	}
 }
 
@@ -3005,6 +3021,7 @@ func (g *GravityClient) disconnectEndpointStreams(endpointIndex int) {
 	g.endpointsMu.RLock()
 	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 		g.endpoints[endpointIndex].healthy.Store(false)
+		g.wakePeerDiscovery()
 	}
 	g.endpointsMu.RUnlock()
 
@@ -3304,7 +3321,9 @@ func (g *GravityClient) doHealthProbe(probeURL string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer resp.Body.Close()
+	// Drain body so the HTTP transport can reuse the connection.
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 	return resp.StatusCode, nil
 }
 
@@ -4274,6 +4293,7 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 			endpoint.healthy.Store(false)
 			g.logger.Warn("endpoint %s has no healthy tunnels, marking unhealthy and triggering reconnect", endpoint.URL)
 			g.triggerEndpointReconnectByURL(endpoint.URL)
+			g.wakePeerDiscovery()
 		}
 		return nil, fmt.Errorf("no healthy tunnel streams on any endpoint")
 	}

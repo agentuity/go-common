@@ -660,3 +660,68 @@ func TestReResolve_HealthProbeSimulatesRollout(t *testing.T) {
 		t.Fatalf("expected 3 unique URLs, got %d: %q %q %q", len(urls), url0, url1, url2)
 	}
 }
+
+// --- Adaptive peer discovery ---
+
+func TestCountHealthyEndpoints(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ep0 := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
+	ep1 := &GravityEndpoint{URL: "grpc://10.0.0.2:443"}
+	ep2 := &GravityEndpoint{URL: "grpc://10.0.0.3:443"}
+	ep0.healthy.Store(true)
+	ep1.healthy.Store(false)
+	ep2.healthy.Store(true)
+
+	g := &GravityClient{
+		ctx:       ctx,
+		cancel:    cancel,
+		endpoints: []*GravityEndpoint{ep0, ep1, ep2},
+	}
+
+	if g.countHealthyEndpoints() != 2 {
+		t.Fatalf("expected 2 healthy, got %d", g.countHealthyEndpoints())
+	}
+}
+
+func TestCountHealthyEndpoints_NoneHealthy(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	eps := make([]*GravityEndpoint, 3)
+	for i := range eps {
+		eps[i] = &GravityEndpoint{URL: fmt.Sprintf("grpc://10.0.0.%d:443", i+1)}
+	}
+
+	g := &GravityClient{ctx: ctx, cancel: cancel, endpoints: eps}
+	if g.countHealthyEndpoints() != 0 {
+		t.Fatal("expected 0")
+	}
+}
+
+func TestCountHealthyEndpoints_Empty(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	g := &GravityClient{ctx: ctx, cancel: cancel}
+	if g.countHealthyEndpoints() != 0 {
+		t.Fatal("expected 0 for no endpoints")
+	}
+}
+
+func TestCountHealthyEndpoints_WithNilEntries(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ep := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
+	ep.healthy.Store(true)
+
+	g := &GravityClient{
+		ctx:       ctx,
+		cancel:    cancel,
+		endpoints: []*GravityEndpoint{nil, ep, nil},
+	}
+	if g.countHealthyEndpoints() != 1 {
+		t.Fatal("expected 1 with nil entries")
+	}
+}

@@ -1083,16 +1083,26 @@ func (g *GravityClient) bindingCleanupLoop() {
 }
 
 func (g *GravityClient) peerDiscoveryLoop() {
-	discoveryInterval := g.peerDiscoveryInterval
-	if discoveryInterval <= 0 {
-		discoveryInterval = DefaultPeerDiscoveryInterval
+	idleInterval := g.peerDiscoveryInterval
+	if idleInterval <= 0 {
+		idleInterval = DefaultPeerDiscoveryInterval
 	}
 	cycleInterval := g.peerCycleInterval
 	if cycleInterval <= 0 {
 		cycleInterval = DefaultPeerCycleInterval
 	}
 
-	ticker := time.NewTicker(discoveryInterval)
+	// Seek interval is used when under capacity (healthy < MaxGravityPeers).
+	// Aggressive enough to fill quickly, not so fast it hammers DNS.
+	const seekInterval = 10 * time.Second
+
+	maxPeers := g.poolConfig.MaxGravityPeers
+	if maxPeers <= 0 {
+		maxPeers = DefaultMaxGravityPeers
+	}
+
+	interval := seekInterval // start seeking
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -1101,8 +1111,40 @@ func (g *GravityClient) peerDiscoveryLoop() {
 			return
 		case <-ticker.C:
 			g.checkPeerDiscovery(cycleInterval)
+
+			// Adaptive interval: seek aggressively when under capacity,
+			// idle when at capacity.
+			healthyCount := g.countHealthyEndpoints()
+			var newInterval time.Duration
+			if healthyCount < maxPeers {
+				newInterval = seekInterval
+			} else {
+				newInterval = idleInterval
+			}
+			if newInterval != interval {
+				if newInterval == seekInterval {
+					g.logger.Info("peer discovery: under capacity (%d/%d healthy) — seeking every %s", healthyCount, maxPeers, seekInterval)
+				} else {
+					g.logger.Info("peer discovery: at capacity (%d/%d healthy) — idling every %s", healthyCount, maxPeers, idleInterval)
+				}
+				interval = newInterval
+				ticker.Reset(interval)
+			}
 		}
 	}
+}
+
+// countHealthyEndpoints returns the number of endpoints with healthy=true.
+func (g *GravityClient) countHealthyEndpoints() int {
+	g.endpointsMu.RLock()
+	defer g.endpointsMu.RUnlock()
+	count := 0
+	for _, ep := range g.endpoints {
+		if ep != nil && ep.healthy.Load() {
+			count++
+		}
+	}
+	return count
 }
 
 func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
@@ -3196,28 +3238,74 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 // probeHealthEndpoint checks if a gravity endpoint is alive and ready by
 // hitting its HTTP health check endpoint. Returns true if the endpoint
 // responds with 200, false for any error, timeout, or non-200 status.
-// This filters dead/unready IPs before attempting expensive gRPC connections.
+//
+// Distinguishes dead nodes (timeout/connection refused → give up immediately)
+// from starting nodes (503 → retry for up to 15s). This handles the race
+// where hadron probes ions during their startup grace period.
 func (g *GravityClient) probeHealthEndpoint(host, port string) bool {
 	// Use injectable probe function if set (for tests)
 	if g.healthProbe != nil {
 		return g.healthProbe(host, port)
 	}
-	// Use port 80 for the HTTP health check (matches NLB probe path).
-	// The /__health endpoint works without TLS.
 	probeURL := "http://" + net.JoinHostPort(host, "80") + "/__health"
+
+	// First probe with short timeout to classify the endpoint.
+	status, err := g.doHealthProbe(probeURL)
+	if err != nil {
+		return false // timeout or connection refused → dead
+	}
+	if status == 200 {
+		return true // healthy
+	}
+	if status != 503 {
+		return false // unexpected status → don't retry
+	}
+
+	// 503 = alive but starting. Poll until ready (up to 15s).
+	// The ion's gravity readiness gate returns 503 for at most 10s
+	// (grace period), so 15s gives comfortable margin.
+	g.logger.Debug("health probe %s returned 503 (starting) — waiting for readiness", host)
+	deadline := time.After(15 * time.Second)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-deadline:
+			g.logger.Warn("health probe %s still 503 after 15s — giving up", host)
+			return false
+		case <-g.context.Done():
+			return false
+		case <-ticker.C:
+			status, err := g.doHealthProbe(probeURL)
+			if err != nil {
+				return false // went from 503 to unreachable → dead
+			}
+			if status == 200 {
+				g.logger.Info("health probe %s now ready (was 503)", host)
+				return true
+			}
+			// Still 503, keep polling
+		}
+	}
+}
+
+// doHealthProbe performs a single HTTP health check with 3s timeout.
+// Returns the HTTP status code and any error (timeout, connection refused, etc.)
+func (g *GravityClient) doHealthProbe(probeURL string) (int, error) {
 	ctx, cancel := context.WithTimeout(g.context, 3*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "GET", probeURL, nil)
 	if err != nil {
-		return false
+		return 0, err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false
+		return 0, err
 	}
 	defer resp.Body.Close()
-	return resp.StatusCode == 200
+	return resp.StatusCode, nil
 }
 
 func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL string) error {

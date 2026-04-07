@@ -762,11 +762,23 @@ func (g *GravityClient) startMultiEndpoint() error {
 			}
 			if ok && len(ips) > 0 {
 				// Health-probe each resolved IP to filter dead/unready nodes.
-				// This avoids creating endpoints for IPs that are unreachable
-				// (stale DNS records from previous rollouts).
+				// Deduplicate IPs and cap at MaxGravityPeers to ensure each
+				// endpoint connects to a distinct ion for true redundancy.
+				maxPeers := g.poolConfig.MaxGravityPeers
+				if maxPeers <= 0 {
+					maxPeers = DefaultMaxGravityPeers
+				}
+				seen := make(map[string]bool, len(ips))
 				var healthy, unhealthy int
 				for _, ip := range ips {
+					if len(g.endpoints) >= maxPeers {
+						break // capped at MaxGravityPeers
+					}
 					ipStr := ip.String()
+					if seen[ipStr] {
+						continue // dedupe
+					}
+					seen[ipStr] = true
 					if !g.probeHealthEndpoint(ipStr, port) {
 						unhealthy++
 						g.logger.Debug("startup health probe failed for %s — skipping", ipStr)
@@ -776,17 +788,25 @@ func (g *GravityClient) startMultiEndpoint() error {
 					hostPort := net.JoinHostPort(ipStr, port)
 					ep := &GravityEndpoint{
 						URL:           "grpc://" + hostPort,
-						TLSServerName: hostname, // preserve original hostname for TLS SNI
+						TLSServerName: hostname,
 					}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
 				}
 				if healthy == 0 && unhealthy > 0 {
-					// All probes failed — fall back to using all IPs unfiltered.
-					// Better to try than to have zero endpoints.
-					g.logger.Warn("all %d health probes failed for %s — using all IPs unfiltered", unhealthy, hostname)
+					// All probes failed — fall back to using up to maxPeers unique IPs.
+					g.logger.Warn("all %d health probes failed for %s — using up to %d IPs unfiltered", unhealthy, hostname, maxPeers)
+					seen = make(map[string]bool, len(ips))
 					for _, ip := range ips {
-						hostPort := net.JoinHostPort(ip.String(), port)
+						if len(g.endpoints) >= maxPeers {
+							break
+						}
+						ipStr := ip.String()
+						if seen[ipStr] {
+							continue
+						}
+						seen[ipStr] = true
+						hostPort := net.JoinHostPort(ipStr, port)
 						ep := &GravityEndpoint{
 							URL:           "grpc://" + hostPort,
 							TLSServerName: hostname,
@@ -3202,6 +3222,11 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		probeOK[ipStr] = g.probeHealthEndpoint(ipStr, port)
 	}
 
+	// In multi-endpoint mode, NEVER connect two endpoints to the same IP.
+	// Having multiple connections to the same ion provides no redundancy —
+	// if that ion dies, ALL overlapping endpoints go down simultaneously.
+	multiMode := g.multiEndpointMode.Load()
+
 	// First pass: healthy + not in use by another endpoint (best case).
 	for _, ip := range ips {
 		ipStr := ip.String()
@@ -3217,26 +3242,30 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		}
 	}
 
-	// Second pass: healthy but may overlap with another endpoint.
-	for _, ip := range ips {
-		ipStr := ip.String()
-		if ipStr != currentHost && probeOK[ipStr] {
-			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
-			g.logger.Info("endpoint %d health probe passed for %s (overlapping with another endpoint)", endpointIndex, ipStr)
-			g.endpointsMu.Lock()
-			if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
-				g.endpoints[endpointIndex].URL = newURL
+	// Second pass: healthy but no unique IP available. Only allow overlap
+	// in single-endpoint mode. In multi-endpoint mode, overlapping defeats
+	// the purpose of having multiple connections.
+	if !multiMode {
+		for _, ip := range ips {
+			ipStr := ip.String()
+			if ipStr != currentHost && probeOK[ipStr] {
+				newURL := "grpc://" + net.JoinHostPort(ipStr, port)
+				g.logger.Info("endpoint %d health probe passed for %s (single-endpoint overlap)", endpointIndex, ipStr)
+				g.endpointsMu.Lock()
+				if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+					g.endpoints[endpointIndex].URL = newURL
+				}
+				g.endpointsMu.Unlock()
+				return newURL
 			}
-			g.endpointsMu.Unlock()
-			return newURL
 		}
 	}
 
-	// Third pass: no healthy IPs found. Pick any different IP without probe
-	// (maybe the health endpoint is down but gRPC works). Allow overlap.
+	// Third pass: no healthy unique IPs. Pick any different IP not in use,
+	// without probe (maybe health endpoint is down but gRPC works).
 	for _, ip := range ips {
 		ipStr := ip.String()
-		if ipStr != currentHost {
+		if ipStr != currentHost && !inUse[ipStr] {
 			newURL := "grpc://" + net.JoinHostPort(ipStr, port)
 			g.logger.Warn("endpoint %d no healthy IPs found, falling back to %s without probe", endpointIndex, ipStr)
 			g.endpointsMu.Lock()

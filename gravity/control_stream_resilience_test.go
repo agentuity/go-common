@@ -230,6 +230,10 @@ func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 		nil,
 	}
 
+	// Record hello acks for the non-nil control stream indices (0 and 2)
+	g.helloAckedStreams.Store(0, true)
+	g.helloAckedStreams.Store(2, true)
+
 	go func() {
 		g.connectionIDChan <- "machine-1"
 		g.connectionIDChan <- "machine-1"
@@ -247,12 +251,30 @@ func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 		t.Fatalf("expected client 2 StreamSessionPackets calls=2, got %d", c2.streamPacketsCalls)
 	}
 
-	if got := len(g.streamManager.tunnelStreams); got != 4 {
-		t.Fatalf("expected 4 tunnel streams, got %d", got)
+	// Fixed-size allocation: 4 clients × 2 streams = 8 slots.
+	// Only clients 0 and 2 are acked, so slots 0,1 and 4,5 have streams.
+	// Slots 2,3 (client 1=nil) and 6,7 (client 3=nil) are nil.
+	if got := len(g.streamManager.tunnelStreams); got != 8 {
+		t.Fatalf("expected 8 tunnel stream slots (4 clients × 2), got %d", got)
 	}
+	nonNil := 0
+	for _, stream := range g.streamManager.tunnelStreams {
+		if stream != nil {
+			nonNil++
+		}
+	}
+	if nonNil != 4 {
+		t.Fatalf("expected 4 non-nil tunnel streams, got %d", nonNil)
+	}
+	// Verify streams at correct offsets: clients 0,2 have streams, clients 1,3 don't
 	for i, stream := range g.streamManager.tunnelStreams {
-		if stream == nil {
-			t.Fatalf("expected tunnel stream %d to be non-nil", i)
+		clientIdx := i / 2
+		isAckedClient := (clientIdx == 0 || clientIdx == 2)
+		if isAckedClient && stream == nil {
+			t.Fatalf("expected tunnel stream %d to be non-nil (acked client %d)", i, clientIdx)
+		}
+		if !isAckedClient && stream != nil {
+			t.Fatalf("expected tunnel stream %d to be nil (unacked client %d)", i, clientIdx)
 		}
 	}
 }

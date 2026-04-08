@@ -259,6 +259,7 @@ type GravityClient struct {
 	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
 	connectionIDs        []string      // Stores connection IDs from server responses
 	connectionIDChan     chan string   // Channel to signal when connection ID is received
+	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
 	sessionReady         chan struct{} // Closed when session is fully authenticated and configured
 	otlpURL              string
 	otlpToken            string
@@ -521,6 +522,14 @@ func (g *GravityClient) currentConnectionContext() context.Context {
 // Otherwise, the original single-URL path is used — identical to pre-multi-tunnel behavior.
 func (g *GravityClient) Start() error {
 	g.logger.Debug("starting gRPC Gravity client...")
+
+	// Clear stale hello acks from any previous session attempt so
+	// establishTunnelStreams only sees acks from this session.
+	g.helloAckedStreams.Range(func(key, _ any) bool {
+		g.helloAckedStreams.Delete(key)
+		return true
+	})
+
 	g.mu.Lock()
 
 	if g.connected {
@@ -1560,7 +1569,10 @@ func (g *GravityClient) establishTunnelStreams() error {
 	g.drainConnectionIDChan()
 
 	// Single shared deadline — don't let late responses extend the total wait.
+	// Track how many responses we received to only create tunnel streams on
+	// connections where the session hello was acknowledged.
 	var machineID string
+	helloResponseCount := 0
 	deadline := time.NewTimer(time.Minute)
 	defer deadline.Stop()
 	for i := 0; i < numExpected; i++ {
@@ -1573,6 +1585,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 			if machineID == "" {
 				machineID = id
 			}
+			helloResponseCount++
 			g.logger.Debug("session hello response %d/%d received (machine ID: %s)", i+1, numExpected, id)
 		case <-deadline.C:
 			if machineID != "" && i > 0 {
@@ -1584,7 +1597,41 @@ func (g *GravityClient) establishTunnelStreams() error {
 		}
 	}
 proceed:
-	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
+	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams (%d/%d hellos acknowledged)", machineID, helloResponseCount, numExpected)
+
+	// Build the set of connections that actually received a SessionHelloResponse.
+	// Tracked by helloAckedStreams (set in processSessionMessage when the response
+	// arrives), NOT by control stream liveness — a stream can be open without the
+	// server having sent a response. Orphaned tunnel streams on unacked connections
+	// have no SessionConnection, no forwardSessionPacketsToGRPC goroutine, and
+	// silently drop all packets.
+	helloAcked := make(map[int]bool, len(g.sessionClients))
+	g.helloAckedStreams.Range(func(key, value any) bool {
+		if idx, ok := key.(int); ok {
+			helloAcked[idx] = true
+		}
+		return true
+	})
+
+	// If we got fewer responses than expected, mark non-responding endpoints unhealthy.
+	// Also mark connectionHealth[i] = false so refreshEndpointHealth() doesn't
+	// override our healthy=false with its connectionHealth-based rebuild.
+	if helloResponseCount < numExpected {
+		g.endpointsMu.RLock()
+		for i, ep := range g.endpoints {
+			if ep != nil && !helloAcked[i] {
+				ep.healthy.Store(false)
+				g.streamManager.healthMu.Lock()
+				if i < len(g.streamManager.connectionHealth) {
+					g.streamManager.connectionHealth[i] = false
+				}
+				g.streamManager.healthMu.Unlock()
+				g.logger.Warn("marking endpoint %d (%s) unhealthy — session hello not acknowledged", i, ep.URL)
+				g.wakePeerDiscovery()
+			}
+		}
+		g.endpointsMu.RUnlock()
+	}
 
 	// Use configured streams per connection / gravity.
 	streamsPerConnection := g.poolConfig.StreamsPerConnection
@@ -1594,22 +1641,21 @@ proceed:
 			streamsPerConnection = DefaultStreamsPerGravity
 		}
 	}
-	healthyClients := 0
-	for _, c := range g.sessionClients {
-		if c != nil {
-			healthyClients++
-		}
-	}
-	totalStreams := healthyClients * streamsPerConnection
+	// Allocate tunnel streams with fixed-size slots per connection so
+	// reconnectSingleEndpoint can find streams at endpointIndex*streamsPerGravity.
+	// Unacked/nil connections get nil slots — no streams created but the
+	// offsets are preserved for other connections.
+	totalStreams := len(g.sessionClients) * streamsPerConnection
 
 	g.streamManager.tunnelStreams = make([]*StreamInfo, totalStreams)
 
-	streamIndex := 0
 	for connIndex, client := range g.sessionClients {
-		if client == nil {
+		if client == nil || !helloAcked[connIndex] {
 			continue
 		}
-		for range streamsPerConnection {
+		base := connIndex * streamsPerConnection
+		for i := range streamsPerConnection {
+			slotIndex := base + i
 			streamID := fmt.Sprintf("stream_%s", rand.Text())
 			ctx := context.WithValue(g.ctx, machineIDKey, machineID)
 			ctx = context.WithValue(ctx, streamIDKey, streamID)
@@ -1623,7 +1669,7 @@ proceed:
 
 			stream, err := client.StreamSessionPackets(ctx)
 			if err != nil {
-				return fmt.Errorf("failed to establish tunnel stream %d: %w", streamIndex, err)
+				return fmt.Errorf("failed to establish tunnel stream %d: %w", slotIndex, err)
 			}
 
 			// Create enhanced stream info
@@ -1636,7 +1682,7 @@ proceed:
 				lastUsed:  time.Now(),
 			}
 
-			g.streamManager.tunnelStreams[streamIndex] = streamInfo
+			g.streamManager.tunnelStreams[slotIndex] = streamInfo
 
 			// Initialize stream metrics
 			g.streamManager.metricsMu.Lock()
@@ -1648,11 +1694,8 @@ proceed:
 			}
 			g.streamManager.metricsMu.Unlock()
 
-			// Start listening on this tunnel stream — pass the streamID so the
-			// receive loop can update per-stream metrics without tunnelMu.
-			go g.handleTunnelStream(streamIndex, stream, streamID)
-
-			streamIndex++
+			// Start listening on this tunnel stream
+			go g.handleTunnelStream(slotIndex, stream, streamID)
 		}
 	}
 
@@ -2024,7 +2067,8 @@ func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
 func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMessage) {
 	switch m := msg.MessageType.(type) {
 	case *pb.SessionMessage_SessionHelloResponse:
-		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
+		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s, streamIndex=%d", msg.Id, msg.StreamId, streamIndex)
+		g.helloAckedStreams.Store(streamIndex, true)
 		g.handleSessionHelloResponse(msg.Id, m.SessionHelloResponse)
 	case *pb.SessionMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
@@ -3758,6 +3802,13 @@ func (g *GravityClient) reconnect() error {
 
 	// Drain the connection ID channel to avoid stale data
 	g.drainConnectionIDChan()
+
+	// Clear hello acks from previous session so establishTunnelStreams
+	// only sees acknowledgements from the new session.
+	g.helloAckedStreams.Range(func(key, _ any) bool {
+		g.helloAckedStreams.Delete(key)
+		return true
+	})
 	g.mu.Unlock()
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
 		// Log deployment synchronization intent

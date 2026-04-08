@@ -3152,18 +3152,25 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 		g.mu.RUnlock()
 		return
 	}
-	endpointURL := ""
-	if endpointIndex >= 0 && endpointIndex < len(g.connectionURLs) {
-		endpointURL = g.connectionURLs[endpointIndex]
-	}
 	g.mu.RUnlock()
 
+	// Prefer endpoints[i].URL which may have been updated by reResolveEndpointURL
+	// to a healthy IP. connectionURLs[i] can be stale (pointing to a dead ion
+	// from a previous rollout). Fall back to connectionURLs only if endpoints
+	// doesn't have a URL (e.g., during initial setup before endpoints are populated).
+	endpointURL := ""
+	g.endpointsMu.RLock()
+	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+		endpointURL = g.endpoints[endpointIndex].URL
+	}
+	g.endpointsMu.RUnlock()
+
 	if strings.TrimSpace(endpointURL) == "" {
-		g.endpointsMu.RLock()
-		if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
-			endpointURL = g.endpoints[endpointIndex].URL
+		g.mu.RLock()
+		if endpointIndex >= 0 && endpointIndex < len(g.connectionURLs) {
+			endpointURL = g.connectionURLs[endpointIndex]
 		}
-		g.endpointsMu.RUnlock()
+		g.mu.RUnlock()
 	}
 	if strings.TrimSpace(endpointURL) == "" {
 		g.logger.Error("endpoint %d reconnection aborted: missing endpoint URL", endpointIndex)
@@ -4364,6 +4371,13 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 				return nil
 			}
 			g.logger.Error("writePacket stream.Send failed: %v", err)
+			// Send errors are just as indicative of a broken connection as
+			// stream selection failures — increment the counter for both.
+			if failures := g.consecutiveWriteFailures.Add(1); failures == 1 || failures%10 == 0 {
+				g.logger.Warn("triggering aggressive reconnection after %d consecutive write failure(s) (send error)", failures)
+				g.wakePeerDiscovery()
+				g.triggerAllEndpointReconnections("consecutive_send_failures")
+			}
 		} else {
 			// Reset consecutive failure counter on successful write
 			g.consecutiveWriteFailures.Store(0)

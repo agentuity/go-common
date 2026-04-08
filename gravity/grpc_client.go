@@ -82,7 +82,12 @@ const (
 	DefaultStreamsPerGravity = 2
 
 	// DefaultBindingTTL is how long a flow stays pinned to the same Gravity.
-	DefaultBindingTTL = 5 * time.Second
+	// Must be at least as long as ion's NAT table idle timeout (10 min) so
+	// response packets route back to the ion that created the NAT entry.
+	// With 5s TTL, any response after 5s went to a random ion → "unknown
+	// ipv6 destination" → RST, breaking HTTP/2 connection reuse and
+	// long-lived connections.
+	DefaultBindingTTL = 10 * time.Minute
 )
 
 // isContextCanceled checks if an error is due to context cancellation

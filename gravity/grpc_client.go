@@ -1560,7 +1560,10 @@ func (g *GravityClient) establishTunnelStreams() error {
 	g.drainConnectionIDChan()
 
 	// Single shared deadline — don't let late responses extend the total wait.
+	// Track how many responses we received to only create tunnel streams on
+	// connections where the session hello was acknowledged.
 	var machineID string
+	helloResponseCount := 0
 	deadline := time.NewTimer(time.Minute)
 	defer deadline.Stop()
 	for i := 0; i < numExpected; i++ {
@@ -1573,6 +1576,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 			if machineID == "" {
 				machineID = id
 			}
+			helloResponseCount++
 			g.logger.Debug("session hello response %d/%d received (machine ID: %s)", i+1, numExpected, id)
 		case <-deadline.C:
 			if machineID != "" && i > 0 {
@@ -1584,7 +1588,34 @@ func (g *GravityClient) establishTunnelStreams() error {
 		}
 	}
 proceed:
-	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams", machineID)
+	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams (%d/%d hellos acknowledged)", machineID, helloResponseCount, numExpected)
+
+	// Mark endpoints whose control stream died during the hello wait as unhealthy.
+	// Only create tunnel streams on connections with active control streams.
+	// Creating tunnel streams on a connection where the hello timed out produces
+	// orphaned streams — the ion has no SessionConnection for them, no
+	// forwardSessionPacketsToGRPC goroutine drains the writeChan, and packets drop.
+	g.streamManager.controlMu.RLock()
+	helloAcked := make(map[int]bool, len(g.sessionClients))
+	for i, cs := range g.streamManager.controlStreams {
+		if cs != nil {
+			helloAcked[i] = true
+		}
+	}
+	g.streamManager.controlMu.RUnlock()
+
+	// If we got fewer responses than expected, mark non-responding endpoints unhealthy
+	if helloResponseCount < numExpected {
+		g.endpointsMu.RLock()
+		for i, ep := range g.endpoints {
+			if ep != nil && !helloAcked[i] {
+				ep.healthy.Store(false)
+				g.logger.Warn("marking endpoint %d (%s) unhealthy — session hello not acknowledged", i, ep.URL)
+				g.wakePeerDiscovery()
+			}
+		}
+		g.endpointsMu.RUnlock()
+	}
 
 	// Use configured streams per connection / gravity.
 	streamsPerConnection := g.poolConfig.StreamsPerConnection
@@ -1595,8 +1626,8 @@ proceed:
 		}
 	}
 	healthyClients := 0
-	for _, c := range g.sessionClients {
-		if c != nil {
+	for i, c := range g.sessionClients {
+		if c != nil && helloAcked[i] {
 			healthyClients++
 		}
 	}
@@ -1606,7 +1637,7 @@ proceed:
 
 	streamIndex := 0
 	for connIndex, client := range g.sessionClients {
-		if client == nil {
+		if client == nil || !helloAcked[connIndex] {
 			continue
 		}
 		for range streamsPerConnection {

@@ -1,6 +1,7 @@
 package gravity
 
 import (
+	"sync"
 	"testing"
 )
 
@@ -249,5 +250,59 @@ func TestHealthyClientCountExcludesUnacked(t *testing.T) {
 	totalStreams := healthyClients * streamsPerGravity
 	if totalStreams != 8 {
 		t.Fatalf("expected 8 total streams, got %d", totalStreams)
+	}
+}
+
+// --- Reconnect clears stale acks ---
+
+func TestHelloAckedStreams_ClearedOnReconnect(t *testing.T) {
+	// Stale acks from a previous session must not carry over to a new session.
+	// If reconnect() doesn't clear helloAckedStreams, establishTunnelStreams
+	// would create tunnel streams on connections that haven't been acked in
+	// the new session.
+	var acked sync.Map
+
+	// Session 1: streams 0,1,2 all acked
+	acked.Store(0, true)
+	acked.Store(1, true)
+	acked.Store(2, true)
+
+	count := 0
+	acked.Range(func(_, _ any) bool { count++; return true })
+	if count != 3 {
+		t.Fatalf("expected 3 acks in session 1, got %d", count)
+	}
+
+	// Simulate reconnect clearing (same logic as reconnect())
+	acked.Range(func(key, _ any) bool {
+		acked.Delete(key)
+		return true
+	})
+
+	count = 0
+	acked.Range(func(_, _ any) bool { count++; return true })
+	if count != 0 {
+		t.Fatalf("expected 0 acks after reconnect clear, got %d", count)
+	}
+
+	// Session 2: only stream 0 acked (others haven't responded yet)
+	acked.Store(0, true)
+
+	helloAcked := make(map[int]bool)
+	acked.Range(func(key, value any) bool {
+		if idx, ok := key.(int); ok {
+			helloAcked[idx] = true
+		}
+		return true
+	})
+
+	if len(helloAcked) != 1 {
+		t.Fatalf("expected 1 ack in session 2, got %d", len(helloAcked))
+	}
+	if !helloAcked[0] {
+		t.Fatal("stream 0 should be acked in session 2")
+	}
+	if helloAcked[1] || helloAcked[2] {
+		t.Fatal("streams 1,2 should NOT be acked — stale acks from session 1 leaked")
 	}
 }

@@ -3791,6 +3791,13 @@ func (g *GravityClient) reconnect() error {
 
 	// Drain the connection ID channel to avoid stale data
 	g.drainConnectionIDChan()
+
+	// Clear hello acks from previous session so establishTunnelStreams
+	// only sees acknowledgements from the new session.
+	g.helloAckedStreams.Range(func(key, _ any) bool {
+		g.helloAckedStreams.Delete(key)
+		return true
+	})
 	g.mu.Unlock()
 	if provisioningProvider, ok := g.provider.(provider.ProvisioningProvider); ok {
 		// Log deployment synchronization intent

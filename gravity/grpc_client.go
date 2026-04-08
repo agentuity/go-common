@@ -259,19 +259,20 @@ type GravityClient struct {
 	reconnectionFailedCallback func(attempts int, lastErr error)
 
 	// State management
-	connected            bool
-	reconnecting         bool          // Tracks if reconnection is in progress
-	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
-	connectionIDs        []string      // Stores connection IDs from server responses
-	connectionIDChan     chan string   // Channel to signal when connection ID is received
-	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
-	sessionReady         chan struct{} // Closed when session is fully authenticated and configured
-	otlpURL              string
-	otlpToken            string
-	apiURL               string
-	hostMapping          []*pb.HostMapping
-	hostEnvironment      []string
-	once                 sync.Once
+	connected                bool
+	reconnecting             bool          // Tracks if reconnection is in progress
+	endpointReconnecting     []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
+	consecutiveWriteFailures atomic.Int64  // Counts consecutive WritePacket failures for aggressive recovery
+	connectionIDs            []string      // Stores connection IDs from server responses
+	connectionIDChan         chan string   // Channel to signal when connection ID is received
+	helloAckedStreams        sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
+	sessionReady             chan struct{} // Closed when session is fully authenticated and configured
+	otlpURL                  string
+	otlpToken                string
+	apiURL                   string
+	hostMapping              []*pb.HostMapping
+	hostEnvironment          []string
+	once                     sync.Once
 
 	// Messaging
 	evacuationCallback    func()
@@ -3011,6 +3012,27 @@ func (g *GravityClient) triggerEndpointReconnectByURL(url string) {
 	}(idx, url)
 }
 
+// triggerAllEndpointReconnections forces reconnection for every endpoint that
+// isn't already reconnecting. Called when WritePacket fails repeatedly,
+// indicating all endpoints are unhealthy and per-endpoint reconnection alone
+// isn't recovering fast enough.
+func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
+	g.mu.RLock()
+	if g.closing {
+		g.mu.RUnlock()
+		return
+	}
+	g.mu.RUnlock()
+
+	for i := range g.endpointReconnecting {
+		if g.endpointReconnecting[i].CompareAndSwap(false, true) {
+			g.logger.Info("aggressive reconnect: triggering endpoint %d reconnection (%s)", i, reason)
+			g.disconnectEndpointStreams(i)
+			go g.reconnectEndpoint(i, reason)
+		}
+	}
+}
+
 func (g *GravityClient) handleEndpointDisconnection(endpointIndex int, reason string) {
 	g.mu.RLock()
 	if g.closing {
@@ -4292,6 +4314,14 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	// Multi-endpoint routing: sticky flow binding to selected endpoint.
 	if stream, err := g.selectStreamForPacket(payload); err != nil {
 		g.logger.Error("writePacket failed to select stream: %v", err)
+		// Track consecutive write failures. When all endpoints are unhealthy,
+		// aggressively trigger reconnection for every endpoint that isn't
+		// already reconnecting, and wake peer discovery to re-resolve DNS.
+		if failures := g.consecutiveWriteFailures.Add(1); failures == 1 || failures%10 == 0 {
+			g.logger.Warn("triggering aggressive reconnection after %d consecutive write failure(s)", failures)
+			g.wakePeerDiscovery()
+			g.triggerAllEndpointReconnections("consecutive_write_failures")
+		}
 		return err
 	} else {
 		if g.tracePackets {
@@ -4335,6 +4365,8 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 			}
 			g.logger.Error("writePacket stream.Send failed: %v", err)
 		} else {
+			// Reset consecutive failure counter on successful write
+			g.consecutiveWriteFailures.Store(0)
 			if g.tracePackets {
 				g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
 			}

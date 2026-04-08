@@ -259,6 +259,7 @@ type GravityClient struct {
 	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
 	connectionIDs        []string      // Stores connection IDs from server responses
 	connectionIDChan     chan string   // Channel to signal when connection ID is received
+	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
 	sessionReady         chan struct{} // Closed when session is fully authenticated and configured
 	otlpURL              string
 	otlpToken            string
@@ -1590,19 +1591,19 @@ func (g *GravityClient) establishTunnelStreams() error {
 proceed:
 	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams (%d/%d hellos acknowledged)", machineID, helloResponseCount, numExpected)
 
-	// Mark endpoints whose control stream died during the hello wait as unhealthy.
-	// Only create tunnel streams on connections with active control streams.
-	// Creating tunnel streams on a connection where the hello timed out produces
-	// orphaned streams — the ion has no SessionConnection for them, no
-	// forwardSessionPacketsToGRPC goroutine drains the writeChan, and packets drop.
-	g.streamManager.controlMu.RLock()
+	// Build the set of connections that actually received a SessionHelloResponse.
+	// Tracked by helloAckedStreams (set in processSessionMessage when the response
+	// arrives), NOT by control stream liveness — a stream can be open without the
+	// server having sent a response. Orphaned tunnel streams on unacked connections
+	// have no SessionConnection, no forwardSessionPacketsToGRPC goroutine, and
+	// silently drop all packets.
 	helloAcked := make(map[int]bool, len(g.sessionClients))
-	for i, cs := range g.streamManager.controlStreams {
-		if cs != nil {
-			helloAcked[i] = true
+	g.helloAckedStreams.Range(func(key, value any) bool {
+		if idx, ok := key.(int); ok {
+			helloAcked[idx] = true
 		}
-	}
-	g.streamManager.controlMu.RUnlock()
+		return true
+	})
 
 	// If we got fewer responses than expected, mark non-responding endpoints unhealthy
 	if helloResponseCount < numExpected {
@@ -2055,7 +2056,8 @@ func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
 func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMessage) {
 	switch m := msg.MessageType.(type) {
 	case *pb.SessionMessage_SessionHelloResponse:
-		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s", msg.Id, msg.StreamId)
+		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s, streamIndex=%d", msg.Id, msg.StreamId, streamIndex)
+		g.helloAckedStreams.Store(streamIndex, true)
 		g.handleSessionHelloResponse(msg.Id, m.SessionHelloResponse)
 	case *pb.SessionMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)

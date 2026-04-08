@@ -230,6 +230,10 @@ func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 		nil,
 	}
 
+	// Record hello acks for the non-nil control stream indices (0 and 2)
+	g.helloAckedStreams.Store(0, true)
+	g.helloAckedStreams.Store(2, true)
+
 	go func() {
 		g.connectionIDChan <- "machine-1"
 		g.connectionIDChan <- "machine-1"

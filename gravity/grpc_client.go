@@ -1158,12 +1158,32 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 // endpoint. Ion echoes the probe back, updating both send and receive
 // timestamps. This keeps idle streams active and detects zombie streams
 // that can't round-trip data.
+// streamSnapshot holds fields copied from StreamInfo under tunnelMu for
+// safe access outside the lock.
+type streamSnapshot struct {
+	streamID  string
+	connIndex int
+	isHealthy bool
+	stream    pb.GravitySessionService_StreamSessionPacketsClient
+}
+
 func (g *GravityClient) sendTunnelKeepalives() {
+	// Snapshot stream info under tunnelMu to avoid data races on isHealthy.
 	g.streamManager.tunnelMu.RLock()
-	streams := g.streamManager.tunnelStreams
+	snapshots := make([]streamSnapshot, len(g.streamManager.tunnelStreams))
+	for i, si := range g.streamManager.tunnelStreams {
+		if si != nil {
+			snapshots[i] = streamSnapshot{
+				streamID:  si.streamID,
+				connIndex: si.connIndex,
+				isHealthy: si.isHealthy,
+				stream:    si.stream,
+			}
+		}
+	}
 	g.streamManager.tunnelMu.RUnlock()
 
-	if len(streams) == 0 {
+	if len(snapshots) == 0 {
 		return
 	}
 
@@ -1186,19 +1206,19 @@ func (g *GravityClient) sendTunnelKeepalives() {
 	probe[11] = byte(ts)
 
 	// Send on one stream per endpoint
-	for connIndex := 0; connIndex*streamsPerConn < len(streams); connIndex++ {
+	for connIndex := 0; connIndex*streamsPerConn < len(snapshots); connIndex++ {
 		base := connIndex * streamsPerConn
 		end := base + streamsPerConn
-		if end > len(streams) {
-			end = len(streams)
+		if end > len(snapshots) {
+			end = len(snapshots)
 		}
 
 		for i := base; i < end; i++ {
-			si := streams[i]
-			if si == nil || !si.isHealthy || si.stream == nil {
+			s := snapshots[i]
+			if !s.isHealthy || s.stream == nil {
 				continue
 			}
-			if err := si.stream.Send(&pb.TunnelPacket{Data: probe}); err != nil {
+			if err := s.stream.Send(&pb.TunnelPacket{Data: probe}); err != nil {
 				g.logger.Debug("tunnel keepalive send failed on stream %d: %v", i, err)
 			}
 			break // one probe per endpoint is enough
@@ -1212,11 +1232,21 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 	now := time.Now().UnixMicro()
 	staleUs := staleTimeout.Microseconds()
 
+	// Snapshot stream info under tunnelMu to avoid data races on isHealthy/streamID.
 	g.streamManager.tunnelMu.RLock()
-	streams := g.streamManager.tunnelStreams
+	snapshots := make([]streamSnapshot, len(g.streamManager.tunnelStreams))
+	for i, si := range g.streamManager.tunnelStreams {
+		if si != nil {
+			snapshots[i] = streamSnapshot{
+				streamID:  si.streamID,
+				connIndex: si.connIndex,
+				isHealthy: si.isHealthy,
+			}
+		}
+	}
 	g.streamManager.tunnelMu.RUnlock()
 
-	if len(streams) == 0 {
+	if len(snapshots) == 0 {
 		return
 	}
 
@@ -1230,23 +1260,23 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 	defer g.streamManager.metricsMu.RUnlock()
 
 	// Check each endpoint's streams as a group
-	for connIndex := 0; connIndex*streamsPerConn < len(streams); connIndex++ {
+	for connIndex := 0; connIndex*streamsPerConn < len(snapshots); connIndex++ {
 		base := connIndex * streamsPerConn
 		end := base + streamsPerConn
-		if end > len(streams) {
-			end = len(streams)
+		if end > len(snapshots) {
+			end = len(snapshots)
 		}
 
 		allStale := true
 		hasStreams := false
 		for i := base; i < end; i++ {
-			si := streams[i]
-			if si == nil || !si.isHealthy {
+			s := snapshots[i]
+			if !s.isHealthy {
 				continue
 			}
 			hasStreams = true
 
-			metrics, ok := g.streamManager.streamMetrics[si.streamID]
+			metrics, ok := g.streamManager.streamMetrics[s.streamID]
 			if !ok {
 				continue
 			}

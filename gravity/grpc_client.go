@@ -90,6 +90,22 @@ const (
 	DefaultBindingTTL = 10 * time.Minute
 )
 
+// TunnelKeepaliveMarker is a 4-byte magic prefix for tunnel keepalive packets.
+// When ion receives a packet starting with this marker, it echoes it back
+// immediately without writing to the TUN. This provides a positive data-plane
+// liveness signal on each tunnel stream, detecting zombie streams and keeping
+// idle connections active.
+var TunnelKeepaliveMarker = []byte{0x41, 0x47, 0x4E, 0x54} // "AGNT"
+
+// IsTunnelKeepalive checks if a packet is a tunnel keepalive probe.
+func IsTunnelKeepalive(data []byte) bool {
+	return len(data) >= 4 &&
+		data[0] == TunnelKeepaliveMarker[0] &&
+		data[1] == TunnelKeepaliveMarker[1] &&
+		data[2] == TunnelKeepaliveMarker[2] &&
+		data[3] == TunnelKeepaliveMarker[3]
+}
+
 // isContextCanceled checks if an error is due to context cancellation
 // This includes both direct context.Canceled errors and gRPC Canceled status codes
 func isContextCanceled(ctx context.Context, err error) bool {
@@ -227,6 +243,10 @@ type GravityClient struct {
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
 	// Overridable in tests.
 	dnsLookupMulti func(ctx context.Context, hostname string) (bool, []net.IP, error)
+
+	// probeRotation tracks which stream within each endpoint to probe next.
+	// Incremented each cycle so all streams are covered within the stale timeout.
+	probeRotation atomic.Int64
 
 	// healthProbe is the function used to check if a gravity endpoint is
 	// alive before connecting. Defaults to probeHealthEndpoint (HTTP probe).
@@ -705,6 +725,8 @@ func (g *GravityClient) Start() error {
 	g.connected = true
 	g.mu.Unlock()
 
+	go g.tunnelLivenessMonitor()
+
 	g.logger.Debug("connected to Gravity server: %s", g.url)
 
 	g.logger.Debug("starting background goroutines...")
@@ -1030,6 +1052,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.connected = true
 	g.mu.Unlock()
 
+	// Start tunnel liveness monitor after startup succeeds (connected=true).
+	// Starting earlier would leak the goroutine if startup fails.
+	go g.tunnelLivenessMonitor()
+
 	var endpointURLs []string
 	for _, ep := range endpoints {
 		endpointURLs = append(endpointURLs, ep.URL)
@@ -1098,6 +1124,232 @@ func (g *GravityClient) resolveGravityURLs() []string {
 	}
 
 	return urls
+}
+
+// tunnelLivenessMonitor periodically sends keepalive probes on tunnel streams
+// and checks whether they're actually carrying data. It detects zombie streams
+// where the gRPC connection is alive (keepalive passes, control stream active)
+// but data has stopped flowing — caused by HTTP/2 flow control deadlock,
+// half-open streams, or stuck Send/Recv.
+//
+// The keepalive probe ("AGNT" marker) is sent on one stream per endpoint every
+// 15s. Ion echoes it back immediately, updating both LastSendUs and LastRecvUs.
+// This keeps idle connections active and provides a positive liveness signal.
+//
+// If ALL streams on an endpoint have had activity (non-zero timestamps) but
+// no activity for 60s, the endpoint is marked unhealthy and reconnection is
+// triggered. Streams that have never carried data (idle) are not flagged.
+func (g *GravityClient) tunnelLivenessMonitor() {
+	const (
+		checkInterval = 15 * time.Second
+		staleTimeout  = 60 * time.Second
+	)
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		case <-ticker.C:
+			g.sendTunnelKeepalives()
+			g.checkTunnelStreamLiveness(staleTimeout)
+		}
+	}
+}
+
+// sendTunnelKeepalives sends a keepalive probe on one healthy stream per
+// endpoint. Ion echoes the probe back, updating both send and receive
+// timestamps. This keeps idle streams active and detects zombie streams
+// that can't round-trip data.
+// streamSnapshot holds fields copied from StreamInfo under tunnelMu for
+// safe access outside the lock.
+type streamSnapshot struct {
+	streamID  string
+	connIndex int
+	isHealthy bool
+	stream    pb.GravitySessionService_StreamSessionPacketsClient
+	sendMu    *sync.Mutex // pointer to the stream's send mutex for serialization
+}
+
+func (g *GravityClient) sendTunnelKeepalives() {
+	// Snapshot stream info under tunnelMu to avoid data races on isHealthy.
+	g.streamManager.tunnelMu.RLock()
+	snapshots := make([]streamSnapshot, len(g.streamManager.tunnelStreams))
+	for i, si := range g.streamManager.tunnelStreams {
+		if si != nil {
+			snapshots[i] = streamSnapshot{
+				streamID:  si.streamID,
+				connIndex: si.connIndex,
+				isHealthy: si.isHealthy,
+				stream:    si.stream,
+				sendMu:    &si.sendMu,
+			}
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	if len(snapshots) == 0 {
+		return
+	}
+
+	streamsPerConn := g.poolConfig.StreamsPerGravity
+	if streamsPerConn <= 0 {
+		streamsPerConn = DefaultStreamsPerGravity
+	}
+
+	// Build keepalive packet: 4-byte marker + 8-byte timestamp (for RTT measurement)
+	probe := make([]byte, 12)
+	copy(probe, TunnelKeepaliveMarker)
+	ts := time.Now().UnixMicro()
+	probe[4] = byte(ts >> 56)
+	probe[5] = byte(ts >> 48)
+	probe[6] = byte(ts >> 40)
+	probe[7] = byte(ts >> 32)
+	probe[8] = byte(ts >> 24)
+	probe[9] = byte(ts >> 16)
+	probe[10] = byte(ts >> 8)
+	probe[11] = byte(ts)
+
+	// Rotate which stream gets probed within each endpoint. Each cycle probes
+	// a different stream so all streams are covered within the stale timeout
+	// (60s / 15s interval = 4 cycles → covers all 4 streams per endpoint).
+	rotation := int(g.probeRotation.Add(1))
+
+	for connIndex := 0; connIndex*streamsPerConn < len(snapshots); connIndex++ {
+		base := connIndex * streamsPerConn
+		end := base + streamsPerConn
+		if end > len(snapshots) {
+			end = len(snapshots)
+		}
+
+		// Count healthy streams for this endpoint to pick the rotation target
+		healthyInEndpoint := make([]int, 0, streamsPerConn)
+		for i := base; i < end; i++ {
+			s := snapshots[i]
+			if s.isHealthy && s.stream != nil && s.sendMu != nil {
+				healthyInEndpoint = append(healthyInEndpoint, i)
+			}
+		}
+		if len(healthyInEndpoint) == 0 {
+			continue
+		}
+
+		// Pick the stream for this rotation cycle
+		targetIdx := healthyInEndpoint[rotation%len(healthyInEndpoint)]
+		s := snapshots[targetIdx]
+
+		// Serialize with the data path's sendMu. Use a goroutine with
+		// timeout so a wedged Send doesn't block the monitor loop.
+		go func(idx int, snap streamSnapshot) {
+			done := make(chan struct{})
+			go func() {
+				snap.sendMu.Lock()
+				_ = snap.stream.Send(&pb.TunnelPacket{Data: probe})
+				snap.sendMu.Unlock()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
+			}
+		}(targetIdx, s)
+	}
+}
+
+// checkTunnelStreamLiveness examines each tunnel stream's last activity
+// timestamps and triggers reconnection for endpoints with all-stale streams.
+func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
+	now := time.Now().UnixMicro()
+	staleUs := staleTimeout.Microseconds()
+
+	// Snapshot stream info under tunnelMu to avoid data races on isHealthy/streamID.
+	g.streamManager.tunnelMu.RLock()
+	snapshots := make([]streamSnapshot, len(g.streamManager.tunnelStreams))
+	for i, si := range g.streamManager.tunnelStreams {
+		if si != nil {
+			snapshots[i] = streamSnapshot{
+				streamID:  si.streamID,
+				connIndex: si.connIndex,
+				isHealthy: si.isHealthy,
+			}
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	if len(snapshots) == 0 {
+		return
+	}
+
+	// Determine streams per connection from the pool config
+	streamsPerConn := g.poolConfig.StreamsPerGravity
+	if streamsPerConn <= 0 {
+		streamsPerConn = DefaultStreamsPerGravity
+	}
+
+	g.streamManager.metricsMu.RLock()
+	defer g.streamManager.metricsMu.RUnlock()
+
+	// Check each endpoint's streams as a group
+	for connIndex := 0; connIndex*streamsPerConn < len(snapshots); connIndex++ {
+		base := connIndex * streamsPerConn
+		end := base + streamsPerConn
+		if end > len(snapshots) {
+			end = len(snapshots)
+		}
+
+		allStale := true
+		hasStreams := false
+		for i := base; i < end; i++ {
+			s := snapshots[i]
+			if !s.isHealthy {
+				continue
+			}
+			hasStreams = true
+
+			metrics, ok := g.streamManager.streamMetrics[s.streamID]
+			if !ok {
+				continue
+			}
+
+			lastActivity := metrics.LastSendUs
+			if metrics.LastRecvUs > lastActivity {
+				lastActivity = metrics.LastRecvUs
+			}
+
+			// If the stream has never carried data (both timestamps 0),
+			// it's idle — not stale. Only flag as stale if the stream
+			// WAS active (had traffic) and then stopped. This prevents
+			// a reconnection loop on idle hadrons with no containers.
+			if lastActivity == 0 {
+				allStale = false // idle, not stale
+				break
+			}
+
+			if (now - lastActivity) < staleUs {
+				allStale = false // recently active
+				break
+			}
+		}
+
+		if hasStreams && allStale {
+			g.endpointsMu.RLock()
+			var epURL string
+			if connIndex < len(g.endpoints) && g.endpoints[connIndex] != nil {
+				epURL = g.endpoints[connIndex].URL
+				g.endpoints[connIndex].healthy.Store(false)
+			}
+			g.endpointsMu.RUnlock()
+
+			g.logger.Warn("tunnel liveness: endpoint %d (%s) has all stale streams (no activity for %s) — triggering reconnection",
+				connIndex, epURL, staleTimeout)
+			g.wakePeerDiscovery()
+			g.triggerAllEndpointReconnections("tunnel_liveness_stale")
+			return // One reconnection cycle at a time
+		}
+	}
 }
 
 func (g *GravityClient) bindingCleanupLoop() {
@@ -2013,6 +2265,13 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			metrics.BytesReceived += int64(len(packet.Data))
 		}
 		g.streamManager.metricsMu.Unlock()
+
+		// Handle tunnel keepalive echo — don't forward to TUN.
+		// The probe was sent by sendTunnelKeepalives() and echoed by ion.
+		// Receiving it proves the tunnel stream round-trips data.
+		if IsTunnelKeepalive(packet.Data) {
+			continue
+		}
 
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)

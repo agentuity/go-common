@@ -244,6 +244,10 @@ type GravityClient struct {
 	// Overridable in tests.
 	dnsLookupMulti func(ctx context.Context, hostname string) (bool, []net.IP, error)
 
+	// probeRotation tracks which stream within each endpoint to probe next.
+	// Incremented each cycle so all streams are covered within the stale timeout.
+	probeRotation atomic.Int64
+
 	// healthProbe is the function used to check if a gravity endpoint is
 	// alive before connecting. Defaults to probeHealthEndpoint (HTTP probe).
 	// Overridable in tests to avoid real network calls.
@@ -1208,7 +1212,11 @@ func (g *GravityClient) sendTunnelKeepalives() {
 	probe[10] = byte(ts >> 8)
 	probe[11] = byte(ts)
 
-	// Send on one stream per endpoint
+	// Rotate which stream gets probed within each endpoint. Each cycle probes
+	// a different stream so all streams are covered within the stale timeout
+	// (60s / 15s interval = 4 cycles → covers all 4 streams per endpoint).
+	rotation := int(g.probeRotation.Add(1))
+
 	for connIndex := 0; connIndex*streamsPerConn < len(snapshots); connIndex++ {
 		base := connIndex * streamsPerConn
 		end := base + streamsPerConn
@@ -1216,29 +1224,38 @@ func (g *GravityClient) sendTunnelKeepalives() {
 			end = len(snapshots)
 		}
 
+		// Count healthy streams for this endpoint to pick the rotation target
+		healthyInEndpoint := make([]int, 0, streamsPerConn)
 		for i := base; i < end; i++ {
 			s := snapshots[i]
-			if !s.isHealthy || s.stream == nil || s.sendMu == nil {
-				continue
+			if s.isHealthy && s.stream != nil && s.sendMu != nil {
+				healthyInEndpoint = append(healthyInEndpoint, i)
 			}
-			// Serialize with the data path's sendMu. Use a goroutine with
-			// timeout so a wedged Send doesn't block the monitor loop.
-			go func(idx int, snap streamSnapshot) {
-				done := make(chan struct{})
-				go func() {
-					snap.sendMu.Lock()
-					_ = snap.stream.Send(&pb.TunnelPacket{Data: probe})
-					snap.sendMu.Unlock()
-					close(done)
-				}()
-				select {
-				case <-done:
-				case <-time.After(5 * time.Second):
-					g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
-				}
-			}(i, s)
-			break // one probe per endpoint is enough
 		}
+		if len(healthyInEndpoint) == 0 {
+			continue
+		}
+
+		// Pick the stream for this rotation cycle
+		targetIdx := healthyInEndpoint[rotation%len(healthyInEndpoint)]
+		s := snapshots[targetIdx]
+
+		// Serialize with the data path's sendMu. Use a goroutine with
+		// timeout so a wedged Send doesn't block the monitor loop.
+		go func(idx int, snap streamSnapshot) {
+			done := make(chan struct{})
+			go func() {
+				snap.sendMu.Lock()
+				_ = snap.stream.Send(&pb.TunnelPacket{Data: probe})
+				snap.sendMu.Unlock()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
+			}
+		}(targetIdx, s)
 	}
 }
 

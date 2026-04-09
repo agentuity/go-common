@@ -873,6 +873,11 @@ func (g *GravityClient) startMultiEndpoint() error {
 		go g.peerDiscoveryLoop()
 	}
 
+	// Monitor tunnel stream liveness. Detects zombie streams where the gRPC
+	// connection is alive (keepalive passes) but data isn't flowing — e.g.,
+	// HTTP/2 flow control deadlock, half-open streams, or stuck Send/Recv.
+	go g.tunnelLivenessMonitor()
+
 	g.logger.Debug("loading CA certificate for TLS...")
 	pool, err := x509.SystemCertPool()
 	if err != nil {
@@ -1098,6 +1103,107 @@ func (g *GravityClient) resolveGravityURLs() []string {
 	}
 
 	return urls
+}
+
+// tunnelLivenessMonitor periodically checks whether tunnel streams are actually
+// carrying data. It detects zombie streams where the gRPC connection is alive
+// (keepalive passes, control stream active) but data has stopped flowing —
+// caused by HTTP/2 flow control deadlock, half-open streams, or stuck Send/Recv.
+//
+// If ANY stream on an endpoint has no send AND no receive activity for 60s,
+// the endpoint is marked unhealthy and reconnection is triggered. This is the
+// data-plane complement to the control-plane gRPC keepalive.
+func (g *GravityClient) tunnelLivenessMonitor() {
+	const (
+		checkInterval = 15 * time.Second
+		staleTimeout  = 60 * time.Second
+	)
+
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		case <-ticker.C:
+			g.checkTunnelStreamLiveness(staleTimeout)
+		}
+	}
+}
+
+// checkTunnelStreamLiveness examines each tunnel stream's last activity
+// timestamps and triggers reconnection for endpoints with all-stale streams.
+func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
+	now := time.Now().UnixMicro()
+	staleUs := staleTimeout.Microseconds()
+
+	g.streamManager.tunnelMu.RLock()
+	streams := g.streamManager.tunnelStreams
+	g.streamManager.tunnelMu.RUnlock()
+
+	if len(streams) == 0 {
+		return
+	}
+
+	// Determine streams per connection from the pool config
+	streamsPerConn := g.poolConfig.StreamsPerGravity
+	if streamsPerConn <= 0 {
+		streamsPerConn = DefaultStreamsPerGravity
+	}
+
+	g.streamManager.metricsMu.RLock()
+	defer g.streamManager.metricsMu.RUnlock()
+
+	// Check each endpoint's streams as a group
+	for connIndex := 0; connIndex*streamsPerConn < len(streams); connIndex++ {
+		base := connIndex * streamsPerConn
+		end := base + streamsPerConn
+		if end > len(streams) {
+			end = len(streams)
+		}
+
+		allStale := true
+		hasStreams := false
+		for i := base; i < end; i++ {
+			si := streams[i]
+			if si == nil || !si.isHealthy {
+				continue
+			}
+			hasStreams = true
+
+			metrics, ok := g.streamManager.streamMetrics[si.streamID]
+			if !ok {
+				continue
+			}
+
+			lastActivity := metrics.LastSendUs
+			if metrics.LastRecvUs > lastActivity {
+				lastActivity = metrics.LastRecvUs
+			}
+
+			if lastActivity > 0 && (now-lastActivity) < staleUs {
+				allStale = false
+				break
+			}
+		}
+
+		if hasStreams && allStale {
+			g.endpointsMu.RLock()
+			var epURL string
+			if connIndex < len(g.endpoints) && g.endpoints[connIndex] != nil {
+				epURL = g.endpoints[connIndex].URL
+				g.endpoints[connIndex].healthy.Store(false)
+			}
+			g.endpointsMu.RUnlock()
+
+			g.logger.Warn("tunnel liveness: endpoint %d (%s) has all stale streams (no activity for %s) — triggering reconnection",
+				connIndex, epURL, staleTimeout)
+			g.wakePeerDiscovery()
+			g.triggerAllEndpointReconnections("tunnel_liveness_stale")
+			return // One reconnection cycle at a time
+		}
+	}
 }
 
 func (g *GravityClient) bindingCleanupLoop() {

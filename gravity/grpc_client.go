@@ -95,7 +95,7 @@ const (
 // immediately without writing to the TUN. This provides a positive data-plane
 // liveness signal on each tunnel stream, detecting zombie streams and keeping
 // idle connections active.
-var TunnelKeepaliveMarker = []byte{0x47, 0x4B, 0x45, 0x50} // "GKEP"
+var TunnelKeepaliveMarker = []byte{0x41, 0x47, 0x4E, 0x54} // "AGNT"
 
 // IsTunnelKeepalive checks if a packet is a tunnel keepalive probe.
 func IsTunnelKeepalive(data []byte) bool {

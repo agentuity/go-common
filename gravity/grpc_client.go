@@ -1132,7 +1132,7 @@ func (g *GravityClient) resolveGravityURLs() []string {
 // but data has stopped flowing — caused by HTTP/2 flow control deadlock,
 // half-open streams, or stuck Send/Recv.
 //
-// The keepalive probe ("GKEP" marker) is sent on one stream per endpoint every
+// The keepalive probe ("AGNT" marker) is sent on one stream per endpoint every
 // 15s. Ion echoes it back immediately, updating both LastSendUs and LastRecvUs.
 // This keeps idle connections active and provides a positive liveness signal.
 //

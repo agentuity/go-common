@@ -721,6 +721,8 @@ func (g *GravityClient) Start() error {
 	g.connected = true
 	g.mu.Unlock()
 
+	go g.tunnelLivenessMonitor()
+
 	g.logger.Debug("connected to Gravity server: %s", g.url)
 
 	g.logger.Debug("starting background goroutines...")
@@ -889,11 +891,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 		go g.peerDiscoveryLoop()
 	}
 
-	// Monitor tunnel stream liveness. Detects zombie streams where the gRPC
-	// connection is alive (keepalive passes) but data isn't flowing — e.g.,
-	// HTTP/2 flow control deadlock, half-open streams, or stuck Send/Recv.
-	go g.tunnelLivenessMonitor()
-
 	g.logger.Debug("loading CA certificate for TLS...")
 	pool, err := x509.SystemCertPool()
 	if err != nil {
@@ -1051,6 +1048,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.connected = true
 	g.mu.Unlock()
 
+	// Start tunnel liveness monitor after startup succeeds (connected=true).
+	// Starting earlier would leak the goroutine if startup fails.
+	go g.tunnelLivenessMonitor()
+
 	var endpointURLs []string
 	for _, ep := range endpoints {
 		endpointURLs = append(endpointURLs, ep.URL)
@@ -1165,6 +1166,7 @@ type streamSnapshot struct {
 	connIndex int
 	isHealthy bool
 	stream    pb.GravitySessionService_StreamSessionPacketsClient
+	sendMu    *sync.Mutex // pointer to the stream's send mutex for serialization
 }
 
 func (g *GravityClient) sendTunnelKeepalives() {
@@ -1178,6 +1180,7 @@ func (g *GravityClient) sendTunnelKeepalives() {
 				connIndex: si.connIndex,
 				isHealthy: si.isHealthy,
 				stream:    si.stream,
+				sendMu:    &si.sendMu,
 			}
 		}
 	}
@@ -1215,12 +1218,25 @@ func (g *GravityClient) sendTunnelKeepalives() {
 
 		for i := base; i < end; i++ {
 			s := snapshots[i]
-			if !s.isHealthy || s.stream == nil {
+			if !s.isHealthy || s.stream == nil || s.sendMu == nil {
 				continue
 			}
-			if err := s.stream.Send(&pb.TunnelPacket{Data: probe}); err != nil {
-				g.logger.Debug("tunnel keepalive send failed on stream %d: %v", i, err)
-			}
+			// Serialize with the data path's sendMu. Use a goroutine with
+			// timeout so a wedged Send doesn't block the monitor loop.
+			go func(idx int, snap streamSnapshot) {
+				done := make(chan struct{})
+				go func() {
+					snap.sendMu.Lock()
+					_ = snap.stream.Send(&pb.TunnelPacket{Data: probe})
+					snap.sendMu.Unlock()
+					close(done)
+				}()
+				select {
+				case <-done:
+				case <-time.After(5 * time.Second):
+					g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
+				}
+			}(i, s)
 			break // one probe per endpoint is enough
 		}
 	}

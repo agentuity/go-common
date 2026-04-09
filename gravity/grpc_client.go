@@ -90,6 +90,22 @@ const (
 	DefaultBindingTTL = 10 * time.Minute
 )
 
+// TunnelKeepaliveMarker is a 4-byte magic prefix for tunnel keepalive packets.
+// When ion receives a packet starting with this marker, it echoes it back
+// immediately without writing to the TUN. This provides a positive data-plane
+// liveness signal on each tunnel stream, detecting zombie streams and keeping
+// idle connections active.
+var TunnelKeepaliveMarker = []byte{0x47, 0x4B, 0x45, 0x50} // "GKEP"
+
+// IsTunnelKeepalive checks if a packet is a tunnel keepalive probe.
+func IsTunnelKeepalive(data []byte) bool {
+	return len(data) >= 4 &&
+		data[0] == TunnelKeepaliveMarker[0] &&
+		data[1] == TunnelKeepaliveMarker[1] &&
+		data[2] == TunnelKeepaliveMarker[2] &&
+		data[3] == TunnelKeepaliveMarker[3]
+}
+
 // isContextCanceled checks if an error is due to context cancellation
 // This includes both direct context.Canceled errors and gRPC Canceled status codes
 func isContextCanceled(ctx context.Context, err error) bool {
@@ -1105,14 +1121,19 @@ func (g *GravityClient) resolveGravityURLs() []string {
 	return urls
 }
 
-// tunnelLivenessMonitor periodically checks whether tunnel streams are actually
-// carrying data. It detects zombie streams where the gRPC connection is alive
-// (keepalive passes, control stream active) but data has stopped flowing —
-// caused by HTTP/2 flow control deadlock, half-open streams, or stuck Send/Recv.
+// tunnelLivenessMonitor periodically sends keepalive probes on tunnel streams
+// and checks whether they're actually carrying data. It detects zombie streams
+// where the gRPC connection is alive (keepalive passes, control stream active)
+// but data has stopped flowing — caused by HTTP/2 flow control deadlock,
+// half-open streams, or stuck Send/Recv.
 //
-// If ANY stream on an endpoint has no send AND no receive activity for 60s,
-// the endpoint is marked unhealthy and reconnection is triggered. This is the
-// data-plane complement to the control-plane gRPC keepalive.
+// The keepalive probe ("GKEP" marker) is sent on one stream per endpoint every
+// 15s. Ion echoes it back immediately, updating both LastSendUs and LastRecvUs.
+// This keeps idle connections active and provides a positive liveness signal.
+//
+// If ALL streams on an endpoint have had activity (non-zero timestamps) but
+// no activity for 60s, the endpoint is marked unhealthy and reconnection is
+// triggered. Streams that have never carried data (idle) are not flagged.
 func (g *GravityClient) tunnelLivenessMonitor() {
 	const (
 		checkInterval = 15 * time.Second
@@ -1127,7 +1148,60 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 		case <-g.ctx.Done():
 			return
 		case <-ticker.C:
+			g.sendTunnelKeepalives()
 			g.checkTunnelStreamLiveness(staleTimeout)
+		}
+	}
+}
+
+// sendTunnelKeepalives sends a keepalive probe on one healthy stream per
+// endpoint. Ion echoes the probe back, updating both send and receive
+// timestamps. This keeps idle streams active and detects zombie streams
+// that can't round-trip data.
+func (g *GravityClient) sendTunnelKeepalives() {
+	g.streamManager.tunnelMu.RLock()
+	streams := g.streamManager.tunnelStreams
+	g.streamManager.tunnelMu.RUnlock()
+
+	if len(streams) == 0 {
+		return
+	}
+
+	streamsPerConn := g.poolConfig.StreamsPerGravity
+	if streamsPerConn <= 0 {
+		streamsPerConn = DefaultStreamsPerGravity
+	}
+
+	// Build keepalive packet: 4-byte marker + 8-byte timestamp (for RTT measurement)
+	probe := make([]byte, 12)
+	copy(probe, TunnelKeepaliveMarker)
+	ts := time.Now().UnixMicro()
+	probe[4] = byte(ts >> 56)
+	probe[5] = byte(ts >> 48)
+	probe[6] = byte(ts >> 40)
+	probe[7] = byte(ts >> 32)
+	probe[8] = byte(ts >> 24)
+	probe[9] = byte(ts >> 16)
+	probe[10] = byte(ts >> 8)
+	probe[11] = byte(ts)
+
+	// Send on one stream per endpoint
+	for connIndex := 0; connIndex*streamsPerConn < len(streams); connIndex++ {
+		base := connIndex * streamsPerConn
+		end := base + streamsPerConn
+		if end > len(streams) {
+			end = len(streams)
+		}
+
+		for i := base; i < end; i++ {
+			si := streams[i]
+			if si == nil || !si.isHealthy || si.stream == nil {
+				continue
+			}
+			if err := si.stream.Send(&pb.TunnelPacket{Data: probe}); err != nil {
+				g.logger.Debug("tunnel keepalive send failed on stream %d: %v", i, err)
+			}
+			break // one probe per endpoint is enough
 		}
 	}
 }
@@ -1182,8 +1256,17 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 				lastActivity = metrics.LastRecvUs
 			}
 
-			if lastActivity > 0 && (now-lastActivity) < staleUs {
-				allStale = false
+			// If the stream has never carried data (both timestamps 0),
+			// it's idle — not stale. Only flag as stale if the stream
+			// WAS active (had traffic) and then stopped. This prevents
+			// a reconnection loop on idle hadrons with no containers.
+			if lastActivity == 0 {
+				allStale = false // idle, not stale
+				break
+			}
+
+			if (now - lastActivity) < staleUs {
+				allStale = false // recently active
 				break
 			}
 		}
@@ -2119,6 +2202,13 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			metrics.BytesReceived += int64(len(packet.Data))
 		}
 		g.streamManager.metricsMu.Unlock()
+
+		// Handle tunnel keepalive echo — don't forward to TUN.
+		// The probe was sent by sendTunnelKeepalives() and echoed by ion.
+		// Receiving it proves the tunnel stream round-trips data.
+		if IsTunnelKeepalive(packet.Data) {
+			continue
+		}
 
 		// Forward packet to local processing
 		pooledBuf := g.getBuffer(packet.Data)

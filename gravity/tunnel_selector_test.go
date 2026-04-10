@@ -316,10 +316,11 @@ func TestRecordInboundFlow_MultipleFlows(t *testing.T) {
 	}
 }
 
-// TestRecordInboundFlow_UnhealthyDrops verifies that return traffic is dropped
-// (nil) when the originating endpoint is unhealthy, rather than misrouting to
-// a different endpoint that doesn't have the NAT/conntrack entry.
-func TestRecordInboundFlow_UnhealthyDrops(t *testing.T) {
+// TestRecordInboundFlow_UnhealthyFailsOver verifies that return traffic
+// fails over to a healthy endpoint when the originating endpoint goes down.
+// With any-to-any NAT, the NAT entry is shared across ions, so the return
+// flow can safely be routed to any healthy endpoint.
+func TestRecordInboundFlow_UnhealthyFailsOver(t *testing.T) {
 	t.Parallel()
 
 	selector := NewEndpointSelector(time.Minute)

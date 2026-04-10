@@ -1053,7 +1053,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	// Start tunnel liveness monitor after startup succeeds (connected=true).
 	// Starting earlier would leak the goroutine if startup fails.
-	g.logger.Error("DIAG: launching tunnelLivenessMonitor goroutine from startMultiEndpoint")
+	g.logger.Debug("launching tunnelLivenessMonitor goroutine")
 	go g.tunnelLivenessMonitor()
 
 	var endpointURLs []string
@@ -1155,7 +1155,7 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 		staleTimeout  = 30 * time.Second
 	)
 
-	g.logger.Error("DIAG: tunnel liveness monitor started (check=%s, stale=%s)", checkInterval, staleTimeout)
+	g.logger.Debug("tunnel liveness monitor started (check=%s, stale=%s)", checkInterval, staleTimeout)
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -4788,14 +4788,16 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 		for attempt := 0; attempt < len(endpoints); attempt++ {
 			endpoint := selector.Select(payload, endpoints)
 			if endpoint == nil {
-				// DIAG: log all endpoint health states
+				// Log endpoint health summary for debugging selector failures.
+				var healthSummary []string
 				for i, ep := range endpoints {
 					if ep != nil {
-						g.logger.Error("DIAG selectStream: endpoint[%d] url=%s healthy=%v", i, ep.URL, ep.healthy.Load())
+						healthSummary = append(healthSummary, fmt.Sprintf("[%d]%s(healthy=%v)", i, ep.URL, ep.healthy.Load()))
 					} else {
-						g.logger.Error("DIAG selectStream: endpoint[%d] is nil", i)
+						healthSummary = append(healthSummary, fmt.Sprintf("[%d]nil", i))
 					}
 				}
+				g.logger.Debug("selectStream: no endpoint selected, health: %s", strings.Join(healthSummary, ", "))
 				return nil, fmt.Errorf("no healthy gravity endpoints")
 			}
 			stream, err := g.selectStreamForEndpoint(payload, endpoint.URL)

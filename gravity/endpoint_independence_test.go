@@ -1160,7 +1160,7 @@ func newWritePacketTestClient(t *testing.T, n int) *GravityClient {
 	return g
 }
 
-// makeIPv6Packet creates a minimal 44-byte IPv6 packet with TCP next header.
+// makeIPv6Packet creates a minimal 54-byte IPv6 packet with TCP next header.
 // Bytes 0: version nibble (0x60), byte 6: next header (TCP=6), bytes 8-23: src IP,
 // bytes 24-39: dst IP, bytes 40-43: src/dst ports.
 func makeIPv6Packet() []byte {
@@ -2318,15 +2318,13 @@ func TestAGNTKeepalive_SendsProbesOnIdleHadron(t *testing.T) {
 	}
 }
 
-// TestAGNTKeepalive_DoesNotUpdateLastSendUs verifies that
-// sendTunnelKeepalives does NOT update LastSendUs in stream metrics.
-// This is the root of the idle-hadron detection gap: without a
-// LastSendUs update, the liveness monitor sees zero timestamps and
-// classifies the stream as "idle" instead of "probe sent, no echo."
-//
-// If this test PASSES, the gap exists and should be fixed.
-// If this test FAILS, the gap has been fixed.
-func TestAGNTKeepalive_DoesNotUpdateLastSendUs(t *testing.T) {
+// TestAGNTKeepalive_UpdatesLastSendUsOnFirstProbe verifies that
+// sendTunnelKeepalives updates LastSendUs on the first successful probe,
+// promoting the stream from "idle" (zero timestamps) to "probed." This
+// enables the liveness monitor to detect dead endpoints on idle hadrons
+// where no user traffic flows — without this update, the monitor would
+// see zero timestamps and classify the stream as idle instead of stale.
+func TestAGNTKeepalive_UpdatesLastSendUsOnFirstProbe(t *testing.T) {
 	t.Parallel()
 
 	g := newWritePacketTestClient(t, 1)
@@ -2365,11 +2363,10 @@ func TestAGNTKeepalive_DoesNotUpdateLastSendUs(t *testing.T) {
 }
 
 // TestAGNTKeepalive_SendFailure_DoesNotMarkStreamUnhealthy verifies that
-// when an AGNT probe Send() fails, the stream is NOT marked unhealthy.
-// The error is silently discarded.
-//
-// If this test PASSES, the gap exists.
-// If this test FAILS, the gap has been fixed.
+// a single transient Send() failure on an AGNT probe does NOT immediately
+// mark the stream as unhealthy. This is intentional — the liveness monitor
+// detects dead endpoints via stale timestamps (no echo received within
+// staleTimeout), which is more robust than reacting to individual failures.
 func TestAGNTKeepalive_SendFailure_DoesNotMarkStreamUnhealthy(t *testing.T) {
 	t.Parallel()
 

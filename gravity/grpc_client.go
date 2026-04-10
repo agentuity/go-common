@@ -1053,6 +1053,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	// Start tunnel liveness monitor after startup succeeds (connected=true).
 	// Starting earlier would leak the goroutine if startup fails.
+	g.logger.Error("DIAG: launching tunnelLivenessMonitor goroutine from startMultiEndpoint")
 	go g.tunnelLivenessMonitor()
 
 	var endpointURLs []string
@@ -1143,10 +1144,18 @@ func (g *GravityClient) resolveGravityURLs() []string {
 // and reconnection is triggered. Streams that have never been probed
 // (LastSendUs=0, LastRecvUs=0) are truly idle and not flagged.
 func (g *GravityClient) tunnelLivenessMonitor() {
+	defer func() {
+		if r := recover(); r != nil {
+			g.logger.Error("tunnel liveness monitor PANICKED: %v", r)
+		}
+	}()
+
 	const (
 		checkInterval = 10 * time.Second
 		staleTimeout  = 30 * time.Second
 	)
+
+	g.logger.Error("DIAG: tunnel liveness monitor started (check=%s, stale=%s)", checkInterval, staleTimeout)
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -1154,6 +1163,7 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 	for {
 		select {
 		case <-g.ctx.Done():
+			g.logger.Debug("tunnel liveness monitor exiting (context cancelled)")
 			return
 		case <-ticker.C:
 			g.sendTunnelKeepalives()
@@ -1177,6 +1187,7 @@ type streamSnapshot struct {
 }
 
 func (g *GravityClient) sendTunnelKeepalives() {
+	g.logger.Trace("tunnel keepalive: starting probe cycle")
 	// Snapshot stream info under tunnelMu to avoid data races on isHealthy.
 	g.streamManager.tunnelMu.RLock()
 	snapshots := make([]streamSnapshot, len(g.streamManager.tunnelStreams))
@@ -1574,13 +1585,27 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 		return
 	}
 
+	// Priority 2: if below capacity, add new endpoints immediately — don't
+	// wait for the cycle interval. This ensures newly discovered ions are
+	// connected to as soon as DNS returns their IP.
+	if currentCount < maxPeers && len(newURLs) > 0 {
+		newURL := pickRandomURL(newURLs)
+		if newURL != "" {
+			g.logger.Info("peer discovery: adding new endpoint %s (currently %d/%d, %d new available)",
+				newURL, currentCount, maxPeers, len(newURLs))
+			g.addEndpoint(newURL)
+			return
+		}
+	}
+
+	// Priority 3: rotate one connection for freshness (cycle interval gated).
 	now := time.Now()
 	lastCycleUnix := g.lastCycleTime.Load()
 	if lastCycleUnix > 0 {
 		lastCycle := time.Unix(lastCycleUnix, 0)
 		if now.Sub(lastCycle) < cycleInterval {
-			g.logger.Debug("peer discovery: %d new URLs available but cycle interval not reached (last cycle: %s ago)",
-				len(newURLs), now.Sub(lastCycle).Round(time.Minute))
+			g.logger.Debug("peer discovery: at capacity (%d/%d), cycle interval not reached (last cycle: %s ago)",
+				currentCount, maxPeers, now.Sub(lastCycle).Round(time.Minute))
 			return
 		}
 	}
@@ -1635,6 +1660,44 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 
 	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
 	g.logger.Debug("peer discovery: new endpoint %s will connect on next connection attempt", newURL)
+}
+
+// addEndpoint adds a new endpoint to an empty slot (nil or empty URL) in
+// the endpoints slice. Used by peer discovery to connect to newly discovered
+// gravity servers without waiting for the cycle interval.
+func (g *GravityClient) addEndpoint(newURL string) {
+	if strings.TrimSpace(newURL) == "" {
+		return
+	}
+
+	g.endpointsMu.Lock()
+	slotIdx := -1
+	for i, ep := range g.endpoints {
+		if ep == nil || strings.TrimSpace(ep.URL) == "" {
+			slotIdx = i
+			break
+		}
+	}
+	if slotIdx < 0 {
+		g.endpointsMu.Unlock()
+		g.logger.Debug("peer discovery: no empty slot for new endpoint %s", newURL)
+		return
+	}
+
+	newEp := &GravityEndpoint{URL: newURL}
+	newEp.healthy.Store(false) // will become healthy after reconnection
+	g.endpoints[slotIdx] = newEp
+	g.endpointsMu.Unlock()
+
+	// Update connection URL mapping for the new endpoint.
+	g.mu.Lock()
+	if slotIdx < len(g.connectionURLs) {
+		g.connectionURLs[slotIdx] = newURL
+	}
+	g.mu.Unlock()
+
+	g.logger.Info("peer discovery: added new endpoint %s at slot %d, starting reconnection", newURL, slotIdx)
+	go g.reconnectEndpoint(slotIdx, "peer_discovery_add")
 }
 
 func pickRandomURL(urls []string) string {
@@ -4725,6 +4788,14 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 		for attempt := 0; attempt < len(endpoints); attempt++ {
 			endpoint := selector.Select(payload, endpoints)
 			if endpoint == nil {
+				// DIAG: log all endpoint health states
+				for i, ep := range endpoints {
+					if ep != nil {
+						g.logger.Error("DIAG selectStream: endpoint[%d] url=%s healthy=%v", i, ep.URL, ep.healthy.Load())
+					} else {
+						g.logger.Error("DIAG selectStream: endpoint[%d] is nil", i)
+					}
+				}
 				return nil, fmt.Errorf("no healthy gravity endpoints")
 			}
 			stream, err := g.selectStreamForEndpoint(payload, endpoint.URL)

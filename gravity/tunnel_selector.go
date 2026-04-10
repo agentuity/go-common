@@ -66,14 +66,10 @@ func (s *EndpointSelector) Select(packet []byte, endpoints []*GravityEndpoint) *
 				return current.Endpoint
 			}
 			s.mu.Unlock()
-		} else if binding.IsReturn {
-			// Return traffic (response to inbound) with unhealthy originator:
-			// routing to a different endpoint won't help — it doesn't have the
-			// NAT/conntrack entry. Drop the packet; the TCP connection is already
-			// broken and the client will retry through a healthy endpoint.
-			return nil
 		}
-		// Forward flow with unhealthy endpoint: fall through to pick a new one.
+		// Unhealthy endpoint (forward or return flow): fall through to pick
+		// a healthy one. With any-to-any NAT, return traffic can be routed
+		// through a different endpoint.
 	}
 
 	// Slow path: pick new endpoint, store binding.

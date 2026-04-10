@@ -316,33 +316,61 @@ func TestRecordInboundFlow_MultipleFlows(t *testing.T) {
 	}
 }
 
-// TestRecordInboundFlow_UnhealthyDrops verifies that return traffic is dropped
-// (nil) when the originating endpoint is unhealthy, rather than misrouting to
-// a different endpoint that doesn't have the NAT/conntrack entry.
-func TestRecordInboundFlow_UnhealthyDrops(t *testing.T) {
+// TestRecordInboundFlow_UnhealthyFailsOver verifies that return traffic
+// (response to inbound) fails over to a healthy endpoint when the originating
+// endpoint goes down. With any-to-any NAT, the NAT entry is shared across
+// ions, so return traffic CAN be routed through a different endpoint.
+//
+// This is a table-driven test covering both the basic failover case and the
+// explicit any-to-any NAT scenario (which are functionally equivalent).
+func TestRecordInboundFlow_UnhealthyFailsOver(t *testing.T) {
 	t.Parallel()
 
-	selector := NewEndpointSelector(time.Minute)
-	ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
-	ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
-	ep1.healthy.Store(true)
-	ep2.healthy.Store(true)
-	endpoints := []*GravityEndpoint{ep1, ep2}
+	tests := []struct {
+		name    string
+		comment string // for clarity in sub-test descriptions
+	}{
+		{
+			name:    "return_flow_failover",
+			comment: "basic return traffic failover when originating endpoint is unhealthy",
+		},
+		{
+			name:    "any_to_any_NAT",
+			comment: "with any-to-any NAT, another ion can handle the return traffic",
+		},
+	}
 
-	ionIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
-	containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 
-	// Record inbound flow from ep1
-	selector.RecordInboundFlow(makeIPv6TCPPacket(ionIP, containerIP, 33628, 443), ep1)
+			selector := NewEndpointSelector(time.Minute)
+			ep1 := &GravityEndpoint{URL: "grpc://ion-1:443"}
+			ep2 := &GravityEndpoint{URL: "grpc://ion-2:444"}
+			ep1.healthy.Store(true)
+			ep2.healthy.Store(true)
+			endpoints := []*GravityEndpoint{ep1, ep2}
 
-	// Mark ep1 as unhealthy (tunnel went down)
-	ep1.healthy.Store(false)
+			ionIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1}
+			containerIP := [16]byte{0xfd, 0x15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}
 
-	// Response should be nil (dropped), NOT routed to ep2
-	response := makeIPv6TCPPacket(containerIP, ionIP, 443, 33628)
-	selected := selector.Select(response, endpoints)
-	if selected != nil {
-		t.Fatalf("expected nil (drop) for return traffic with unhealthy originator, got %s", selected.URL)
+			// Record inbound flow from ep1
+			selector.RecordInboundFlow(makeIPv6TCPPacket(ionIP, containerIP, 33628, 443), ep1)
+
+			// Mark ep1 as unhealthy (ion/tunnel went down)
+			ep1.healthy.Store(false)
+
+			// Return traffic should failover to ep2, NOT return nil.
+			// The NAT entry is shared across ions.
+			response := makeIPv6TCPPacket(containerIP, ionIP, 443, 33628)
+			selected := selector.Select(response, endpoints)
+			if selected == nil {
+				t.Fatalf("[%s] expected return flow to failover to healthy endpoint, got nil (drop)", tt.comment)
+			}
+			if selected != ep2 {
+				t.Fatalf("[%s] expected failover to ep2, got %s", tt.comment, selected.URL)
+			}
+		})
 	}
 }
 

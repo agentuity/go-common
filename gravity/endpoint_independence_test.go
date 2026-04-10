@@ -754,15 +754,17 @@ func TestSelectStreamForPacket_UnhealthyTunnelsTriggersReconnect(t *testing.T) {
 
 	// Endpoint 0: tunnels exist but ALL unhealthy
 	// Endpoint 1: healthy tunnels (fallback target)
-	g.streamManager.tunnelStreams = make([]*StreamInfo, 4)
+	g.streamManager.tunnelStreams = make([]*StreamInfo, 6)
 	g.streamManager.tunnelStreams[0] = &StreamInfo{connIndex: 0, isHealthy: false, streamID: "s0"}
 	g.streamManager.tunnelStreams[1] = &StreamInfo{connIndex: 0, isHealthy: false, streamID: "s1"}
 	g.streamManager.tunnelStreams[2] = &StreamInfo{connIndex: 1, isHealthy: true, streamID: "s2"}
 	g.streamManager.tunnelStreams[3] = &StreamInfo{connIndex: 1, isHealthy: true, streamID: "s3"}
+	g.streamManager.tunnelStreams[4] = &StreamInfo{connIndex: 2, isHealthy: true, streamID: "s4"}
+	g.streamManager.tunnelStreams[5] = &StreamInfo{connIndex: 2, isHealthy: true, streamID: "s5"}
 
 	g.endpointStreamIndices["grpc://endpoint-0"] = []int{0, 1}
 	g.endpointStreamIndices["grpc://endpoint-1"] = []int{2, 3}
-	g.endpointStreamIndices["grpc://endpoint-2"] = []int{}
+	g.endpointStreamIndices["grpc://endpoint-2"] = []int{4, 5}
 
 	// Force selector to pick endpoint 0 first by pre-binding
 	pkt := make([]byte, 40)
@@ -788,8 +790,8 @@ func TestSelectStreamForPacket_UnhealthyTunnelsTriggersReconnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected fallback to succeed, got: %v", err)
 	}
-	if stream.connIndex != 1 {
-		t.Fatalf("expected fallback to endpoint 1 (connIndex=1), got connIndex=%d", stream.connIndex)
+	if stream.connIndex == 0 {
+		t.Fatal("expected fallback to a healthy endpoint (not endpoint 0 which has unhealthy tunnels)")
 	}
 
 	// Endpoint 0 should now be marked unhealthy

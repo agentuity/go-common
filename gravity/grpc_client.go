@@ -279,20 +279,19 @@ type GravityClient struct {
 	reconnectionFailedCallback func(attempts int, lastErr error)
 
 	// State management
-	connected                bool
-	reconnecting             bool          // Tracks if reconnection is in progress
-	endpointReconnecting     []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
-	consecutiveWriteFailures atomic.Int64  // Counts consecutive WritePacket failures for aggressive recovery
-	connectionIDs            []string      // Stores connection IDs from server responses
-	connectionIDChan         chan string   // Channel to signal when connection ID is received
-	helloAckedStreams        sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
-	sessionReady             chan struct{} // Closed when session is fully authenticated and configured
-	otlpURL                  string
-	otlpToken                string
-	apiURL                   string
-	hostMapping              []*pb.HostMapping
-	hostEnvironment          []string
-	once                     sync.Once
+	connected            bool
+	reconnecting         bool          // Tracks if reconnection is in progress
+	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
+	connectionIDs        []string      // Stores connection IDs from server responses
+	connectionIDChan     chan string   // Channel to signal when connection ID is received
+	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
+	sessionReady         chan struct{} // Closed when session is fully authenticated and configured
+	otlpURL              string
+	otlpToken            string
+	apiURL               string
+	hostMapping          []*pb.HostMapping
+	hostEnvironment      []string
+	once                 sync.Once
 
 	// Messaging
 	evacuationCallback    func()
@@ -1133,16 +1132,20 @@ func (g *GravityClient) resolveGravityURLs() []string {
 // half-open streams, or stuck Send/Recv.
 //
 // The keepalive probe ("AGNT" marker) is sent on one stream per endpoint every
-// 15s. Ion echoes it back immediately, updating both LastSendUs and LastRecvUs.
+// 10s. Ion echoes it back immediately, updating LastRecvUs in stream metrics.
 // This keeps idle connections active and provides a positive liveness signal.
+// sendTunnelKeepalives also sets LastSendUs on first probe so streams are
+// promoted from "idle" (zero timestamps) to "probed" — enabling detection
+// of endpoints that die before the first echo arrives.
 //
-// If ALL streams on an endpoint have had activity (non-zero timestamps) but
-// no activity for 60s, the endpoint is marked unhealthy and reconnection is
-// triggered. Streams that have never carried data (idle) are not flagged.
+// If ALL streams on an endpoint have been probed but show no round-trip
+// activity for 30s (~3 missed probes), the endpoint is marked unhealthy
+// and reconnection is triggered. Streams that have never been probed
+// (LastSendUs=0, LastRecvUs=0) are truly idle and not flagged.
 func (g *GravityClient) tunnelLivenessMonitor() {
 	const (
-		checkInterval = 15 * time.Second
-		staleTimeout  = 60 * time.Second
+		checkInterval = 10 * time.Second
+		staleTimeout  = 30 * time.Second
 	)
 
 	ticker := time.NewTicker(checkInterval)
@@ -1243,15 +1246,29 @@ func (g *GravityClient) sendTunnelKeepalives() {
 		// Serialize with the data path's sendMu. Use a goroutine with
 		// timeout so a wedged Send doesn't block the monitor loop.
 		go func(idx int, snap streamSnapshot) {
-			done := make(chan struct{})
+			errCh := make(chan error, 1)
 			go func() {
 				snap.sendMu.Lock()
-				_ = snap.stream.Send(&pb.TunnelPacket{Data: probe})
+				err := snap.stream.Send(&pb.TunnelPacket{Data: probe})
 				snap.sendMu.Unlock()
-				close(done)
+				errCh <- err
 			}()
 			select {
-			case <-done:
+			case err := <-errCh:
+				// Update LastSendUs on first successful probe so the stream
+				// is promoted from "idle" (zero timestamps) to "probed."
+				// Only set once (when LastSendUs==0) so the timestamp
+				// represents "probing since" — if gRPC buffers Sends
+				// locally while the remote is dead, we don't want
+				// LastSendUs refreshed each cycle which would prevent
+				// stale detection.
+				if err == nil {
+					g.streamManager.metricsMu.Lock()
+					if m := g.streamManager.streamMetrics[snap.streamID]; m != nil && m.LastSendUs == 0 {
+						m.LastSendUs = time.Now().UnixMicro()
+					}
+					g.streamManager.metricsMu.Unlock()
+				}
 			case <-time.After(5 * time.Second):
 				g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
 			}
@@ -1314,18 +1331,28 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 				continue
 			}
 
-			lastActivity := metrics.LastSendUs
-			if metrics.LastRecvUs > lastActivity {
-				lastActivity = metrics.LastRecvUs
+			lastSendUs := metrics.LastSendUs
+			lastRecvUs := metrics.LastRecvUs
+
+			// Truly idle: never probed, never received. This means
+			// sendTunnelKeepalives hasn't run yet (e.g., stream just
+			// established). Don't flag as stale — wait for first probe.
+			if lastSendUs == 0 && lastRecvUs == 0 {
+				allStale = false
+				break
 			}
 
-			// If the stream has never carried data (both timestamps 0),
-			// it's idle — not stale. Only flag as stale if the stream
-			// WAS active (had traffic) and then stopped. This prevents
-			// a reconnection loop on idle hadrons with no containers.
-			if lastActivity == 0 {
-				allStale = false // idle, not stale
-				break
+			// Use LastRecvUs as the primary liveness signal when echoes
+			// have been received — it confirms the remote end is alive.
+			// If we've probed but never received an echo (LastRecvUs==0),
+			// fall back to LastSendUs which represents "probing since."
+			// This covers the case where an ion dies before the first
+			// AGNT echo arrives on an idle hadron.
+			var lastActivity int64
+			if lastRecvUs > 0 {
+				lastActivity = lastRecvUs
+			} else {
+				lastActivity = lastSendUs
 			}
 
 			if (now - lastActivity) < staleUs {
@@ -1346,7 +1373,11 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 			g.logger.Warn("tunnel liveness: endpoint %d (%s) has all stale streams (no activity for %s) — triggering reconnection",
 				connIndex, epURL, staleTimeout)
 			g.wakePeerDiscovery()
-			g.triggerAllEndpointReconnections("tunnel_liveness_stale")
+			// Use per-endpoint reconnection — only reconnect the specific
+			// endpoint with stale streams. Previously this called
+			// triggerAllEndpointReconnections which could cascade a
+			// single-endpoint failure to all endpoints.
+			g.handleEndpointDisconnection(connIndex, "tunnel_liveness_stale")
 			return // One reconnection cycle at a time
 		}
 	}
@@ -3271,10 +3302,14 @@ func (g *GravityClient) triggerEndpointReconnectByURL(url string) {
 	}(idx, url)
 }
 
-// triggerAllEndpointReconnections forces reconnection for every endpoint that
-// isn't already reconnecting. Called when WritePacket fails repeatedly,
-// indicating all endpoints are unhealthy and per-endpoint reconnection alone
-// isn't recovering fast enough.
+// triggerAllEndpointReconnections forces reconnection for every unhealthy
+// endpoint that isn't already reconnecting. Healthy endpoints are skipped to
+// prevent a single-endpoint failure from cascading to all endpoints.
+//
+// Called when WritePacket fails repeatedly or the tunnel liveness monitor
+// detects stale streams. The healthy-endpoint check acts as a safety net:
+// callers should ideally target specific endpoints, but if they invoke this
+// function, only genuinely broken endpoints will be disrupted.
 func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
 	g.mu.RLock()
 	if g.closing {
@@ -3283,12 +3318,34 @@ func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
 	}
 	g.mu.RUnlock()
 
+	g.endpointsMu.RLock()
+	endpoints := g.endpoints
+	g.endpointsMu.RUnlock()
+
+	reconnected := 0
+	skipped := 0
 	for i := range g.endpointReconnecting {
+		// Safety net: skip endpoints that are still healthy. This prevents a
+		// single-endpoint failure from cascading to all endpoints — the root
+		// cause of total outage when one ion dies while others are fine.
+		if i < len(endpoints) && endpoints[i] != nil && endpoints[i].healthy.Load() {
+			skipped++
+			g.logger.Debug("aggressive reconnect: skipping healthy endpoint %d (%s)", i, reason)
+			continue
+		}
 		if g.endpointReconnecting[i].CompareAndSwap(false, true) {
-			g.logger.Info("aggressive reconnect: triggering endpoint %d reconnection (%s)", i, reason)
+			reconnected++
+			var epURL string
+			if i < len(endpoints) && endpoints[i] != nil {
+				epURL = endpoints[i].URL
+			}
+			g.logger.Info("aggressive reconnect: triggering endpoint %d (%s) reconnection (%s)", i, epURL, reason)
 			g.disconnectEndpointStreams(i)
 			go g.reconnectEndpoint(i, reason)
 		}
+	}
+	if skipped > 0 {
+		g.logger.Info("aggressive reconnect: skipped %d healthy endpoint(s), reconnected %d (%s)", skipped, reconnected, reason)
 	}
 }
 
@@ -4580,14 +4637,13 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 	// Multi-endpoint routing: sticky flow binding to selected endpoint.
 	if stream, err := g.selectStreamForPacket(payload); err != nil {
 		g.logger.Error("writePacket failed to select stream: %v", err)
-		// Track consecutive write failures. When all endpoints are unhealthy,
-		// aggressively trigger reconnection for every endpoint that isn't
-		// already reconnecting, and wake peer discovery to re-resolve DNS.
-		if failures := g.consecutiveWriteFailures.Add(1); failures == 1 || failures%10 == 0 {
-			g.logger.Warn("triggering aggressive reconnection after %d consecutive write failure(s)", failures)
-			g.wakePeerDiscovery()
-			g.triggerAllEndpointReconnections("consecutive_write_failures")
-		}
+		// Do NOT trigger reconnection here. selectStreamForPacket already
+		// handles per-endpoint reconnection internally: when all streams for
+		// an endpoint are unhealthy, it marks the endpoint unhealthy and calls
+		// triggerEndpointReconnectByURL. The tunnel liveness monitor (AGNT
+		// keepalive) provides the authoritative signal for dead endpoints.
+		// Reacting to individual packet failures caused false-positive
+		// cascading reconnection that killed healthy endpoints.
 		return err
 	} else {
 		if g.tracePackets {
@@ -4630,16 +4686,14 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 				return nil
 			}
 			g.logger.Error("writePacket stream.Send failed: %v", err)
-			// Send errors are just as indicative of a broken connection as
-			// stream selection failures — increment the counter for both.
-			if failures := g.consecutiveWriteFailures.Add(1); failures == 1 || failures%10 == 0 {
-				g.logger.Warn("triggering aggressive reconnection after %d consecutive write failure(s) (send error)", failures)
-				g.wakePeerDiscovery()
-				g.triggerAllEndpointReconnections("consecutive_send_failures")
-			}
+			// Do NOT trigger reconnection from Send failures. A single bad
+			// packet (TCP retransmit, transient buffer pressure) must not
+			// flap the connection. The stream is already marked unhealthy
+			// above, so selectStreamForPacket will route future packets to
+			// other streams/endpoints. The tunnel liveness monitor (AGNT
+			// keepalive echo) is the authoritative signal for dead endpoints
+			// and will trigger per-endpoint reconnection when appropriate.
 		} else {
-			// Reset consecutive failure counter on successful write
-			g.consecutiveWriteFailures.Store(0)
 			if g.tracePackets {
 				g.tracePacketLogger.Debug("writePacket stream.Send succeeded for stream %s", stream.streamID)
 			}

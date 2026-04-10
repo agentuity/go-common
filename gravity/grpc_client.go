@@ -413,6 +413,7 @@ type StreamMetrics struct {
 	LastError       time.Time
 	LastSendUs      int64 // unix microseconds of last successful send
 	LastRecvUs      int64 // unix microseconds of last successful receive
+	LastProbeSentUs int64 // unix microseconds of last keepalive probe sent (probe-only, not data traffic)
 }
 
 // New creates a new gRPC-based Gravity server client
@@ -1135,14 +1136,16 @@ func (g *GravityClient) resolveGravityURLs() []string {
 // The keepalive probe ("AGNT" marker) is sent on one stream per endpoint every
 // 10s. Ion echoes it back immediately, updating LastRecvUs in stream metrics.
 // This keeps idle connections active and provides a positive liveness signal.
-// sendTunnelKeepalives also sets LastSendUs on first probe so streams are
+// sendTunnelKeepalives also sets LastProbeSentUs on every probe so streams are
 // promoted from "idle" (zero timestamps) to "probed" — enabling detection
-// of endpoints that die before the first echo arrives.
+// of endpoints that die before the first echo arrives. LastProbeSentUs is
+// separate from LastSendUs (updated by normal data traffic) to prevent
+// WritePacket sends from masking zombie tunnels.
 //
 // If ALL streams on an endpoint have been probed but show no round-trip
 // activity for 30s (~3 missed probes), the endpoint is marked unhealthy
 // and reconnection is triggered. Streams that have never been probed
-// (LastSendUs=0, LastRecvUs=0) are truly idle and not flagged.
+// (LastProbeSentUs=0, LastRecvUs=0) are truly idle and not flagged.
 func (g *GravityClient) tunnelLivenessMonitor() {
 	defer func() {
 		if r := recover(); r != nil {
@@ -1266,17 +1269,17 @@ func (g *GravityClient) sendTunnelKeepalives() {
 			}()
 			select {
 			case err := <-errCh:
-				// Update LastSendUs on first successful probe so the stream
-				// is promoted from "idle" (zero timestamps) to "probed."
-				// Only set once (when LastSendUs==0) so the timestamp
-				// represents "probing since" — if gRPC buffers Sends
-				// locally while the remote is dead, we don't want
-				// LastSendUs refreshed each cycle which would prevent
-				// stale detection.
+				// Update LastProbeSentUs on every successful probe so the
+				// liveness monitor can distinguish "probed but no echo"
+				// from "never probed." Unlike LastSendUs (updated by
+				// normal WritePacket traffic), LastProbeSentUs is only
+				// set by keepalive probes — preventing data-path sends
+				// from masking a zombie tunnel (one-way: sending works,
+				// receiving doesn't).
 				if err == nil {
 					g.streamManager.metricsMu.Lock()
-					if m := g.streamManager.streamMetrics[snap.streamID]; m != nil && m.LastSendUs == 0 {
-						m.LastSendUs = time.Now().UnixMicro()
+					if m := g.streamManager.streamMetrics[snap.streamID]; m != nil {
+						m.LastProbeSentUs = time.Now().UnixMicro()
 					}
 					g.streamManager.metricsMu.Unlock()
 				}
@@ -1342,13 +1345,12 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 				continue
 			}
 
-			lastSendUs := metrics.LastSendUs
 			lastRecvUs := metrics.LastRecvUs
 
 			// Truly idle: never probed, never received. This means
 			// sendTunnelKeepalives hasn't run yet (e.g., stream just
 			// established). Don't flag as stale — wait for first probe.
-			if lastSendUs == 0 && lastRecvUs == 0 {
+			if metrics.LastProbeSentUs == 0 && lastRecvUs == 0 {
 				allStale = false
 				break
 			}
@@ -1356,14 +1358,15 @@ func (g *GravityClient) checkTunnelStreamLiveness(staleTimeout time.Duration) {
 			// Use LastRecvUs as the primary liveness signal when echoes
 			// have been received — it confirms the remote end is alive.
 			// If we've probed but never received an echo (LastRecvUs==0),
-			// fall back to LastSendUs which represents "probing since."
-			// This covers the case where an ion dies before the first
-			// AGNT echo arrives on an idle hadron.
+			// fall back to LastProbeSentUs which represents "probing since."
+			// Using LastProbeSentUs (not LastSendUs) avoids masking zombie
+			// tunnels — normal WritePacket traffic updates LastSendUs, which
+			// can hide a one-way tunnel where sending works but receiving doesn't.
 			var lastActivity int64
 			if lastRecvUs > 0 {
 				lastActivity = lastRecvUs
 			} else {
-				lastActivity = lastSendUs
+				lastActivity = metrics.LastProbeSentUs
 			}
 
 			if (now - lastActivity) < staleUs {
@@ -1679,9 +1682,21 @@ func (g *GravityClient) addEndpoint(newURL string) {
 		}
 	}
 	if slotIdx < 0 {
-		g.endpointsMu.Unlock()
-		g.logger.Debug("peer discovery: no empty slot for new endpoint %s", newURL)
-		return
+		// No empty slot found. If we haven't reached maxPeers, grow
+		// the endpoints slice (startup may have discovered fewer peers
+		// than the configured maximum).
+		maxPeers := g.poolConfig.MaxGravityPeers
+		if maxPeers <= 0 {
+			maxPeers = DefaultMaxGravityPeers
+		}
+		if len(g.endpoints) < maxPeers {
+			slotIdx = len(g.endpoints)
+			g.endpoints = append(g.endpoints, nil) // will be set below
+		} else {
+			g.endpointsMu.Unlock()
+			g.logger.Debug("peer discovery: no empty slot for new endpoint %s (at max %d peers)", newURL, maxPeers)
+			return
+		}
 	}
 
 	newEp := &GravityEndpoint{URL: newURL}
@@ -1689,12 +1704,49 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	g.endpoints[slotIdx] = newEp
 	g.endpointsMu.Unlock()
 
-	// Update connection URL mapping for the new endpoint.
+	// Grow all parallel arrays indexed by endpoint index so that
+	// reconnectEndpoint and other code paths can safely access [slotIdx].
+	// This mirrors the initialization in startMultiEndpoint.
 	g.mu.Lock()
-	if slotIdx < len(g.connectionURLs) {
-		g.connectionURLs[slotIdx] = newURL
+	for len(g.connectionURLs) <= slotIdx {
+		g.connectionURLs = append(g.connectionURLs, "")
+	}
+	g.connectionURLs[slotIdx] = newURL
+	for len(g.connections) <= slotIdx {
+		g.connections = append(g.connections, nil)
+	}
+	for len(g.sessionClients) <= slotIdx {
+		g.sessionClients = append(g.sessionClients, nil)
+	}
+	for len(g.circuitBreakers) <= slotIdx {
+		g.circuitBreakers = append(g.circuitBreakers, nil)
+	}
+	for len(g.endpointReconnecting) <= slotIdx {
+		g.endpointReconnecting = append(g.endpointReconnecting, atomic.Bool{})
 	}
 	g.mu.Unlock()
+
+	// Grow stream manager arrays under their respective locks.
+	g.streamManager.controlMu.Lock()
+	for len(g.streamManager.controlStreams) <= slotIdx {
+		g.streamManager.controlStreams = append(g.streamManager.controlStreams, nil)
+	}
+	for len(g.streamManager.controlSendMu) <= slotIdx {
+		g.streamManager.controlSendMu = append(g.streamManager.controlSendMu, sync.Mutex{})
+	}
+	for len(g.streamManager.contexts) <= slotIdx {
+		g.streamManager.contexts = append(g.streamManager.contexts, nil)
+	}
+	for len(g.streamManager.cancels) <= slotIdx {
+		g.streamManager.cancels = append(g.streamManager.cancels, nil)
+	}
+	g.streamManager.controlMu.Unlock()
+
+	g.streamManager.healthMu.Lock()
+	for len(g.streamManager.connectionHealth) <= slotIdx {
+		g.streamManager.connectionHealth = append(g.streamManager.connectionHealth, false)
+	}
+	g.streamManager.healthMu.Unlock()
 
 	g.logger.Info("peer discovery: added new endpoint %s at slot %d, starting reconnection", newURL, slotIdx)
 	go g.reconnectEndpoint(slotIdx, "peer_discovery_add")
@@ -3381,8 +3433,21 @@ func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
 	}
 	g.mu.RUnlock()
 
+	// Snapshot endpoint URL and health state while holding the lock. The
+	// slice header copy (endpoints = g.endpoints) is safe for the header
+	// itself, but entries can be mutated by other goroutines after release.
+	// Copying into a local struct slice avoids reading stale/torn values.
+	type epSnapshot struct {
+		url     string
+		healthy bool
+	}
 	g.endpointsMu.RLock()
-	endpoints := g.endpoints
+	snapshots := make([]epSnapshot, len(g.endpoints))
+	for i, ep := range g.endpoints {
+		if ep != nil {
+			snapshots[i] = epSnapshot{url: ep.URL, healthy: ep.healthy.Load()}
+		}
+	}
 	g.endpointsMu.RUnlock()
 
 	reconnected := 0
@@ -3391,7 +3456,7 @@ func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
 		// Safety net: skip endpoints that are still healthy. This prevents a
 		// single-endpoint failure from cascading to all endpoints — the root
 		// cause of total outage when one ion dies while others are fine.
-		if i < len(endpoints) && endpoints[i] != nil && endpoints[i].healthy.Load() {
+		if i < len(snapshots) && snapshots[i].healthy {
 			skipped++
 			g.logger.Debug("aggressive reconnect: skipping healthy endpoint %d (%s)", i, reason)
 			continue
@@ -3399,8 +3464,8 @@ func (g *GravityClient) triggerAllEndpointReconnections(reason string) {
 		if g.endpointReconnecting[i].CompareAndSwap(false, true) {
 			reconnected++
 			var epURL string
-			if i < len(endpoints) && endpoints[i] != nil {
-				epURL = endpoints[i].URL
+			if i < len(snapshots) {
+				epURL = snapshots[i].url
 			}
 			g.logger.Info("aggressive reconnect: triggering endpoint %d (%s) reconnection (%s)", i, epURL, reason)
 			g.disconnectEndpointStreams(i)

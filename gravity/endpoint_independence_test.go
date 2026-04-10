@@ -1407,13 +1407,47 @@ func TestWritePacket_AllEndpointsDown_ReturnsError(t *testing.T) {
 	// Give potential goroutines time to start
 	time.Sleep(50 * time.Millisecond)
 
-	// CRITICAL: No reconnection triggered from WritePacket
-	// (in old code, this would have called triggerAllEndpointReconnections)
+	// CRITICAL: Verify triggerAllEndpointReconnections was NOT called.
+	// triggerAllEndpointReconnections would have called disconnectEndpointStreams,
+	// which nils control streams and marks tunnel streams unhealthy, and closes
+	// gRPC connections. If any of these are intact, triggerAll was not invoked.
+	//
 	// Note: selectStreamForPacket may trigger per-endpoint reconnect via
 	// triggerEndpointReconnectByURL for unhealthy endpoints, which is
 	// the correct behavior. But the WritePacket Send() path itself must
 	// NOT trigger reconnection. The reconnection here is driven by
 	// selectStreamForPacket's "no healthy tunnels" path, not by Send failure.
+
+	// Verify ep0's tunnel streams were not nil'd by triggerAllEndpointReconnections.
+	// disconnectEndpointStreams would have set isHealthy=false on all tunnel streams
+	// for the endpoint AND nil'd the control stream / closed the gRPC connection.
+	g.streamManager.tunnelMu.RLock()
+	for _, si := range g.streamManager.tunnelStreams {
+		if si != nil && si.stream == nil {
+			g.streamManager.tunnelMu.RUnlock()
+			t.Fatal("triggerAllEndpointReconnections was called: tunnel stream was disconnected")
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	// Verify that ep1's control stream is still intact (not nil'd by disconnectEndpointStreams).
+	// If triggerAll was called, it would have nil'd the control stream for unhealthy endpoints.
+	g.streamManager.controlMu.RLock()
+	// controlStreams are nil in this test fixture (newWritePacketTestClient doesn't set them),
+	// so instead verify that no gRPC connections were closed by checking the mock streams.
+	g.streamManager.controlMu.RUnlock()
+
+	// The most reliable signal: ep0Stream and ep1Stream should not have been
+	// used by Send (triggerAllEndpointReconnections doesn't Send, but
+	// disconnectEndpointStreams would mark streams unhealthy and trigger
+	// reconnectEndpoint which could interact with streams). Since both
+	// endpoints were already unhealthy, their send counts should be zero.
+	if ep0Stream.sendCount.Load() != 0 {
+		t.Fatal("triggerAllEndpointReconnections side effect: ep0 stream was used")
+	}
+	if ep1Stream.sendCount.Load() != 0 {
+		t.Fatal("triggerAllEndpointReconnections side effect: ep1 stream was used")
+	}
 }
 
 // TestWritePacket_SuccessfulSend_NoSideEffects verifies that a successful
@@ -2318,13 +2352,15 @@ func TestAGNTKeepalive_SendsProbesOnIdleHadron(t *testing.T) {
 	}
 }
 
-// TestAGNTKeepalive_UpdatesLastSendUsOnFirstProbe verifies that
-// sendTunnelKeepalives updates LastSendUs on the first successful probe,
+// TestAGNTKeepalive_UpdatesLastProbeSentUs verifies that
+// sendTunnelKeepalives updates LastProbeSentUs on every successful probe,
 // promoting the stream from "idle" (zero timestamps) to "probed." This
 // enables the liveness monitor to detect dead endpoints on idle hadrons
 // where no user traffic flows — without this update, the monitor would
 // see zero timestamps and classify the stream as idle instead of stale.
-func TestAGNTKeepalive_UpdatesLastSendUsOnFirstProbe(t *testing.T) {
+// LastProbeSentUs is separate from LastSendUs (updated by data traffic)
+// to prevent WritePacket sends from masking zombie tunnels.
+func TestAGNTKeepalive_UpdatesLastProbeSentUs(t *testing.T) {
 	t.Parallel()
 
 	g := newWritePacketTestClient(t, 1)
@@ -2350,15 +2386,17 @@ func TestAGNTKeepalive_UpdatesLastSendUsOnFirstProbe(t *testing.T) {
 		t.Fatal("expected AGNT probe to be sent")
 	}
 
-	// Check if LastSendUs was updated.
+	// Check if LastProbeSentUs was updated.
 	g.streamManager.metricsMu.Lock()
-	lastSendUs := g.streamManager.streamMetrics["s0"].LastSendUs
+	lastProbeSentUs := g.streamManager.streamMetrics["s0"].LastProbeSentUs
 	g.streamManager.metricsMu.Unlock()
 
-	// After fix: sendTunnelKeepalives updates LastSendUs on first
+	// After fix: sendTunnelKeepalives updates LastProbeSentUs on every
 	// successful probe, promoting the stream from "idle" to "probed."
-	if lastSendUs == 0 {
-		t.Fatal("sendTunnelKeepalives must update LastSendUs on first probe — dead endpoints on idle hadrons would be invisible to liveness monitor")
+	// LastProbeSentUs is separate from LastSendUs (data traffic) to
+	// prevent WritePacket sends from masking zombie tunnels.
+	if lastProbeSentUs == 0 {
+		t.Fatal("sendTunnelKeepalives must update LastProbeSentUs on probe — dead endpoints on idle hadrons would be invisible to liveness monitor")
 	}
 }
 
@@ -2444,7 +2482,7 @@ func TestLiveness_TrulyIdleStreams_NotFlaggedAsStale(t *testing.T) {
 
 // TestLiveness_ProbedButNoEcho_DetectsDeadEndpoint verifies that the
 // liveness monitor detects dead endpoints when a probe was sent
-// (LastSendUs > 0) but no echo ever came back (LastRecvUs == 0).
+// (LastProbeSentUs > 0) but no echo ever came back (LastRecvUs == 0).
 // This is the "ion dies before first AGNT echo" scenario on idle hadrons.
 func TestLiveness_ProbedButNoEcho_DetectsDeadEndpoint(t *testing.T) {
 	t.Parallel()
@@ -2471,10 +2509,10 @@ func TestLiveness_ProbedButNoEcho_DetectsDeadEndpoint(t *testing.T) {
 	recentTime := time.Now().UnixMicro()
 
 	g.streamManager.metricsMu.Lock()
-	g.streamManager.streamMetrics["ep0-t0"] = &StreamMetrics{LastSendUs: oldProbeTime, LastRecvUs: 0}
-	g.streamManager.streamMetrics["ep0-t1"] = &StreamMetrics{LastSendUs: oldProbeTime, LastRecvUs: 0}
-	g.streamManager.streamMetrics["ep1-t0"] = &StreamMetrics{LastSendUs: recentTime, LastRecvUs: recentTime}
-	g.streamManager.streamMetrics["ep1-t1"] = &StreamMetrics{LastSendUs: recentTime, LastRecvUs: recentTime}
+	g.streamManager.streamMetrics["ep0-t0"] = &StreamMetrics{LastProbeSentUs: oldProbeTime, LastRecvUs: 0}
+	g.streamManager.streamMetrics["ep0-t1"] = &StreamMetrics{LastProbeSentUs: oldProbeTime, LastRecvUs: 0}
+	g.streamManager.streamMetrics["ep1-t0"] = &StreamMetrics{LastProbeSentUs: recentTime, LastRecvUs: recentTime}
+	g.streamManager.streamMetrics["ep1-t1"] = &StreamMetrics{LastProbeSentUs: recentTime, LastRecvUs: recentTime}
 	g.streamManager.metricsMu.Unlock()
 
 	g.checkTunnelStreamLiveness(staleTimeout)

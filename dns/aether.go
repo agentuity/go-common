@@ -268,28 +268,38 @@ func WithRedis(redis *redis.Client) optionHandler {
 	}
 }
 
+var defaultCatalystHTTPClient = &http.Client{
+	Timeout: 10 * time.Second,
+}
+
 // WithCatalyst uses the Catalyst HTTP API for DNS operations.
 // apiURL is the base URL of the catalyst server (e.g., "https://catalyst.agentuity.cloud")
-// token is the aether API token (ak_ prefix) for authentication
+// token is the aether API token (ak_ prefix) for authentication.
+//
+// Note: Certificate actions (DNSCertAction) are not supported via Catalyst.
+// Use Redis transport (WithRedis) for certificate operations.
 func WithCatalyst(apiURL, token string) optionHandler {
 	return func(o *option) {
 		o.catalystClient = &catalystClient{
 			baseURL: strings.TrimSuffix(apiURL, "/"),
 			token:   token,
-			client: &http.Client{
-				Timeout: 30 * time.Second,
-			},
+			client:  defaultCatalystHTTPClient,
 		}
 	}
 }
 
 // WithCatalystClient uses a custom HTTP client with the Catalyst API.
+// If httpClient is nil, uses the default Catalyst HTTP client (10s timeout).
 func WithCatalystClient(apiURL, token string, httpClient *http.Client) optionHandler {
 	return func(o *option) {
+		client := httpClient
+		if client == nil {
+			client = defaultCatalystHTTPClient
+		}
 		o.catalystClient = &catalystClient{
 			baseURL: strings.TrimSuffix(apiURL, "/"),
 			token:   token,
-			client:  httpClient,
+			client:  client,
 		}
 	}
 }
@@ -509,8 +519,8 @@ func sendViaCatalyst[R any, T TypedDNSAction[R]](ctx context.Context, client *ca
 			return nil, err
 		}
 		var result R
-		if record, ok := any(&result).(**DNSRecord); ok {
-			*record = &DNSRecord{IDs: resp.IDs}
+		if record, ok := any(&result).(*DNSRecord); ok {
+			record.IDs = resp.IDs
 		}
 		return &result, nil
 
@@ -529,6 +539,9 @@ func sendViaCatalyst[R any, T TypedDNSAction[R]](ctx context.Context, client *ca
 		}
 		var result R
 		return &result, nil
+
+	case *DNSCertAction:
+		return nil, errors.New("certificate actions are not supported via Catalyst HTTP API; use Redis transport instead")
 
 	default:
 		return nil, fmt.Errorf("unsupported action type: %T", action)

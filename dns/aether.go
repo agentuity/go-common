@@ -1,13 +1,17 @@
 package dns
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
 	"time"
 
+	"github.com/agentuity/go-common/api"
 	cstr "github.com/agentuity/go-common/string"
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
@@ -225,12 +229,16 @@ type Subscriber interface {
 }
 
 type option struct {
-	transport Transport
-	timeout   time.Duration
-	reply     bool
+	transport      Transport
+	catalystClient *catalystClient
+	timeout        time.Duration
+	reply          bool
 }
 
-type optionHandler func(*option)
+// OptionHandler is a function that configures DNS action options.
+type OptionHandler func(*option)
+
+type optionHandler = OptionHandler
 
 // WithReply sets whether the DNS action should wait for a reply from the DNS server
 func WithReply(reply bool) optionHandler {
@@ -258,6 +266,83 @@ func WithRedis(redis *redis.Client) optionHandler {
 	return func(o *option) {
 		o.transport = &redisTransport{redis: redis}
 	}
+}
+
+// WithCatalyst uses the Catalyst HTTP API for DNS operations.
+// apiURL is the base URL of the catalyst server (e.g., "https://catalyst.agentuity.cloud")
+// token is the aether API token (ak_ prefix) for authentication
+func WithCatalyst(apiURL, token string) optionHandler {
+	return func(o *option) {
+		o.catalystClient = &catalystClient{
+			baseURL: strings.TrimSuffix(apiURL, "/"),
+			token:   token,
+			client: &http.Client{
+				Timeout: 30 * time.Second,
+			},
+		}
+	}
+}
+
+// WithCatalystClient uses a custom HTTP client with the Catalyst API.
+func WithCatalystClient(apiURL, token string, httpClient *http.Client) optionHandler {
+	return func(o *option) {
+		o.catalystClient = &catalystClient{
+			baseURL: strings.TrimSuffix(apiURL, "/"),
+			token:   token,
+			client:  httpClient,
+		}
+	}
+}
+
+type catalystClient struct {
+	baseURL string
+	token   string
+	client  *http.Client
+}
+
+func (c *catalystClient) do(ctx context.Context, action string, reqBody interface{}, respBody interface{}) error {
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	url := c.baseURL + "/aether/dns/" + action
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("User-Agent", api.UserAgent())
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to call API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		var errResp struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(respBodyBytes, &errResp) == nil && errResp.Error != "" {
+			return errors.New(errResp.Error)
+		}
+		return fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(respBodyBytes))
+	}
+
+	if err := json.Unmarshal(respBodyBytes, respBody); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return nil
 }
 
 type redisSubscriber struct {
@@ -341,6 +426,11 @@ func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, op
 		opt(&o)
 	}
 
+	// Use Catalyst HTTP API if configured
+	if o.catalystClient != nil {
+		return sendViaCatalyst(ctx, o.catalystClient, action, o.timeout)
+	}
+
 	if o.transport == nil {
 		return nil, ErrTransportRequired
 	}
@@ -384,4 +474,63 @@ func SendDNSAction[R any, T TypedDNSAction[R]](ctx context.Context, action T, op
 	}
 
 	return nil, nil
+}
+
+func sendViaCatalyst[R any, T TypedDNSAction[R]](ctx context.Context, client *catalystClient, action T, timeout time.Duration) (*R, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	switch a := any(action).(type) {
+	case *DNSAddAction:
+		var resp struct {
+			IDs []string `json:"ids"`
+		}
+		req := map[string]interface{}{
+			"name":  a.Name,
+			"type":  a.Type,
+			"value": a.Value,
+		}
+		if a.TTL > 0 {
+			req["ttl"] = int(a.TTL.Seconds())
+		}
+		if a.Expires > 0 {
+			req["expires"] = int(a.Expires.Seconds())
+		}
+		if a.Priority > 0 {
+			req["priority"] = a.Priority
+		}
+		if a.Weight > 0 {
+			req["weight"] = a.Weight
+		}
+		if a.Port > 0 {
+			req["port"] = a.Port
+		}
+		if err := client.do(ctx, "add", req, &resp); err != nil {
+			return nil, err
+		}
+		var result R
+		if record, ok := any(&result).(**DNSRecord); ok {
+			*record = &DNSRecord{IDs: resp.IDs}
+		}
+		return &result, nil
+
+	case *DNSDeleteAction:
+		req := map[string]interface{}{
+			"name": a.Name,
+		}
+		if len(a.IDs) > 0 {
+			req["ids"] = a.IDs
+		}
+		var resp struct {
+			Deleted bool `json:"deleted"`
+		}
+		if err := client.do(ctx, "delete", req, &resp); err != nil {
+			return nil, err
+		}
+		var result R
+		return &result, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported action type: %T", action)
+	}
 }

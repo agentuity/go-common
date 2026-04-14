@@ -126,6 +126,7 @@ message SessionHelloResponse {
   string machine_token = 12; // JWT token for machine to authenticate with catalyst
   string machine_cert_bundle = 13; // PEM certificate bundle (cert, ca, key)
   bytes signing_public_key = 14; // PEM-encoded ECDSA public key for upstream request signature verification
+  string machine_subnet = 15; // Per-machine /64 subnet for sandbox VIPs (e.g., "fd15:d710:02:05:a1b2::/64")
 }
 
 // SessionCloseRequest is sent to gracefully close the session.

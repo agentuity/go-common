@@ -53,6 +53,10 @@ type Configuration struct {
 	MachineToken string
 	// MachineID is the server-assigned machine identifier
 	MachineID string
+	// MachineSubnet is the per-machine /64 sandbox subnet assigned by gravity.
+	// Hadron uses this to compute deterministic VIPs for sandboxes via
+	// ComputeSandboxVIP(subnet, sandboxID).
+	MachineSubnet string
 	// MachineCertBundle is the server-assigned machine certificate bundle (cert, ca, key)
 	MachineCertBundle string
 	// SigningPublicKey is the PEM-encoded ECDSA public key used by the ion proxy

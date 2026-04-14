@@ -180,6 +180,97 @@ func TestVIPHeartbeat_JSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSubnetRoute_JSONRoundTrip(t *testing.T) {
+	tests := []struct {
+		name string
+		msg  SubnetRoute
+	}{
+		{
+			name: "add route",
+			msg: SubnetRoute{
+				Subnet:    "fd15:d710:02:05:a1b2::/64",
+				MachineID: "m-123",
+				IonID:     "10.0.0.1",
+				Timestamp: 1700000000,
+				Action:    "add",
+			},
+		},
+		{
+			name: "remove route",
+			msg: SubnetRoute{
+				Subnet:    "fd15:d710:02:05:c3d4::/64",
+				MachineID: "m-456",
+				IonID:     "10.0.0.2",
+				Timestamp: 1700000001,
+				Action:    "remove",
+			},
+		},
+		{
+			name: "zero value",
+			msg:  SubnetRoute{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			data, err := json.Marshal(tt.msg)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var got SubnetRoute
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if got != tt.msg {
+				t.Fatalf("mismatch: got %+v, want %+v", got, tt.msg)
+			}
+		})
+	}
+}
+
+func TestSubnetRoute_EncodeDecode(t *testing.T) {
+	orig := SubnetRoute{
+		Subnet:    "fd15:d710:02:05:a1b2::/64",
+		MachineID: "m-789",
+		IonID:     "10.0.0.3",
+		Timestamp: 1700000000,
+		Action:    "add",
+	}
+
+	data, err := Encode(orig)
+	if err != nil {
+		t.Fatalf("Encode: %v", err)
+	}
+
+	gotTyp, gotMsg, err := Decode(data)
+	if err != nil {
+		t.Fatalf("Decode: %v", err)
+	}
+	if gotTyp != MsgSubnetRoute {
+		t.Fatalf("type mismatch: got %v, want %v", gotTyp, MsgSubnetRoute)
+	}
+
+	got, ok := gotMsg.(*SubnetRoute)
+	if !ok {
+		t.Fatalf("decoded type: got %T, want *SubnetRoute", gotMsg)
+	}
+	if got.Subnet != orig.Subnet {
+		t.Errorf("Subnet: got %q, want %q", got.Subnet, orig.Subnet)
+	}
+	if got.MachineID != orig.MachineID {
+		t.Errorf("MachineID: got %q, want %q", got.MachineID, orig.MachineID)
+	}
+	if got.IonID != orig.IonID {
+		t.Errorf("IonID: got %q, want %q", got.IonID, orig.IonID)
+	}
+	if got.Timestamp != orig.Timestamp {
+		t.Errorf("Timestamp: got %d, want %d", got.Timestamp, orig.Timestamp)
+	}
+	if got.Action != orig.Action {
+		t.Errorf("Action: got %q, want %q", got.Action, orig.Action)
+	}
+}
+
 // ---------- JSON snake_case tag verification ----------
 
 func TestJSONSnakeCaseTags(t *testing.T) {
@@ -386,6 +477,7 @@ func TestMessageType_String(t *testing.T) {
 		{MsgEndpointTombstone, "EndpointTombstone"},
 		{MsgNATEntry, "NATEntry"},
 		{MsgVIPHeartbeat, "VIPHeartbeat"},
+		{MsgSubnetRoute, "SubnetRoute"},
 		{MessageType(99), "Unknown(99)"},
 	}
 	for _, tt := range tests {

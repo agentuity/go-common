@@ -3537,6 +3537,9 @@ func (g *GravityClient) disconnectEndpointStreams(endpointIndex int) {
 	g.streamManager.tunnelMu.Lock()
 	for _, si := range g.streamManager.tunnelStreams {
 		if si != nil && si.connIndex == endpointIndex {
+			if si.stream != nil {
+				_ = si.stream.CloseSend()
+			}
 			si.isHealthy = false
 		}
 	}
@@ -4280,10 +4283,15 @@ func (g *GravityClient) reconnect() error {
 	g.endpointStreamIndices = make(map[string][]int)
 
 	// Reset stream manager state
+	g.streamManager.tunnelMu.Lock()
 	g.streamManager.tunnelStreams = nil
+	g.streamManager.tunnelMu.Unlock()
+
+	g.streamManager.controlMu.Lock()
 	g.streamManager.controlStreams = nil
 	g.streamManager.contexts = nil
 	g.streamManager.cancels = nil
+	g.streamManager.controlMu.Unlock()
 
 	// Drain the connection ID channel to avoid stale data
 	g.drainConnectionIDChan()
@@ -4573,6 +4581,9 @@ func (sm *StreamManager) selectOptimalTunnelStream() *StreamInfo {
 	var minLoad int64 = -1
 
 	for _, stream := range sm.tunnelStreams {
+		if stream == nil {
+			continue
+		}
 		if !stream.isHealthy {
 			continue
 		}
@@ -4901,12 +4912,15 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 	}
 
 	stream := g.streamManager.tunnelStreams[streamIndex]
-	if !stream.isHealthy {
+	if stream == nil || !stream.isHealthy {
 		streamIndex, err = g.selectHealthyStream()
 		if err != nil {
 			return nil, fmt.Errorf("no healthy tunnel streams available")
 		}
 		stream = g.streamManager.tunnelStreams[streamIndex]
+	}
+	if stream == nil || !stream.isHealthy {
+		return nil, fmt.Errorf("no healthy tunnel streams available")
 	}
 
 	stream.loadCount++
@@ -5122,6 +5136,9 @@ func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil {
+			continue
+		}
 		if !streamInfo.isHealthy {
 			continue
 		}
@@ -5147,6 +5164,9 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 
 	healthyStreams := make([]int, 0)
 	for i, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil {
+			continue
+		}
 		if streamInfo.isHealthy && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.streamManager.connectionHealth) && g.streamManager.connectionHealth[streamInfo.connIndex] {
 			healthyStreams = append(healthyStreams, i)
 		}
@@ -5166,7 +5186,7 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 // selectHealthyStream finds any available healthy stream
 func (g *GravityClient) selectHealthyStream() (int, error) {
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy {
+		if streamInfo != nil && streamInfo.isHealthy {
 			return i, nil
 		}
 	}

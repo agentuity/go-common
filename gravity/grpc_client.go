@@ -2360,8 +2360,14 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			return
 		}
 
-		if g.tracePackets {
-			g.tracePacketLogger.Debug("handleTunnelStream: received packet with %d bytes on stream %d", len(packet.Data), streamIndex)
+		// Always log received tunnel packets for debugging
+		if len(packet.Data) >= 40 {
+			srcIP := net.IP(packet.Data[8:24])
+			dstIP := net.IP(packet.Data[24:40])
+			nextHdr := packet.Data[6]
+			g.logger.Info("[tunnel-recv] stream %d: %d bytes SRC=%s DST=%s nextHdr=%d", streamIndex, len(packet.Data), srcIP, dstIP, nextHdr)
+		} else {
+			g.logger.Info("[tunnel-recv] stream %d: %d bytes (too small for IPv6)", streamIndex, len(packet.Data))
 		}
 
 		// If enqueuedAt is set, log tunnel transit latency.
@@ -4978,7 +4984,13 @@ func (g *GravityClient) handleInboundPackets() {
 			return
 		case packet := <-g.inboundPackets:
 			// Forward to provider for local processing
-			g.provider.ProcessInPacket(packet.Buffer[:packet.Length])
+			pktData := packet.Buffer[:packet.Length]
+			if len(pktData) >= 40 {
+				srcIP := net.IP(pktData[8:24])
+				dstIP := net.IP(pktData[24:40])
+				g.logger.Info("[inbound-deliver] %d bytes SRC=%s DST=%s → ProcessInPacket", len(pktData), srcIP, dstIP)
+			}
+			g.provider.ProcessInPacket(pktData)
 			g.inboundDelivered.Add(1)
 			g.returnBuffer(packet)
 		}

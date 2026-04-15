@@ -13,6 +13,9 @@ const AetherServiceIP = "fd15:d710:2d:c580:9dc5:aeeb::"
 // AigatewayServiceIP is the IP address for the aigateway service
 const AigatewayServiceIP = "fd15:d710:2e:c7e0:9dc5:a681::"
 
+// AuthServiceIP is the IP address for the auth service
+const AuthServiceIP = "fd15:d710:22:bd40:9dc5:1305::"
+
 // CatalystServiceIP is the IP address for the catalyst service
 const CatalystServiceIP = "fd15:d710:25:c500:9dc5:d408::"
 
@@ -32,6 +35,7 @@ const IonServiceIP = "fd15:d710:2c:8380:9dc5:95eb::"
 var Services = map[string]string{
 	AetherServiceIP:    "aether",
 	AigatewayServiceIP: "aigateway",
+	AuthServiceIP:      "auth",
 	CatalystServiceIP:  "catalyst",
 	OtelServiceIP:      "otel",
 	RegistryServiceIP:  "registry",
@@ -43,6 +47,7 @@ var Services = map[string]string{
 var Addresses = map[string]net.IP{
 	"aether":    net.ParseIP(AetherServiceIP),
 	"aigateway": net.ParseIP(AigatewayServiceIP),
+	"auth":      net.ParseIP(AuthServiceIP),
 	"catalyst":  net.ParseIP(CatalystServiceIP),
 	"otel":      net.ParseIP(OtelServiceIP),
 	"registry":  net.ParseIP(RegistryServiceIP),

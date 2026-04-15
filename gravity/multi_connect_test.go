@@ -283,7 +283,9 @@ func TestUseMultiConnect_MultipleURLsBypassDNSResolution(t *testing.T) {
 	}
 }
 
-func TestUseMultiConnect_CappedByMaxGravityPeers(t *testing.T) {
+func TestUseMultiConnect_AllCandidatesPassThrough(t *testing.T) {
+	// resolveGravityURLs no longer caps — all candidates included so
+	// establishControlStreamsMulti can race them.
 	g := &GravityClient{
 		ctx:    context.Background(),
 		logger: logger.NewTestLogger(),
@@ -301,7 +303,7 @@ func TestUseMultiConnect_CappedByMaxGravityPeers(t *testing.T) {
 	}
 
 	urls := g.resolveGravityURLs()
-	assert.Len(t, urls, 3, "URLs should be capped at MaxGravityPeers")
+	assert.Len(t, urls, 5, "all candidate URLs should pass through (cap at connection time)")
 }
 
 func TestUseMultiConnect_PortPreservation(t *testing.T) {
@@ -459,7 +461,7 @@ func TestUseMultiConnect_DuplicateURLsDeduplicated(t *testing.T) {
 	assert.Len(t, urls, 1, "duplicate URLs should be deduplicated")
 }
 
-func TestUseMultiConnect_ZeroMaxGravityPeersUsesDefault(t *testing.T) {
+func TestUseMultiConnect_ZeroMaxGravityPeersIncludesAll(t *testing.T) {
 	g := &GravityClient{
 		ctx:    context.Background(),
 		logger: logger.NewTestLogger(),
@@ -476,10 +478,10 @@ func TestUseMultiConnect_ZeroMaxGravityPeersUsesDefault(t *testing.T) {
 	}
 
 	urls := g.resolveGravityURLs()
-	assert.Len(t, urls, DefaultMaxGravityPeers, "should use DefaultMaxGravityPeers when MaxGravityPeers is 0")
+	assert.Len(t, urls, 4, "all candidates should pass through (cap at connection time)")
 }
 
-func TestUseMultiConnect_NegativeMaxGravityPeersUsesDefault(t *testing.T) {
+func TestUseMultiConnect_NegativeMaxGravityPeersIncludesAll(t *testing.T) {
 	g := &GravityClient{
 		ctx:    context.Background(),
 		logger: logger.NewTestLogger(),
@@ -496,7 +498,7 @@ func TestUseMultiConnect_NegativeMaxGravityPeersUsesDefault(t *testing.T) {
 	}
 
 	urls := g.resolveGravityURLs()
-	assert.Len(t, urls, DefaultMaxGravityPeers, "should use DefaultMaxGravityPeers when MaxGravityPeers is negative")
+	assert.Len(t, urls, 4, "all candidates should pass through (cap at connection time)")
 }
 
 func TestUseMultiConnect_EndpointSelectorCreated(t *testing.T) {

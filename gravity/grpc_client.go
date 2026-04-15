@@ -281,6 +281,7 @@ type GravityClient struct {
 	maxReconnectAttempts       int
 	reconnectAttemptTimeout    time.Duration
 	reconnectionFailedCallback func(attempts int, lastErr error)
+	onEndpointReady            func(endpointIndex int)
 
 	// State management
 	connected            bool
@@ -508,6 +509,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		maxReconnectAttempts:       config.MaxReconnectAttempts,
 		reconnectAttemptTimeout:    config.ReconnectAttemptTimeout,
 		reconnectionFailedCallback: config.ReconnectionFailedCallback,
+		onEndpointReady:            config.OnEndpointReady,
 		tracer:                     otel.Tracer("@agentuity/gravity/client"),
 	}
 	g.connectionCtx, g.connectionCancel = context.WithCancel(ctx)
@@ -651,12 +653,15 @@ func (g *GravityClient) Start() error {
 		conn, err := grpc.NewClient(grpcURL,
 			grpc.WithTransportCredentials(creds),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
-			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
+			grpc.WithInitialWindowSize(1<<20),
+			grpc.WithInitialConnWindowSize(4<<20),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second, // ping every 30s if no activity
-				Timeout:             10 * time.Second, // wait 10s for pong before declaring dead
-				PermitWithoutStream: true,             // ping even with no active RPCs
+				Time:                30 * time.Second,
+				Timeout:             10 * time.Second,
+				PermitWithoutStream: true,
+			}),
+			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
 		)
 		if err != nil {
@@ -802,30 +807,18 @@ func (g *GravityClient) startMultiEndpoint() error {
 				continue
 			}
 			if ok && len(ips) > 0 {
-				// Health-probe each resolved IP to filter dead/unready nodes.
-				// Deduplicate IPs and cap at MaxGravityPeers to ensure each
-				// endpoint connects to a distinct ion for true redundancy.
-				maxPeers := g.poolConfig.MaxGravityPeers
-				if maxPeers <= 0 {
-					maxPeers = DefaultMaxGravityPeers
-				}
+				// Add ALL unique IPs as candidate endpoints. Don't cap here —
+				// establishControlStreamsMulti connects in parallel and keeps
+				// the first MaxGravityPeers that succeed. This ensures stale
+				// DNS records (unreachable IPs) don't block real ions from
+				// getting a slot.
 				seen := make(map[string]bool, len(ips))
-				var healthy, unhealthy int
 				for _, ip := range ips {
-					if len(g.endpoints) >= maxPeers {
-						break // capped at MaxGravityPeers
-					}
 					ipStr := ip.String()
 					if seen[ipStr] {
 						continue // dedupe
 					}
 					seen[ipStr] = true
-					if !g.probeHealthEndpoint(ipStr, port) {
-						unhealthy++
-						g.logger.Debug("startup health probe failed for %s — skipping", ipStr)
-						continue
-					}
-					healthy++
 					hostPort := net.JoinHostPort(ipStr, port)
 					ep := &GravityEndpoint{
 						URL:           "grpc://" + hostPort,
@@ -833,30 +826,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 					}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
-				}
-				if healthy == 0 && unhealthy > 0 {
-					// All probes failed — fall back to using up to maxPeers unique IPs.
-					g.logger.Warn("all %d health probes failed for %s — using up to %d IPs unfiltered", unhealthy, hostname, maxPeers)
-					seen = make(map[string]bool, len(ips))
-					for _, ip := range ips {
-						if len(g.endpoints) >= maxPeers {
-							break
-						}
-						ipStr := ip.String()
-						if seen[ipStr] {
-							continue
-						}
-						seen[ipStr] = true
-						hostPort := net.JoinHostPort(ipStr, port)
-						ep := &GravityEndpoint{
-							URL:           "grpc://" + hostPort,
-							TLSServerName: hostname,
-						}
-						ep.healthy.Store(false)
-						g.endpoints = append(g.endpoints, ep)
-					}
-				} else if unhealthy > 0 {
-					g.logger.Info("startup health probes: %d healthy, %d unhealthy (filtered) for %s", healthy, unhealthy, hostname)
 				}
 			} else {
 				// DNS returned no IPs, fall back to original URL
@@ -991,6 +960,9 @@ func (g *GravityClient) startMultiEndpoint() error {
 				Timeout:             10 * time.Second,
 				PermitWithoutStream: true,
 			}),
+			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
+			}),
 		)
 		if err != nil {
 			g.logger.Error("failed to create gRPC client %d: %v", i+1, err)
@@ -1104,6 +1076,10 @@ func (g *GravityClient) resolveGravityURLs() []string {
 		maxPeers = DefaultMaxGravityPeers
 	}
 
+	// Don't cap at maxPeers here — include ALL URLs so
+	// establishControlStreamsMulti can race them in parallel and keep
+	// the first maxPeers that connect. Capping early lets stale/dead
+	// IPs steal slots from healthy ones.
 	seen := make(map[string]struct{}, len(g.gravityURLs))
 	urls := make([]string, 0, len(g.gravityURLs))
 	for _, raw := range g.gravityURLs {
@@ -1116,9 +1092,6 @@ func (g *GravityClient) resolveGravityURLs() []string {
 		}
 		seen[u] = struct{}{}
 		urls = append(urls, u)
-		if len(urls) >= maxPeers {
-			break
-		}
 	}
 
 	if len(urls) == 0 {
@@ -1163,6 +1136,11 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 	)
 
 	g.logger.Debug("tunnel liveness monitor started (check=%s, stale=%s)", checkInterval, staleTimeout)
+
+	// Send the first keepalive immediately — don't wait 10s. This lets
+	// ion verify the tunnel and mark the machine as healthy ASAP after
+	// hadron connects.
+	g.sendTunnelKeepalives()
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -1859,7 +1837,6 @@ func (g *GravityClient) establishControlStreams() error {
 		g.streamManager.contexts[i] = ctx
 		g.streamManager.cancels[i] = cancel
 
-		// Enable gzip compression for control streams (text-based control messages)
 		stream, err := client.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
 		if err != nil {
 			// Don't log error if context was cancelled (graceful shutdown)
@@ -1890,6 +1867,11 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 	}
 
 	n := len(g.sessionClients)
+	maxPeers := g.poolConfig.MaxGravityPeers
+	if maxPeers <= 0 {
+		maxPeers = DefaultMaxGravityPeers
+	}
+
 	results := make(chan establishResult, n)
 
 	for i, client := range g.sessionClients {
@@ -1906,9 +1888,10 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 
 	for range n {
 		result := <-results
+
 		if result.err != nil {
 			if !isContextCanceled(g.ctx, result.err) {
-				g.logger.Error("failed to establish control stream %d: %v", result.index+1, result.err)
+				g.logger.Debug("control stream %d failed: %v", result.index+1, result.err)
 			}
 			result.cancel()
 			failed = append(failed, result.index)
@@ -1916,7 +1899,33 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 			continue
 		}
 
-		g.logger.Debug("control stream %d established successfully", result.index+1)
+		// If we already have enough healthy connections, fully tear down
+		// this excess winner so no stale state remains in rotation.
+		if successCount >= maxPeers {
+			g.logger.Debug("control stream %d succeeded but already have %d/%d — closing excess", result.index+1, successCount, maxPeers)
+			result.cancel()
+			idx := result.index
+			g.mu.Lock()
+			if idx >= 0 && idx < len(g.connections) && g.connections[idx] != nil {
+				_ = g.connections[idx].Close()
+				g.connections[idx] = nil
+			}
+			if idx >= 0 && idx < len(g.sessionClients) {
+				g.sessionClients[idx] = nil
+			}
+			if idx >= 0 && idx < len(g.connectionURLs) {
+				g.connectionURLs[idx] = ""
+			}
+			g.mu.Unlock()
+			g.streamManager.healthMu.Lock()
+			if idx >= 0 && idx < len(g.streamManager.connectionHealth) {
+				g.streamManager.connectionHealth[idx] = false
+			}
+			g.streamManager.healthMu.Unlock()
+			continue
+		}
+
+		g.logger.Debug("control stream %d established successfully (%d/%d)", result.index+1, successCount+1, maxPeers)
 
 		g.streamManager.controlMu.Lock()
 		g.streamManager.contexts[result.index] = result.ctx
@@ -1929,11 +1938,12 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 	}
 
 	if successCount == 0 {
-		return fmt.Errorf("failed to establish any control streams (%d endpoints): last error: %w", n, lastErr)
+		return fmt.Errorf("failed to establish any control streams (%d candidates): last error: %w", n, lastErr)
 	}
 
+	// Clean up failed endpoints and start background reconnect.
 	if len(failed) > 0 {
-		g.logger.Warn("failed to establish %d/%d control streams; starting background reconnect for failed endpoints", len(failed), n)
+		g.logger.Warn("established %d/%d control streams (%d failed, max %d); failed endpoints will reconnect in background", successCount, n, len(failed), maxPeers)
 		for _, idx := range failed {
 			g.disconnectEndpointStreams(idx)
 			if idx >= 0 && idx < len(g.endpointReconnecting) && g.endpointReconnecting[idx].CompareAndSwap(false, true) {
@@ -1942,7 +1952,7 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 		}
 	}
 
-	g.logger.Debug("established %d/%d control streams", successCount, n)
+	g.logger.Debug("established %d/%d control streams (max %d)", successCount, n, maxPeers)
 	return nil
 }
 
@@ -2491,7 +2501,7 @@ func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMe
 	case *pb.SessionMessage_SessionHelloResponse:
 		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s, streamIndex=%d", msg.Id, msg.StreamId, streamIndex)
 		g.helloAckedStreams.Store(streamIndex, true)
-		g.handleSessionHelloResponse(msg.Id, m.SessionHelloResponse)
+		g.handleSessionHelloResponse(streamIndex, msg.Id, m.SessionHelloResponse)
 	case *pb.SessionMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
 	case *pb.SessionMessage_RouteSandboxResponse:
@@ -2556,8 +2566,8 @@ func (g *GravityClient) SetEvacuationCallback(cb func()) {
 }
 
 // Helper functions
-func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.SessionHelloResponse) {
-	g.logger.Debug("handleSessionHelloResponse called: msgID=%s, machineID=%s, gravityServer=%s", msgID, response.MachineId, response.GravityServer)
+func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string, response *pb.SessionHelloResponse) {
+	g.logger.Debug("handleSessionHelloResponse called: streamIndex=%d, msgID=%s, machineID=%s, gravityServer=%s", streamIndex, msgID, response.MachineId, response.GravityServer)
 
 	g.mu.Lock()
 
@@ -2605,19 +2615,15 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		g.mu.Unlock()
 	}
 
-	// Validate MachineSubnet before configuring the provider so
-	// mismatched or invalid subnets fail fast.
-	if response.MachineSubnet == "" {
-		g.logger.Error("session hello returned empty MachineSubnet")
-		signalConnectionID("")
-		closeSessionReady()
-		return
-	}
-	if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
-		g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
-		signalConnectionID("")
-		closeSessionReady()
-		return
+	// Validate MachineSubnet if present. Empty is allowed for backward
+	// compatibility with ions that don't yet send it.
+	if response.MachineSubnet != "" {
+		if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
+			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+			signalConnectionID("")
+			closeSessionReady()
+			return
+		}
 	}
 
 	// Configure provider with session info
@@ -2676,6 +2682,26 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	}
 
 	closeSessionReady()
+
+	g.fireOnEndpointReady(streamIndex)
+}
+
+// fireOnEndpointReady safely invokes the OnEndpointReady callback in a
+// goroutine with a panic guard. Passes the real endpoint index so hadron
+// knows which gravity server just became ready.
+func (g *GravityClient) fireOnEndpointReady(endpointIndex int) {
+	if g.onEndpointReady == nil {
+		return
+	}
+	g.logger.Info("firing OnEndpointReady callback for endpoint %d", endpointIndex)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.logger.Error("OnEndpointReady callback panicked for endpoint %d: %v", endpointIndex, r)
+			}
+		}()
+		g.onEndpointReady(endpointIndex)
+	}()
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
@@ -3659,15 +3685,8 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	// soon as it comes back. Only stop on client shutdown or context
 	// cancellation.
 	backoff := time.Second
-	maxBackoff := 10 * time.Second
+	maxBackoff := 3 * time.Second
 	attempt := 0
-
-	// How many consecutive failures before re-resolving DNS. When ion
-	// machines are replaced during a rollout, the cached IP becomes stale
-	// and will never succeed. Re-resolving the original hostname via DNS
-	// discovers the new machine IPs. Set to 3 (not 5) because DNS may
-	// contain many stale IPs and we need to cycle through them quickly.
-	const reResolveAfter = 3
 
 	for {
 		g.mu.RLock()
@@ -3678,21 +3697,21 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 		}
 
 		attempt++
+
+		// Re-resolve DNS on every attempt. When ions restart, they get
+		// new connections and the old IP may be stale. Re-resolving
+		// discovers any new/changed IPs immediately.
+		if newURL := g.reResolveEndpointURL(endpointIndex, endpointURL); newURL != "" && newURL != endpointURL {
+			g.logger.Info("endpoint %d re-resolved DNS: %s → %s", endpointIndex, endpointURL, newURL)
+			endpointURL = newURL
+		}
+
 		g.logger.Info("endpoint %d reconnection attempt %d", endpointIndex, attempt)
 		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err != nil {
 			g.logger.Warn("endpoint %d reconnection attempt %d failed: %v", endpointIndex, attempt, err)
 		} else {
 			g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
 			return
-		}
-
-		// After repeated failures, re-resolve DNS to discover new IPs.
-		// This handles ion rollouts where machines get new IP addresses.
-		if attempt%reResolveAfter == 0 {
-			if newURL := g.reResolveEndpointURL(endpointIndex, endpointURL); newURL != "" {
-				g.logger.Info("endpoint %d re-resolved DNS: %s → %s", endpointIndex, endpointURL, newURL)
-				endpointURL = newURL
-			}
 		}
 
 		// Jitter: 10% of backoff
@@ -3763,15 +3782,18 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		return ""
 	}
 
-	// Precompute health probe results once per IP to avoid duplicate 3s probes
-	// across the multi-pass selection below.
+	// Skip health probes during reconnection. The 503 health check creates
+	// a chicken-and-egg problem: ion returns 503 ("no routable hadrons")
+	// until hadron connects, but hadron waits up to 15s for the 503 to
+	// clear. Just connect directly — if the ion is up, the gRPC dial
+	// will succeed; if not, the dial timeout handles it.
 	probeOK := make(map[string]bool, len(ips))
 	for _, ip := range ips {
 		ipStr := ip.String()
 		if ipStr == currentHost {
-			continue // skip self — we already know it's failing
+			continue
 		}
-		probeOK[ipStr] = g.probeHealthEndpoint(ipStr, port)
+		probeOK[ipStr] = true // assume healthy — let gRPC dial verify
 	}
 
 	// In multi-endpoint mode, NEVER connect two endpoints to the same IP.
@@ -3859,11 +3881,12 @@ func (g *GravityClient) probeHealthEndpoint(host, port string) bool {
 		return false // unexpected status → don't retry
 	}
 
-	// 503 = alive but starting. Poll until ready (up to 15s).
-	// The ion's gravity readiness gate returns 503 for at most 10s
-	// (grace period), so 15s gives comfortable margin.
-	g.logger.Debug("health probe %s returned 503 (starting) — waiting for readiness", host)
-	deadline := time.After(15 * time.Second)
+	// 503 = alive but starting (e.g. "no routable hadrons"). Don't wait
+	// long — the ion is reachable, just not fully ready. Hadron connecting
+	// is what makes the ion healthy, so waiting creates a chicken-and-egg.
+	// Use a short 3s probe to detect truly dead ions vs starting ones.
+	g.logger.Debug("health probe %s returned 503 (starting) — brief readiness check", host)
+	deadline := time.After(3 * time.Second)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -3964,6 +3987,9 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 			Timeout:             10 * time.Second,
 			PermitWithoutStream: true,
 		}),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
+		}),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to create gRPC client to %s: %w", grpcURL, err)
@@ -4036,6 +4062,8 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		g.streamManager.connectionHealth[endpointIndex] = true
 	}
 	g.streamManager.healthMu.Unlock()
+
+	g.fireOnEndpointReady(endpointIndex)
 
 	streamsPerGravity := g.poolConfig.StreamsPerGravity
 	if streamsPerGravity <= 0 {
@@ -4188,7 +4216,7 @@ func (g *GravityClient) attemptReconnection(reason string) {
 	// Cap at 10s — ion restarts typically complete in 5-10s, and we
 	// want hadron to reconnect promptly after a restart, not wait 30s.
 	backoff := time.Second
-	maxBackoff := 10 * time.Second
+	maxBackoff := 3 * time.Second
 	attempts := 0
 
 	maxAttempts := g.maxReconnectAttempts
@@ -4419,41 +4447,93 @@ func generateMessageID() string {
 
 // sendSessionMessageAsync sends a session message without waiting for response (async)
 func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
+	stream, streamIndex := g.pickControlStream()
+	if stream == nil || streamIndex < 0 {
+		return fmt.Errorf("no control streams available")
+	}
+	return g.sendOnStream(stream, streamIndex, msg)
+}
+
+// broadcastSessionMessage sends a message to ALL healthy control streams.
+// Used for deployment/resource registration so every connected ion gets the
+// VIP routing. Returns an error if ANY endpoint fails — partial VIP
+// registration can cause routing inconsistencies.
+func (g *GravityClient) broadcastSessionMessage(msg *pb.SessionMessage) error {
+	streams := g.allHealthyControlStreams()
+	if len(streams) == 0 {
+		return fmt.Errorf("no control streams available")
+	}
+
+	var errs []error
+	sent := 0
+	for _, s := range streams {
+		if err := g.sendOnStream(s.stream, s.index, msg); err != nil {
+			g.logger.Warn("broadcastSessionMessage: failed to send to endpoint %d: %v", s.index, err)
+			errs = append(errs, fmt.Errorf("endpoint %d: %w", s.index, err))
+		} else {
+			sent++
+		}
+	}
+	if sent == 0 {
+		return fmt.Errorf("failed to send to any endpoint: %w", errors.Join(errs...))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("partial broadcast: delivered to %d/%d endpoints: %w", sent, len(streams), errors.Join(errs...))
+	}
+	return nil
+}
+
+type indexedStream struct {
+	stream pb.GravitySessionService_EstablishSessionClient
+	index  int
+}
+
+// pickControlStream returns the first healthy control stream.
+func (g *GravityClient) pickControlStream() (pb.GravitySessionService_EstablishSessionClient, int) {
 	g.streamManager.controlMu.RLock()
 	g.streamManager.healthMu.RLock()
-	var stream pb.GravitySessionService_EstablishSessionClient
-	streamIndex := -1
+	defer g.streamManager.healthMu.RUnlock()
+	defer g.streamManager.controlMu.RUnlock()
+
 	for i, s := range g.streamManager.controlStreams {
 		if s == nil {
 			continue
 		}
-		// Prefer healthy streams; during reconnection a stream may be
-		// published but not yet past the hello handshake.
 		if i < len(g.streamManager.connectionHealth) && !g.streamManager.connectionHealth[i] {
 			continue
 		}
-		stream = s
-		streamIndex = i
-		break
+		return s, i
 	}
-	if stream == nil {
-		// Fallback: pick any non-nil stream even if not yet marked healthy
-		// (single-endpoint mode or all endpoints mid-handshake).
-		for i, s := range g.streamManager.controlStreams {
-			if s != nil {
-				stream = s
-				streamIndex = i
-				break
-			}
+	// Fallback: pick any non-nil stream
+	for i, s := range g.streamManager.controlStreams {
+		if s != nil {
+			return s, i
 		}
 	}
-	g.streamManager.healthMu.RUnlock()
-	g.streamManager.controlMu.RUnlock()
+	return nil, -1
+}
 
-	if stream == nil || streamIndex < 0 {
-		return fmt.Errorf("no control streams available")
+// allHealthyControlStreams returns all healthy control streams.
+func (g *GravityClient) allHealthyControlStreams() []indexedStream {
+	g.streamManager.controlMu.RLock()
+	g.streamManager.healthMu.RLock()
+	defer g.streamManager.healthMu.RUnlock()
+	defer g.streamManager.controlMu.RUnlock()
+
+	var streams []indexedStream
+	for i, s := range g.streamManager.controlStreams {
+		if s == nil {
+			continue
+		}
+		if i < len(g.streamManager.connectionHealth) && !g.streamManager.connectionHealth[i] {
+			continue
+		}
+		streams = append(streams, indexedStream{stream: s, index: i})
 	}
+	return streams
+}
 
+func (g *GravityClient) sendOnStream(stream pb.GravitySessionService_EstablishSessionClient, streamIndex int, msg *pb.SessionMessage) error {
 	if streamIndex >= len(g.circuitBreakers) {
 		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", streamIndex, len(g.circuitBreakers))
 	}
@@ -4520,7 +4600,10 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 		},
 	}
 
-	if err := g.sendSessionMessageAsync(msg); err != nil {
+	// Broadcast to ALL connected ions so every ion with a tunnel to this
+	// hadron gets the VIP route. Without this, only one ion registers the
+	// deployment VIP, and requests hitting other ions get 502.
+	if err := g.broadcastSessionMessage(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route deployment request: %w", err)
 	}
 
@@ -4583,11 +4666,14 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 		},
 	}
 
-	if err := g.sendSessionMessageAsync(msg); err != nil {
+	// Broadcast to ALL connected ions so every ion with a tunnel to this
+	// hadron gets the sandbox VIP route.
+	g.logger.Info("SendRouteSandboxRequest: broadcasting sandbox %s (vip=%s) to all endpoints", sandboxID, virtualIP)
+	if err := g.broadcastSessionMessage(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route sandbox request: %w", err)
 	}
 
-	// Wait for response with timeout
+	// Wait for first response with timeout — all ions process independently.
 	select {
 	case result := <-responseChan:
 		if result.Error != "" {
@@ -4650,6 +4736,8 @@ func (sm *StreamManager) releaseStream(stream *StreamInfo) {
 
 // Unprovision sends an unprovision request to the gravity server
 func (g *GravityClient) Unprovision(deploymentID string) error {
+	g.logger.Info("Unprovision: broadcasting removal of deployment %s to all endpoints", deploymentID)
+
 	req := &pb.UnprovisionRequest{
 		DeploymentId: deploymentID,
 	}
@@ -4662,7 +4750,13 @@ func (g *GravityClient) Unprovision(deploymentID string) error {
 		},
 	}
 
-	return g.sendSessionMessageAsync(msg)
+	// Broadcast to ALL connected ions so every ion removes the VIP route.
+	if err := g.broadcastSessionMessage(msg); err != nil {
+		g.logger.Error("Unprovision: broadcast failed for deployment %s: %v", deploymentID, err)
+		return err
+	}
+	g.logger.Info("Unprovision: broadcast succeeded for deployment %s", deploymentID)
+	return nil
 }
 
 // SendEvacuateRequest sends a request to evacuate sandboxes on this machine.

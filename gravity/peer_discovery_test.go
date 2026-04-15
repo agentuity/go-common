@@ -73,7 +73,9 @@ func TestResolveGravityURLs_MultipleURLs(t *testing.T) {
 	}
 }
 
-func TestResolveGravityURLs_CapsAtMaxPeers(t *testing.T) {
+func TestResolveGravityURLs_IncludesAllCandidates(t *testing.T) {
+	// resolveGravityURLs no longer caps at MaxGravityPeers — all candidates
+	// pass through so establishControlStreamsMulti can race them in parallel.
 	urls := make([]string, 10)
 	for i := range urls {
 		urls[i] = fmt.Sprintf("grpc://g%d.example.com", i)
@@ -85,8 +87,8 @@ func TestResolveGravityURLs_CapsAtMaxPeers(t *testing.T) {
 		},
 	}
 	got := g.resolveGravityURLs()
-	if len(got) != 3 {
-		t.Fatalf("expected 3 URLs (capped by MaxGravityPeers), got %d", len(got))
+	if len(got) != 10 {
+		t.Fatalf("expected all 10 URLs (cap at connection time), got %d", len(got))
 	}
 }
 
@@ -160,7 +162,7 @@ func TestResolveGravityURLs_AllEmptyGravityURLsFallsBackToURL(t *testing.T) {
 	}
 }
 
-func TestResolveGravityURLs_MaxPeersZeroUsesDefault(t *testing.T) {
+func TestResolveGravityURLs_MaxPeersZeroIncludesAll(t *testing.T) {
 	urls := make([]string, 10)
 	for i := range urls {
 		urls[i] = "grpc://g" + string(rune('a'+i)) + ".example.com"
@@ -168,12 +170,12 @@ func TestResolveGravityURLs_MaxPeersZeroUsesDefault(t *testing.T) {
 	g := &GravityClient{
 		gravityURLs: urls,
 		poolConfig: ConnectionPoolConfig{
-			MaxGravityPeers: 0, // should default to DefaultMaxGravityPeers (3)
+			MaxGravityPeers: 0,
 		},
 	}
 	got := g.resolveGravityURLs()
-	if len(got) != DefaultMaxGravityPeers {
-		t.Fatalf("expected %d URLs (DefaultMaxGravityPeers), got %d", DefaultMaxGravityPeers, len(got))
+	if len(got) != 10 {
+		t.Fatalf("expected all 10 URLs, got %d", len(got))
 	}
 }
 

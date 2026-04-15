@@ -673,7 +673,7 @@ func TestHardening_SessionHelloConfigureFailureUnblocksWait(t *testing.T) {
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	g.handleSessionHelloResponse("session_hello", &pb.SessionHelloResponse{
+	g.handleSessionHelloResponse(0, "session_hello", &pb.SessionHelloResponse{
 		MachineId:        "machine-1",
 		MachineToken:     "token-1",
 		SubnetRoutes:     []string{"fd00::/64"},

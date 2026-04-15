@@ -84,4 +84,12 @@ type GravityConfig struct {
 	// (e.g. systemd) can perform a clean restart. If nil, the client simply
 	// stops reconnecting.
 	ReconnectionFailedCallback func(attempts int, lastErr error)
+
+	// OnEndpointReady is invoked each time a gravity endpoint's control
+	// stream becomes healthy (after session hello succeeds). This fires on
+	// initial connection AND on reconnection. Use this to re-register
+	// active resources (deployment VIPs, sandbox routes) on the newly
+	// connected endpoint so it can route traffic immediately.
+	// The endpointIndex identifies which gravity server just became ready.
+	OnEndpointReady func(endpointIndex int)
 }

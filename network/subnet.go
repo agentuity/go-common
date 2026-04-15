@@ -20,10 +20,12 @@ const NetworkSandboxSubnet Network = 0x05
 //   - Byte 4: Region (5 bits, max 31) | Network (3 bits, max 7)
 //   - Bytes 5-7: Machine hash (24 bits, 16M buckets)
 //
-// With 24-bit machine hash, birthday-paradox collision probability is:
-//   - 100 machines: ~0.03%
-//   - 1000 machines: ~2.9%
-//   - 5000 machines: ~52%
+// With 24-bit machine hash (16M buckets per region), birthday-paradox
+// collision probability is per-region (not fleet-wide), since the region
+// is encoded separately in byte 4:
+//   - 100 machines/region: ~0.03%
+//   - 1000 machines/region: ~2.9%
+//   - 5000 machines/region: ~52%
 func ComputeSandboxSubnet(region Region, machineID string) netip.Prefix {
 	machineHash := hashTo32Bits(machineID)
 

@@ -2597,19 +2597,15 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 		g.mu.Unlock()
 	}
 
-	// Validate MachineSubnet before configuring the provider so
-	// mismatched or invalid subnets fail fast.
-	if response.MachineSubnet == "" {
-		g.logger.Error("session hello returned empty MachineSubnet")
-		signalConnectionID("")
-		closeSessionReady()
-		return
-	}
-	if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
-		g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
-		signalConnectionID("")
-		closeSessionReady()
-		return
+	// Validate MachineSubnet if present. Empty is allowed for backward
+	// compatibility with ions that don't yet send it.
+	if response.MachineSubnet != "" {
+		if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
+			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+			signalConnectionID("")
+			closeSessionReady()
+			return
+		}
 	}
 
 	// Configure provider with session info
@@ -4442,26 +4438,29 @@ func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 
 // broadcastSessionMessage sends a message to ALL healthy control streams.
 // Used for deployment/resource registration so every connected ion gets the
-// VIP routing. Errors on individual streams are logged but not fatal — the
-// message succeeds if at least one stream accepts it.
+// VIP routing. Returns an error if ANY endpoint fails — partial VIP
+// registration can cause routing inconsistencies.
 func (g *GravityClient) broadcastSessionMessage(msg *pb.SessionMessage) error {
 	streams := g.allHealthyControlStreams()
 	if len(streams) == 0 {
 		return fmt.Errorf("no control streams available")
 	}
 
-	var lastErr error
+	var errs []error
 	sent := 0
 	for _, s := range streams {
 		if err := g.sendOnStream(s.stream, s.index, msg); err != nil {
 			g.logger.Warn("broadcastSessionMessage: failed to send to endpoint %d: %v", s.index, err)
-			lastErr = err
+			errs = append(errs, fmt.Errorf("endpoint %d: %w", s.index, err))
 		} else {
 			sent++
 		}
 	}
 	if sent == 0 {
-		return fmt.Errorf("failed to send to any endpoint: %w", lastErr)
+		return fmt.Errorf("failed to send to any endpoint: %w", errors.Join(errs...))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("partial broadcast: delivered to %d/%d endpoints: %w", sent, len(streams), errors.Join(errs...))
 	}
 	return nil
 }

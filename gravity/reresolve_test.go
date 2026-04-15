@@ -610,6 +610,7 @@ func TestReResolve_MultiEndpointPicksUniqueIPs(t *testing.T) {
 		},
 		dnsLookupMulti: mock.lookupMulti,
 	}
+	g.multiEndpointMode.Store(true)
 	g.endpoints = endpoints
 
 	origURLs := []string{endpoints[0].URL, endpoints[1].URL, endpoints[2].URL}

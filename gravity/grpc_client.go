@@ -281,6 +281,7 @@ type GravityClient struct {
 	maxReconnectAttempts       int
 	reconnectAttemptTimeout    time.Duration
 	reconnectionFailedCallback func(attempts int, lastErr error)
+	onEndpointReady            func(endpointIndex int)
 
 	// State management
 	connected            bool
@@ -508,6 +509,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		maxReconnectAttempts:       config.MaxReconnectAttempts,
 		reconnectAttemptTimeout:    config.ReconnectAttemptTimeout,
 		reconnectionFailedCallback: config.ReconnectionFailedCallback,
+		onEndpointReady:            config.OnEndpointReady,
 		tracer:                     otel.Tracer("@agentuity/gravity/client"),
 	}
 	g.connectionCtx, g.connectionCancel = context.WithCancel(ctx)
@@ -2676,6 +2678,14 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 	}
 
 	closeSessionReady()
+
+	// Fire OnEndpointReady callback after session hello succeeds. This covers
+	// both initial connection and reconnection paths. The callback runs in a
+	// goroutine to avoid blocking the control stream handler.
+	if g.onEndpointReady != nil {
+		g.logger.Info("firing OnEndpointReady callback from session hello completion")
+		go g.onEndpointReady(0)
+	}
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
@@ -4036,6 +4046,13 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		g.streamManager.connectionHealth[endpointIndex] = true
 	}
 	g.streamManager.healthMu.Unlock()
+
+	// Fire the OnEndpointReady callback so hadron can re-register all
+	// active resources (deployment VIPs) on this newly connected endpoint.
+	if g.onEndpointReady != nil {
+		g.logger.Info("firing OnEndpointReady callback for endpoint %d", endpointIndex)
+		go g.onEndpointReady(endpointIndex)
+	}
 
 	streamsPerGravity := g.poolConfig.StreamsPerGravity
 	if streamsPerGravity <= 0 {

@@ -190,10 +190,28 @@ var RegionToSuperRegion = map[Region]SuperRegion{
 }
 
 // GetRegion returns a Region from a string.
+// SuperRegionToRegion maps super-region short names to their primary Region.
+// Super-regions are the canonical identifiers used by ion's AGENTUITY_REGION
+// config (e.g. "usw", "use", "usc") and must resolve before cloud-specific
+// physical region names.
+var SuperRegionToRegion = map[SuperRegion]Region{
+	SuperRegionUSCentral: RegionUSCentral1,
+	SuperRegionUSWest:    RegionUSWest1,
+	SuperRegionUSEast:    RegionUSEast1,
+	SuperRegionEUWest:    RegionEUWest1,
+	SuperRegionEUEast:    RegionEUEast1,
+}
+
 func GetRegion(region string) Region {
 	region = strings.ToLower(region)
 
-	// Try exact match from Regions map
+	// Check super-region short names first — these are the canonical
+	// identifiers used by ion and hadron in production.
+	if r, ok := SuperRegionToRegion[SuperRegion(region)]; ok {
+		return r
+	}
+
+	// Try exact match from physical Regions map
 	if r, ok := Regions[region]; ok {
 		return r
 	}

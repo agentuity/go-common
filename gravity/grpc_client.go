@@ -1076,6 +1076,10 @@ func (g *GravityClient) resolveGravityURLs() []string {
 		maxPeers = DefaultMaxGravityPeers
 	}
 
+	// Don't cap at maxPeers here — include ALL URLs so
+	// establishControlStreamsMulti can race them in parallel and keep
+	// the first maxPeers that connect. Capping early lets stale/dead
+	// IPs steal slots from healthy ones.
 	seen := make(map[string]struct{}, len(g.gravityURLs))
 	urls := make([]string, 0, len(g.gravityURLs))
 	for _, raw := range g.gravityURLs {
@@ -1088,9 +1092,6 @@ func (g *GravityClient) resolveGravityURLs() []string {
 		}
 		seen[u] = struct{}{}
 		urls = append(urls, u)
-		if len(urls) >= maxPeers {
-			break
-		}
 	}
 
 	if len(urls) == 0 {

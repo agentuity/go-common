@@ -65,6 +65,10 @@ func init() {
 var ErrConnectionClosed = errors.New("gravity connection closed")
 
 const (
+	// debugTunnelPackets gates verbose per-packet tunnel logging.
+	// Keep false in production to avoid high-volume log spam.
+	debugTunnelPackets = false
+
 	// DefaultMaxGravityPeers is the maximum number of Gravity servers
 	// a single Hadron will connect to simultaneously.
 	DefaultMaxGravityPeers = 3
@@ -2360,8 +2364,15 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			return
 		}
 
-		if g.tracePackets {
-			g.tracePacketLogger.Debug("handleTunnelStream: received packet with %d bytes on stream %d", len(packet.Data), streamIndex)
+		if debugTunnelPackets {
+			if len(packet.Data) >= 40 {
+				srcIP := net.IP(packet.Data[8:24])
+				dstIP := net.IP(packet.Data[24:40])
+				nextHdr := packet.Data[6]
+				g.logger.Info("[tunnel-recv] stream %d: %d bytes SRC=%s DST=%s nextHdr=%d", streamIndex, len(packet.Data), srcIP, dstIP, nextHdr)
+			} else {
+				g.logger.Info("[tunnel-recv] stream %d: %d bytes (too small for IPv6)", streamIndex, len(packet.Data))
+			}
 		}
 
 		// If enqueuedAt is set, log tunnel transit latency.
@@ -2594,6 +2605,21 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		g.mu.Unlock()
 	}
 
+	// Validate MachineSubnet before configuring the provider so
+	// mismatched or invalid subnets fail fast.
+	if response.MachineSubnet == "" {
+		g.logger.Error("session hello returned empty MachineSubnet")
+		signalConnectionID("")
+		closeSessionReady()
+		return
+	}
+	if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
+		g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+		signalConnectionID("")
+		closeSessionReady()
+		return
+	}
+
 	// Configure provider with session info
 	if err := g.provider.Configure(provider.Configuration{
 		Server:            g,
@@ -2613,6 +2639,7 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		MachineToken:      response.MachineToken,
 		MachineID:         response.MachineId,
 		MachineCertBundle: response.MachineCertBundle,
+		MachineSubnet:     response.MachineSubnet,
 		SigningPublicKey:  response.SigningPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
@@ -3530,6 +3557,9 @@ func (g *GravityClient) disconnectEndpointStreams(endpointIndex int) {
 	g.streamManager.tunnelMu.Lock()
 	for _, si := range g.streamManager.tunnelStreams {
 		if si != nil && si.connIndex == endpointIndex {
+			if si.stream != nil {
+				_ = si.stream.CloseSend()
+			}
 			si.isHealthy = false
 		}
 	}
@@ -4273,10 +4303,15 @@ func (g *GravityClient) reconnect() error {
 	g.endpointStreamIndices = make(map[string][]int)
 
 	// Reset stream manager state
+	g.streamManager.tunnelMu.Lock()
 	g.streamManager.tunnelStreams = nil
+	g.streamManager.tunnelMu.Unlock()
+
+	g.streamManager.controlMu.Lock()
 	g.streamManager.controlStreams = nil
 	g.streamManager.contexts = nil
 	g.streamManager.cancels = nil
+	g.streamManager.controlMu.Unlock()
 
 	// Drain the connection ID channel to avoid stale data
 	g.drainConnectionIDChan()
@@ -4566,6 +4601,9 @@ func (sm *StreamManager) selectOptimalTunnelStream() *StreamInfo {
 	var minLoad int64 = -1
 
 	for _, stream := range sm.tunnelStreams {
+		if stream == nil {
+			continue
+		}
 		if !stream.isHealthy {
 			continue
 		}
@@ -4894,12 +4932,15 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 	}
 
 	stream := g.streamManager.tunnelStreams[streamIndex]
-	if !stream.isHealthy {
+	if stream == nil || !stream.isHealthy {
 		streamIndex, err = g.selectHealthyStream()
 		if err != nil {
 			return nil, fmt.Errorf("no healthy tunnel streams available")
 		}
 		stream = g.streamManager.tunnelStreams[streamIndex]
+	}
+	if stream == nil || !stream.isHealthy {
+		return nil, fmt.Errorf("no healthy tunnel streams available")
 	}
 
 	stream.loadCount++
@@ -4977,7 +5018,13 @@ func (g *GravityClient) handleInboundPackets() {
 			return
 		case packet := <-g.inboundPackets:
 			// Forward to provider for local processing
-			g.provider.ProcessInPacket(packet.Buffer[:packet.Length])
+			pktData := packet.Buffer[:packet.Length]
+			if debugTunnelPackets && len(pktData) >= 40 {
+				srcIP := net.IP(pktData[8:24])
+				dstIP := net.IP(pktData[24:40])
+				g.logger.Info("[inbound-deliver] %d bytes SRC=%s DST=%s → ProcessInPacket", len(pktData), srcIP, dstIP)
+			}
+			g.provider.ProcessInPacket(pktData)
 			g.inboundDelivered.Add(1)
 			g.returnBuffer(packet)
 		}
@@ -5109,6 +5156,9 @@ func (g *GravityClient) selectLeastConnectionsStream() (int, error) {
 	var selectedStream *StreamInfo
 
 	for i, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil {
+			continue
+		}
 		if !streamInfo.isHealthy {
 			continue
 		}
@@ -5134,6 +5184,9 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 
 	healthyStreams := make([]int, 0)
 	for i, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil {
+			continue
+		}
 		if streamInfo.isHealthy && streamInfo.connIndex >= 0 && streamInfo.connIndex < len(g.streamManager.connectionHealth) && g.streamManager.connectionHealth[streamInfo.connIndex] {
 			healthyStreams = append(healthyStreams, i)
 		}
@@ -5153,7 +5206,7 @@ func (g *GravityClient) selectWeightedRoundRobinStream() (int, error) {
 // selectHealthyStream finds any available healthy stream
 func (g *GravityClient) selectHealthyStream() (int, error) {
 	for i, streamInfo := range g.streamManager.tunnelStreams {
-		if streamInfo.isHealthy {
+		if streamInfo != nil && streamInfo.isHealthy {
 			return i, nil
 		}
 	}

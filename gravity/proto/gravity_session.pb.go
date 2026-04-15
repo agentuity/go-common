@@ -803,6 +803,7 @@ type SessionHelloResponse struct {
 	MachineToken      string                 `protobuf:"bytes,12,opt,name=machine_token,json=machineToken,proto3" json:"machine_token,omitempty"`                  // JWT token for machine to authenticate with catalyst
 	MachineCertBundle string                 `protobuf:"bytes,13,opt,name=machine_cert_bundle,json=machineCertBundle,proto3" json:"machine_cert_bundle,omitempty"` // PEM certificate bundle (cert, ca, key)
 	SigningPublicKey  []byte                 `protobuf:"bytes,14,opt,name=signing_public_key,json=signingPublicKey,proto3" json:"signing_public_key,omitempty"`    // PEM-encoded ECDSA public key for upstream request signature verification
+	MachineSubnet     string                 `protobuf:"bytes,15,opt,name=machine_subnet,json=machineSubnet,proto3" json:"machine_subnet,omitempty"`               // Per-machine /64 subnet for sandbox VIPs (e.g., "fd15:d710:02:05:a1b2::/64")
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -933,6 +934,13 @@ func (x *SessionHelloResponse) GetSigningPublicKey() []byte {
 		return x.SigningPublicKey
 	}
 	return nil
+}
+
+func (x *SessionHelloResponse) GetMachineSubnet() string {
+	if x != nil {
+		return x.MachineSubnet
+	}
+	return ""
 }
 
 // SessionCloseRequest is sent to gracefully close the session.
@@ -3458,7 +3466,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\thost_info\x18\x05 \x01(\v2\x11.gravity.HostInfoR\bhostInfo\x12?\n" +
 	"\fcapabilities\x18\x06 \x01(\v2\x1b.gravity.ClientCapabilitiesR\fcapabilities\x12\x1f\n" +
 	"\vinstance_id\x18\a \x01(\tR\n" +
-	"instanceId\"\x87\x04\n" +
+	"instanceId\"\xae\x04\n" +
 	"\x14SessionHelloResponse\x12\x1d\n" +
 	"\n" +
 	"machine_id\x18\x01 \x01(\tR\tmachineId\x12\x15\n" +
@@ -3475,7 +3483,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x0essh_public_key\x18\v \x01(\fR\fsshPublicKey\x12#\n" +
 	"\rmachine_token\x18\f \x01(\tR\fmachineToken\x12.\n" +
 	"\x13machine_cert_bundle\x18\r \x01(\tR\x11machineCertBundle\x12,\n" +
-	"\x12signing_public_key\x18\x0e \x01(\fR\x10signingPublicKey\"-\n" +
+	"\x12signing_public_key\x18\x0e \x01(\fR\x10signingPublicKey\x12%\n" +
+	"\x0emachine_subnet\x18\x0f \x01(\tR\rmachineSubnet\"-\n" +
 	"\x13SessionCloseRequest\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"e\n" +
 	"\fTunnelPacket\x12\x12\n" +

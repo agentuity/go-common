@@ -17,6 +17,8 @@ const (
 	MsgNATEntry
 	// MsgVIPHeartbeat carries a VIP ownership heartbeat.
 	MsgVIPHeartbeat
+	// MsgSubnetRoute carries a subnet ownership announcement.
+	MsgSubnetRoute
 )
 
 // String returns a human-readable name for the message type.
@@ -30,6 +32,8 @@ func (m MessageType) String() string {
 		return "NATEntry"
 	case MsgVIPHeartbeat:
 		return "VIPHeartbeat"
+	case MsgSubnetRoute:
+		return "SubnetRoute"
 	default:
 		return fmt.Sprintf("Unknown(%d)", m)
 	}
@@ -75,6 +79,16 @@ type VIPHeartbeat struct {
 	NewEndpoints []EndpointMapping `json:"new_endpoints,omitempty"`
 }
 
+// SubnetRoute advertises ownership of a /64 subnet by a machine connected
+// to this ion instance. Used to build cross-ion forwarding tables.
+type SubnetRoute struct {
+	Subnet    string `json:"subnet"`     // /64 prefix, e.g. "fd15:d710:02:05:a1b2::/64"
+	MachineID string `json:"machine_id"` // Machine that owns this subnet
+	IonID     string `json:"ion_id"`     // Memberlist address of the ion that owns this subnet
+	Timestamp int64  `json:"timestamp"`  // Unix timestamp
+	Action    string `json:"action"`     // "add" or "remove"
+}
+
 // Envelope is the wire format for gossip messages. It wraps a MessageType
 // together with a JSON-encoded payload so receivers can demux without
 // knowing the concrete type up front.
@@ -94,6 +108,8 @@ func messageTypeFor(msg any) (MessageType, error) {
 		return MsgNATEntry, nil
 	case VIPHeartbeat, *VIPHeartbeat:
 		return MsgVIPHeartbeat, nil
+	case SubnetRoute, *SubnetRoute:
+		return MsgSubnetRoute, nil
 	default:
 		return 0, fmt.Errorf("gossip: unsupported message type %T", msg)
 	}
@@ -138,6 +154,9 @@ func Decode(data []byte) (MessageType, any, error) {
 		msg = &v
 	case MsgVIPHeartbeat:
 		var v VIPHeartbeat
+		msg = &v
+	case MsgSubnetRoute:
+		var v SubnetRoute
 		msg = &v
 	default:
 		return 0, nil, fmt.Errorf("gossip: unknown message type %d", env.Type)

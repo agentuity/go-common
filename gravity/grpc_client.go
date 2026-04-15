@@ -1899,11 +1899,29 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 			continue
 		}
 
-		// If we already have enough healthy connections, close this one.
-		// We connect ALL candidates in parallel and keep only maxPeers.
+		// If we already have enough healthy connections, fully tear down
+		// this excess winner so no stale state remains in rotation.
 		if successCount >= maxPeers {
 			g.logger.Debug("control stream %d succeeded but already have %d/%d — closing excess", result.index+1, successCount, maxPeers)
 			result.cancel()
+			idx := result.index
+			g.mu.Lock()
+			if idx >= 0 && idx < len(g.connections) && g.connections[idx] != nil {
+				_ = g.connections[idx].Close()
+				g.connections[idx] = nil
+			}
+			if idx >= 0 && idx < len(g.sessionClients) {
+				g.sessionClients[idx] = nil
+			}
+			if idx >= 0 && idx < len(g.connectionURLs) {
+				g.connectionURLs[idx] = ""
+			}
+			g.mu.Unlock()
+			g.streamManager.healthMu.Lock()
+			if idx >= 0 && idx < len(g.streamManager.connectionHealth) {
+				g.streamManager.connectionHealth[idx] = false
+			}
+			g.streamManager.healthMu.Unlock()
 			continue
 		}
 

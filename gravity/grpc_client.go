@@ -653,12 +653,15 @@ func (g *GravityClient) Start() error {
 		conn, err := grpc.NewClient(grpcURL,
 			grpc.WithTransportCredentials(creds),
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
-			grpc.WithInitialWindowSize(1<<20),     // 1MB per-stream flow-control window (default 64KB)
-			grpc.WithInitialConnWindowSize(4<<20), // 4MB per-connection flow-control window (default 64KB)
+			grpc.WithInitialWindowSize(1<<20),
+			grpc.WithInitialConnWindowSize(4<<20),
 			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second, // ping every 30s if no activity
-				Timeout:             10 * time.Second, // wait 10s for pong before declaring dead
-				PermitWithoutStream: true,             // ping even with no active RPCs
+				Time:                30 * time.Second,
+				Timeout:             10 * time.Second,
+				PermitWithoutStream: true,
+			}),
+			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
 		)
 		if err != nil {
@@ -822,11 +825,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 						continue // dedupe
 					}
 					seen[ipStr] = true
-					if !g.probeHealthEndpoint(ipStr, port) {
-						unhealthy++
-						g.logger.Debug("startup health probe failed for %s — skipping", ipStr)
-						continue
-					}
+					// No pre-connect probe. The gRPC dial (with 5s TCP timeout)
+					// is the health check. Probing first wastes 3-15s per IP and
+					// creates chicken-and-egg when ion returns 503 until hadron
+					// connects. Just try to connect — fast fail on dead IPs.
 					healthy++
 					hostPort := net.JoinHostPort(ipStr, port)
 					ep := &GravityEndpoint{
@@ -992,6 +994,9 @@ func (g *GravityClient) startMultiEndpoint() error {
 				Time:                30 * time.Second,
 				Timeout:             10 * time.Second,
 				PermitWithoutStream: true,
+			}),
+			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
 		)
 		if err != nil {
@@ -1165,6 +1170,11 @@ func (g *GravityClient) tunnelLivenessMonitor() {
 	)
 
 	g.logger.Debug("tunnel liveness monitor started (check=%s, stale=%s)", checkInterval, staleTimeout)
+
+	// Send the first keepalive immediately — don't wait 10s. This lets
+	// ion verify the tunnel and mark the machine as healthy ASAP after
+	// hadron connects.
+	g.sendTunnelKeepalives()
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -1861,7 +1871,6 @@ func (g *GravityClient) establishControlStreams() error {
 		g.streamManager.contexts[i] = ctx
 		g.streamManager.cancels[i] = cancel
 
-		// Enable gzip compression for control streams (text-based control messages)
 		stream, err := client.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
 		if err != nil {
 			// Don't log error if context was cancelled (graceful shutdown)
@@ -3669,15 +3678,8 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	// soon as it comes back. Only stop on client shutdown or context
 	// cancellation.
 	backoff := time.Second
-	maxBackoff := 10 * time.Second
+	maxBackoff := 3 * time.Second
 	attempt := 0
-
-	// How many consecutive failures before re-resolving DNS. When ion
-	// machines are replaced during a rollout, the cached IP becomes stale
-	// and will never succeed. Re-resolving the original hostname via DNS
-	// discovers the new machine IPs. Set to 3 (not 5) because DNS may
-	// contain many stale IPs and we need to cycle through them quickly.
-	const reResolveAfter = 3
 
 	for {
 		g.mu.RLock()
@@ -3688,21 +3690,21 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 		}
 
 		attempt++
+
+		// Re-resolve DNS on every attempt. When ions restart, they get
+		// new connections and the old IP may be stale. Re-resolving
+		// discovers any new/changed IPs immediately.
+		if newURL := g.reResolveEndpointURL(endpointIndex, endpointURL); newURL != "" && newURL != endpointURL {
+			g.logger.Info("endpoint %d re-resolved DNS: %s → %s", endpointIndex, endpointURL, newURL)
+			endpointURL = newURL
+		}
+
 		g.logger.Info("endpoint %d reconnection attempt %d", endpointIndex, attempt)
 		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err != nil {
 			g.logger.Warn("endpoint %d reconnection attempt %d failed: %v", endpointIndex, attempt, err)
 		} else {
 			g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
 			return
-		}
-
-		// After repeated failures, re-resolve DNS to discover new IPs.
-		// This handles ion rollouts where machines get new IP addresses.
-		if attempt%reResolveAfter == 0 {
-			if newURL := g.reResolveEndpointURL(endpointIndex, endpointURL); newURL != "" {
-				g.logger.Info("endpoint %d re-resolved DNS: %s → %s", endpointIndex, endpointURL, newURL)
-				endpointURL = newURL
-			}
 		}
 
 		// Jitter: 10% of backoff
@@ -3773,15 +3775,18 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		return ""
 	}
 
-	// Precompute health probe results once per IP to avoid duplicate 3s probes
-	// across the multi-pass selection below.
+	// Skip health probes during reconnection. The 503 health check creates
+	// a chicken-and-egg problem: ion returns 503 ("no routable hadrons")
+	// until hadron connects, but hadron waits up to 15s for the 503 to
+	// clear. Just connect directly — if the ion is up, the gRPC dial
+	// will succeed; if not, the dial timeout handles it.
 	probeOK := make(map[string]bool, len(ips))
 	for _, ip := range ips {
 		ipStr := ip.String()
 		if ipStr == currentHost {
-			continue // skip self — we already know it's failing
+			continue
 		}
-		probeOK[ipStr] = g.probeHealthEndpoint(ipStr, port)
+		probeOK[ipStr] = true // assume healthy — let gRPC dial verify
 	}
 
 	// In multi-endpoint mode, NEVER connect two endpoints to the same IP.
@@ -3869,11 +3874,12 @@ func (g *GravityClient) probeHealthEndpoint(host, port string) bool {
 		return false // unexpected status → don't retry
 	}
 
-	// 503 = alive but starting. Poll until ready (up to 15s).
-	// The ion's gravity readiness gate returns 503 for at most 10s
-	// (grace period), so 15s gives comfortable margin.
-	g.logger.Debug("health probe %s returned 503 (starting) — waiting for readiness", host)
-	deadline := time.After(15 * time.Second)
+	// 503 = alive but starting (e.g. "no routable hadrons"). Don't wait
+	// long — the ion is reachable, just not fully ready. Hadron connecting
+	// is what makes the ion healthy, so waiting creates a chicken-and-egg.
+	// Use a short 3s probe to detect truly dead ions vs starting ones.
+	g.logger.Debug("health probe %s returned 503 (starting) — brief readiness check", host)
+	deadline := time.After(3 * time.Second)
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -3973,6 +3979,9 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 			Time:                30 * time.Second,
 			Timeout:             10 * time.Second,
 			PermitWithoutStream: true,
+		}),
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 		}),
 	)
 	if err != nil {
@@ -4205,7 +4214,7 @@ func (g *GravityClient) attemptReconnection(reason string) {
 	// Cap at 10s — ion restarts typically complete in 5-10s, and we
 	// want hadron to reconnect promptly after a restart, not wait 30s.
 	backoff := time.Second
-	maxBackoff := 10 * time.Second
+	maxBackoff := 3 * time.Second
 	attempts := 0
 
 	maxAttempts := g.maxReconnectAttempts

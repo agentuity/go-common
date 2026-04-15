@@ -2605,6 +2605,21 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 		g.mu.Unlock()
 	}
 
+	// Validate MachineSubnet before configuring the provider so
+	// mismatched or invalid subnets fail fast.
+	if response.MachineSubnet == "" {
+		g.logger.Error("session hello returned empty MachineSubnet")
+		signalConnectionID("")
+		closeSessionReady()
+		return
+	}
+	if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
+		g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+		signalConnectionID("")
+		closeSessionReady()
+		return
+	}
+
 	// Configure provider with session info
 	if err := g.provider.Configure(provider.Configuration{
 		Server:            g,

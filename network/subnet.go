@@ -1,6 +1,7 @@
 package network
 
 import (
+	"fmt"
 	"net/netip"
 )
 
@@ -41,8 +42,12 @@ func ComputeSandboxSubnet(region Region, machineID string) netip.Prefix {
 }
 
 // ComputeSandboxVIP returns a deterministic IPv6 address for a sandbox
-// within its machine's subnet.
+// within its machine's subnet. The subnet must be a /64 prefix; the host
+// bits (bytes 8-15) are derived from the sandboxID hash.
 func ComputeSandboxVIP(subnet netip.Prefix, sandboxID string) netip.Addr {
+	if subnet.Bits() != 64 {
+		panic(fmt.Sprintf("ComputeSandboxVIP requires a /64 prefix, got /%d", subnet.Bits()))
+	}
 	h := hashTo32Bits(sandboxID)
 	base := subnet.Addr().As16()
 

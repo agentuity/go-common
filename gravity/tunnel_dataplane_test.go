@@ -372,10 +372,14 @@ func TestHandleTunnelStream_KeepaliveNotDelivered(t *testing.T) {
 
 	stream.recvCh <- &pb.TunnelPacket{Data: append([]byte(nil), TunnelKeepaliveMarker...)}
 	stream.errCh <- errors.New("stop")
-	time.Sleep(50 * time.Millisecond)
 
-	if len(g.inboundPackets) != 0 {
+	// Bounded select: fails immediately if a keepalive packet is
+	// incorrectly delivered; succeeds after timeout with no delivery.
+	select {
+	case <-g.inboundPackets:
 		t.Fatal("keepalive packet should not be enqueued")
+	case <-time.After(100 * time.Millisecond):
+		// Good — no packet delivered within the window.
 	}
 	if p.Count() != 0 {
 		t.Fatal("keepalive packet should not be delivered to provider")

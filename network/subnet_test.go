@@ -97,6 +97,24 @@ func TestComputeSandboxVIP_WithinSubnet(t *testing.T) {
 	}
 }
 
+func TestComputeSandboxVIP_PanicsOnNon64Prefix(t *testing.T) {
+	// Build a /80 prefix — ComputeSandboxVIP must reject it because
+	// the host-bit layout is hardcoded for /64.
+	b := make([]byte, 16)
+	b[0] = 0xfd
+	b[1] = 0x15
+	addr, _ := netip.AddrFromSlice(b)
+	prefix80 := netip.PrefixFrom(addr, 80)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("ComputeSandboxVIP should panic on non-/64 prefix")
+		}
+	}()
+
+	ComputeSandboxVIP(prefix80, "sandbox_001")
+}
+
 func TestComputeSandboxVIP_DifferentSandboxes(t *testing.T) {
 	region := RegionUSWest1
 	machineID := "machine_xyz789"

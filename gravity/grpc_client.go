@@ -4419,41 +4419,90 @@ func generateMessageID() string {
 
 // sendSessionMessageAsync sends a session message without waiting for response (async)
 func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
+	stream, streamIndex := g.pickControlStream()
+	if stream == nil || streamIndex < 0 {
+		return fmt.Errorf("no control streams available")
+	}
+	return g.sendOnStream(stream, streamIndex, msg)
+}
+
+// broadcastSessionMessage sends a message to ALL healthy control streams.
+// Used for deployment/resource registration so every connected ion gets the
+// VIP routing. Errors on individual streams are logged but not fatal — the
+// message succeeds if at least one stream accepts it.
+func (g *GravityClient) broadcastSessionMessage(msg *pb.SessionMessage) error {
+	streams := g.allHealthyControlStreams()
+	if len(streams) == 0 {
+		return fmt.Errorf("no control streams available")
+	}
+
+	var lastErr error
+	sent := 0
+	for _, s := range streams {
+		if err := g.sendOnStream(s.stream, s.index, msg); err != nil {
+			g.logger.Warn("broadcastSessionMessage: failed to send to endpoint %d: %v", s.index, err)
+			lastErr = err
+		} else {
+			sent++
+		}
+	}
+	if sent == 0 {
+		return fmt.Errorf("failed to send to any endpoint: %w", lastErr)
+	}
+	return nil
+}
+
+type indexedStream struct {
+	stream pb.GravitySessionService_EstablishSessionClient
+	index  int
+}
+
+// pickControlStream returns the first healthy control stream.
+func (g *GravityClient) pickControlStream() (pb.GravitySessionService_EstablishSessionClient, int) {
 	g.streamManager.controlMu.RLock()
 	g.streamManager.healthMu.RLock()
-	var stream pb.GravitySessionService_EstablishSessionClient
-	streamIndex := -1
+	defer g.streamManager.healthMu.RUnlock()
+	defer g.streamManager.controlMu.RUnlock()
+
 	for i, s := range g.streamManager.controlStreams {
 		if s == nil {
 			continue
 		}
-		// Prefer healthy streams; during reconnection a stream may be
-		// published but not yet past the hello handshake.
 		if i < len(g.streamManager.connectionHealth) && !g.streamManager.connectionHealth[i] {
 			continue
 		}
-		stream = s
-		streamIndex = i
-		break
+		return s, i
 	}
-	if stream == nil {
-		// Fallback: pick any non-nil stream even if not yet marked healthy
-		// (single-endpoint mode or all endpoints mid-handshake).
-		for i, s := range g.streamManager.controlStreams {
-			if s != nil {
-				stream = s
-				streamIndex = i
-				break
-			}
+	// Fallback: pick any non-nil stream
+	for i, s := range g.streamManager.controlStreams {
+		if s != nil {
+			return s, i
 		}
 	}
-	g.streamManager.healthMu.RUnlock()
-	g.streamManager.controlMu.RUnlock()
+	return nil, -1
+}
 
-	if stream == nil || streamIndex < 0 {
-		return fmt.Errorf("no control streams available")
+// allHealthyControlStreams returns all healthy control streams.
+func (g *GravityClient) allHealthyControlStreams() []indexedStream {
+	g.streamManager.controlMu.RLock()
+	g.streamManager.healthMu.RLock()
+	defer g.streamManager.healthMu.RUnlock()
+	defer g.streamManager.controlMu.RUnlock()
+
+	var streams []indexedStream
+	for i, s := range g.streamManager.controlStreams {
+		if s == nil {
+			continue
+		}
+		if i < len(g.streamManager.connectionHealth) && !g.streamManager.connectionHealth[i] {
+			continue
+		}
+		streams = append(streams, indexedStream{stream: s, index: i})
 	}
+	return streams
+}
 
+func (g *GravityClient) sendOnStream(stream pb.GravitySessionService_EstablishSessionClient, streamIndex int, msg *pb.SessionMessage) error {
 	if streamIndex >= len(g.circuitBreakers) {
 		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", streamIndex, len(g.circuitBreakers))
 	}
@@ -4520,7 +4569,10 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 		},
 	}
 
-	if err := g.sendSessionMessageAsync(msg); err != nil {
+	// Broadcast to ALL connected ions so every ion with a tunnel to this
+	// hadron gets the VIP route. Without this, only one ion registers the
+	// deployment VIP, and requests hitting other ions get 502.
+	if err := g.broadcastSessionMessage(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route deployment request: %w", err)
 	}
 

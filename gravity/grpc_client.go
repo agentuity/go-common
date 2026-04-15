@@ -3659,7 +3659,7 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	// soon as it comes back. Only stop on client shutdown or context
 	// cancellation.
 	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	maxBackoff := 10 * time.Second
 	attempt := 0
 
 	// How many consecutive failures before re-resolving DNS. When ion
@@ -4184,15 +4184,18 @@ func (g *GravityClient) attemptReconnection(reason string) {
 
 	g.logger.Info("starting reconnection attempts due to: %s", reason)
 
-	// Use exponential backoff for reconnection attempts
+	// Use exponential backoff for reconnection attempts.
+	// Cap at 10s — ion restarts typically complete in 5-10s, and we
+	// want hadron to reconnect promptly after a restart, not wait 30s.
 	backoff := time.Second
-	maxBackoff := 30 * time.Second
+	maxBackoff := 10 * time.Second
 	attempts := 0
 
 	maxAttempts := g.maxReconnectAttempts
-	if maxAttempts <= 0 {
-		maxAttempts = 10 // Default: 10 attempts
-	}
+	// Default: unlimited. Hadron must keep retrying indefinitely —
+	// ion restarts, network disruptions, and cloud migrations are
+	// normal events. The capped backoff (30s) prevents hammering.
+	// Systemd handles truly broken processes.
 
 	attemptTimeout := g.reconnectAttemptTimeout
 	if attemptTimeout <= 0 {
@@ -4201,21 +4204,28 @@ func (g *GravityClient) attemptReconnection(reason string) {
 
 	for !g.closing {
 		attempts++
-		g.logger.Info("reconnection attempt %d/%d (backoff: %v, timeout: %v)", attempts, maxAttempts, backoff, attemptTimeout)
+		if maxAttempts > 0 {
+			g.logger.Info("reconnection attempt %d/%d (backoff: %v, timeout: %v)", attempts, maxAttempts, backoff, attemptTimeout)
+		} else {
+			g.logger.Info("reconnection attempt %d (backoff: %v, timeout: %v)", attempts, backoff, attemptTimeout)
+		}
 
 		// Each reconnection attempt has a timeout to prevent indefinite hanging.
 		// Without this, Start() can block forever when Gravity is unreachable
 		// because gRPC stream establishment has no inherent deadline.
 		if err := g.reconnectWithTimeout(attemptTimeout); err != nil {
-			g.logger.Error("reconnection attempt %d/%d failed: %v", attempts, maxAttempts, err)
+			if maxAttempts > 0 {
+				g.logger.Error("reconnection attempt %d/%d failed: %v", attempts, maxAttempts, err)
+			} else {
+				g.logger.Error("reconnection attempt %d failed: %v", attempts, err)
+			}
 
-			// Check if we've exhausted all attempts
-			if attempts >= maxAttempts {
+			// Check if we've exhausted all attempts (0 = unlimited)
+			if maxAttempts > 0 && attempts >= maxAttempts {
 				g.logger.Error("exhausted all %d reconnection attempts (last error: %v)", maxAttempts, err)
 				if g.reconnectionFailedCallback != nil {
 					g.reconnectionFailedCallback(attempts, err)
 				}
-				// If callback didn't terminate the process, stop reconnecting
 				return
 			}
 

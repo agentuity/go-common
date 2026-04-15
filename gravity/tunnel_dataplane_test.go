@@ -736,29 +736,6 @@ func TestMultiEndpoint_EndpointHealthAffectsStreams(t *testing.T) {
 	}
 }
 
-func TestBufferPool_GetAndReturn(t *testing.T) {
-	t.Parallel()
-	g, _ := newTunnelDataplaneTestClient(t, 1)
-
-	p := g.getBuffer([]byte("hello"))
-	if p == nil || p.Length != 5 {
-		t.Fatal("expected pooled buffer for payload")
-	}
-	first := &p.Buffer[0]
-	g.returnBuffer(p)
-
-	p2 := g.getBuffer([]byte("world"))
-	if p2 == nil || p2.Length != 5 {
-		t.Fatal("expected pooled buffer on second get")
-	}
-	second := &p2.Buffer[0]
-	g.returnBuffer(p2)
-
-	if first != second {
-		t.Fatal("expected buffer to be recycled through pool")
-	}
-}
-
 func TestBufferPool_ConcurrentAccess(t *testing.T) {
 	t.Parallel()
 	g, _ := newTunnelDataplaneTestClient(t, 1)

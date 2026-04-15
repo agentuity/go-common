@@ -65,6 +65,10 @@ func init() {
 var ErrConnectionClosed = errors.New("gravity connection closed")
 
 const (
+	// debugTunnelPackets gates verbose per-packet tunnel logging.
+	// Keep false in production to avoid high-volume log spam.
+	debugTunnelPackets = false
+
 	// DefaultMaxGravityPeers is the maximum number of Gravity servers
 	// a single Hadron will connect to simultaneously.
 	DefaultMaxGravityPeers = 3
@@ -2360,14 +2364,15 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			return
 		}
 
-		// Always log received tunnel packets for debugging
-		if len(packet.Data) >= 40 {
-			srcIP := net.IP(packet.Data[8:24])
-			dstIP := net.IP(packet.Data[24:40])
-			nextHdr := packet.Data[6]
-			g.logger.Info("[tunnel-recv] stream %d: %d bytes SRC=%s DST=%s nextHdr=%d", streamIndex, len(packet.Data), srcIP, dstIP, nextHdr)
-		} else {
-			g.logger.Info("[tunnel-recv] stream %d: %d bytes (too small for IPv6)", streamIndex, len(packet.Data))
+		if debugTunnelPackets {
+			if len(packet.Data) >= 40 {
+				srcIP := net.IP(packet.Data[8:24])
+				dstIP := net.IP(packet.Data[24:40])
+				nextHdr := packet.Data[6]
+				g.logger.Info("[tunnel-recv] stream %d: %d bytes SRC=%s DST=%s nextHdr=%d", streamIndex, len(packet.Data), srcIP, dstIP, nextHdr)
+			} else {
+				g.logger.Info("[tunnel-recv] stream %d: %d bytes (too small for IPv6)", streamIndex, len(packet.Data))
+			}
 		}
 
 		// If enqueuedAt is set, log tunnel transit latency.
@@ -4999,7 +5004,7 @@ func (g *GravityClient) handleInboundPackets() {
 		case packet := <-g.inboundPackets:
 			// Forward to provider for local processing
 			pktData := packet.Buffer[:packet.Length]
-			if len(pktData) >= 40 {
+			if debugTunnelPackets && len(pktData) >= 40 {
 				srcIP := net.IP(pktData[8:24])
 				dstIP := net.IP(pktData[24:40])
 				g.logger.Info("[inbound-deliver] %d bytes SRC=%s DST=%s → ProcessInPacket", len(pktData), srcIP, dstIP)

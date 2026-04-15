@@ -807,29 +807,18 @@ func (g *GravityClient) startMultiEndpoint() error {
 				continue
 			}
 			if ok && len(ips) > 0 {
-				// Health-probe each resolved IP to filter dead/unready nodes.
-				// Deduplicate IPs and cap at MaxGravityPeers to ensure each
-				// endpoint connects to a distinct ion for true redundancy.
-				maxPeers := g.poolConfig.MaxGravityPeers
-				if maxPeers <= 0 {
-					maxPeers = DefaultMaxGravityPeers
-				}
+				// Add ALL unique IPs as candidate endpoints. Don't cap here —
+				// establishControlStreamsMulti connects in parallel and keeps
+				// the first MaxGravityPeers that succeed. This ensures stale
+				// DNS records (unreachable IPs) don't block real ions from
+				// getting a slot.
 				seen := make(map[string]bool, len(ips))
-				var healthy, unhealthy int
 				for _, ip := range ips {
-					if len(g.endpoints) >= maxPeers {
-						break // capped at MaxGravityPeers
-					}
 					ipStr := ip.String()
 					if seen[ipStr] {
 						continue // dedupe
 					}
 					seen[ipStr] = true
-					// No pre-connect probe. The gRPC dial (with 2s TCP timeout)
-					// is the health check. Probing first wastes 3-15s per IP and
-					// creates chicken-and-egg when ion returns 503 until hadron
-					// connects. Just try to connect — fast fail on dead IPs.
-					healthy++
 					hostPort := net.JoinHostPort(ipStr, port)
 					ep := &GravityEndpoint{
 						URL:           "grpc://" + hostPort,
@@ -837,30 +826,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 					}
 					ep.healthy.Store(false)
 					g.endpoints = append(g.endpoints, ep)
-				}
-				if healthy == 0 && unhealthy > 0 {
-					// All probes failed — fall back to using up to maxPeers unique IPs.
-					g.logger.Warn("all %d health probes failed for %s — using up to %d IPs unfiltered", unhealthy, hostname, maxPeers)
-					seen = make(map[string]bool, len(ips))
-					for _, ip := range ips {
-						if len(g.endpoints) >= maxPeers {
-							break
-						}
-						ipStr := ip.String()
-						if seen[ipStr] {
-							continue
-						}
-						seen[ipStr] = true
-						hostPort := net.JoinHostPort(ipStr, port)
-						ep := &GravityEndpoint{
-							URL:           "grpc://" + hostPort,
-							TLSServerName: hostname,
-						}
-						ep.healthy.Store(false)
-						g.endpoints = append(g.endpoints, ep)
-					}
-				} else if unhealthy > 0 {
-					g.logger.Info("startup health probes: %d healthy, %d unhealthy (filtered) for %s", healthy, unhealthy, hostname)
 				}
 			} else {
 				// DNS returned no IPs, fall back to original URL
@@ -1901,6 +1866,11 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 	}
 
 	n := len(g.sessionClients)
+	maxPeers := g.poolConfig.MaxGravityPeers
+	if maxPeers <= 0 {
+		maxPeers = DefaultMaxGravityPeers
+	}
+
 	results := make(chan establishResult, n)
 
 	for i, client := range g.sessionClients {
@@ -1917,9 +1887,10 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 
 	for range n {
 		result := <-results
+
 		if result.err != nil {
 			if !isContextCanceled(g.ctx, result.err) {
-				g.logger.Error("failed to establish control stream %d: %v", result.index+1, result.err)
+				g.logger.Debug("control stream %d failed: %v", result.index+1, result.err)
 			}
 			result.cancel()
 			failed = append(failed, result.index)
@@ -1927,7 +1898,15 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 			continue
 		}
 
-		g.logger.Debug("control stream %d established successfully", result.index+1)
+		// If we already have enough healthy connections, close this one.
+		// We connect ALL candidates in parallel and keep only maxPeers.
+		if successCount >= maxPeers {
+			g.logger.Debug("control stream %d succeeded but already have %d/%d — closing excess", result.index+1, successCount, maxPeers)
+			result.cancel()
+			continue
+		}
+
+		g.logger.Debug("control stream %d established successfully (%d/%d)", result.index+1, successCount+1, maxPeers)
 
 		g.streamManager.controlMu.Lock()
 		g.streamManager.contexts[result.index] = result.ctx
@@ -1940,11 +1919,12 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 	}
 
 	if successCount == 0 {
-		return fmt.Errorf("failed to establish any control streams (%d endpoints): last error: %w", n, lastErr)
+		return fmt.Errorf("failed to establish any control streams (%d candidates): last error: %w", n, lastErr)
 	}
 
+	// Clean up failed endpoints and start background reconnect.
 	if len(failed) > 0 {
-		g.logger.Warn("failed to establish %d/%d control streams; starting background reconnect for failed endpoints", len(failed), n)
+		g.logger.Warn("established %d/%d control streams (%d failed, max %d); failed endpoints will reconnect in background", successCount, n, len(failed), maxPeers)
 		for _, idx := range failed {
 			g.disconnectEndpointStreams(idx)
 			if idx >= 0 && idx < len(g.endpointReconnecting) && g.endpointReconnecting[idx].CompareAndSwap(false, true) {
@@ -1953,7 +1933,7 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 		}
 	}
 
-	g.logger.Debug("established %d/%d control streams", successCount, n)
+	g.logger.Debug("established %d/%d control streams (max %d)", successCount, n, maxPeers)
 	return nil
 }
 

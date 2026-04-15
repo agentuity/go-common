@@ -523,44 +523,38 @@ func TestReResolve_EachEndpointGetsDifferentIP(t *testing.T) {
 
 // --- Health probe filtering ---
 
-func TestReResolve_HealthProbeFiltersDeadIPs(t *testing.T) {
-	// DNS returns 4 IPs. Health probe only passes for 10.0.1.1.
-	// reResolveEndpointURL should skip dead IPs and pick the healthy one.
+func TestReResolve_PicksDifferentIP(t *testing.T) {
+	// DNS returns 2 IPs. reResolve should pick one that's different
+	// from the current endpoint IP.
 	mock := newMockDNSLookup()
-	mock.setIPs("gravity.example.com", "10.0.0.2", "10.0.0.3", "10.0.1.1", "10.0.0.4")
-
-	liveIPs := map[string]bool{"10.0.1.1": true}
+	mock.setIPs("gravity.example.com", "10.0.0.2", "10.0.1.1")
 
 	ep := &GravityEndpoint{
 		URL:           "grpc://10.0.0.1:443",
 		TLSServerName: "gravity.example.com",
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+
 	g := &GravityClient{
-		ctx:    ctx,
-		cancel: cancel,
 		logger: logger.NewTestLogger(),
+		ctx:    context.Background(),
 		poolConfig: ConnectionPoolConfig{
 			MaxGravityPeers: 3,
 		},
 		dnsLookupMulti: mock.lookupMulti,
-		healthProbe: func(host, port string) bool {
-			return liveIPs[host]
-		},
 	}
 	g.endpoints = []*GravityEndpoint{ep}
 
 	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
 
-	if newURL != "grpc://10.0.1.1:443" {
-		t.Fatalf("expected healthy IP 10.0.1.1, got %q", newURL)
+	// Should pick either 10.0.0.2 or 10.0.1.1 — anything except the current 10.0.0.1
+	if newURL == "" || newURL == "grpc://10.0.0.1:443" {
+		t.Fatalf("expected a different IP, got %q", newURL)
 	}
 }
 
-func TestReResolve_HealthProbeAllDeadFallsBack(t *testing.T) {
-	// DNS returns 3 IPs. All health probes fail.
-	// Should fall back to picking any different IP without probe.
+func TestReResolve_PicksAnyDifferentIP(t *testing.T) {
+	// DNS returns 3 IPs. All are treated as healthy (no probe).
+	// Should pick any different IP.
 	mock := newMockDNSLookup()
 	mock.setIPs("gravity.example.com", "10.0.0.2", "10.0.0.3", "10.0.0.4")
 
@@ -578,32 +572,27 @@ func TestReResolve_HealthProbeAllDeadFallsBack(t *testing.T) {
 			MaxGravityPeers: 3,
 		},
 		dnsLookupMulti: mock.lookupMulti,
-		healthProbe: func(host, port string) bool {
-			return false // all dead
-		},
 	}
 	g.endpoints = []*GravityEndpoint{ep}
 
 	newURL := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
 
-	// Should still pick a different IP (fallback without probe)
+	// Should pick any different IP
 	if newURL == "" || newURL == "grpc://10.0.0.1:443" {
-		t.Fatalf("expected fallback to any different IP, got %q", newURL)
+		t.Fatalf("expected a different IP, got %q", newURL)
 	}
 }
 
-func TestReResolve_HealthProbeSimulatesRollout(t *testing.T) {
-	// 12 IPs from DNS: 9 dead (old rollouts), 3 live (new ions).
-	// Health probes should find the 3 live ones and each endpoint
-	// should connect to a healthy IP.
+func TestReResolve_MultiEndpointPicksUniqueIPs(t *testing.T) {
+	// 12 IPs from DNS. 3 endpoints. Each should get a unique, different IP.
+	// No health probe — all IPs treated as connectable; the gRPC dial
+	// timeout handles unreachable ones.
 	mock := newMockDNSLookup()
 	mock.setIPs("gravity.example.com",
 		"10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4",
 		"10.0.0.5", "10.0.0.6", "10.0.0.7", "10.0.0.8",
 		"10.0.0.9", "10.0.1.1", "10.0.1.2", "10.0.1.3",
 	)
-
-	liveIPs := map[string]bool{"10.0.1.1": true, "10.0.1.2": true, "10.0.1.3": true}
 
 	endpoints := []*GravityEndpoint{
 		{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity.example.com"},
@@ -620,29 +609,23 @@ func TestReResolve_HealthProbeSimulatesRollout(t *testing.T) {
 			MaxGravityPeers: 3,
 		},
 		dnsLookupMulti: mock.lookupMulti,
-		healthProbe: func(host, port string) bool {
-			return liveIPs[host]
-		},
 	}
 	g.endpoints = endpoints
 
-	url0 := g.reResolveEndpointURL(0, "grpc://10.0.0.1:443")
-	url1 := g.reResolveEndpointURL(1, "grpc://10.0.0.2:443")
-	url2 := g.reResolveEndpointURL(2, "grpc://10.0.0.3:443")
+	origURLs := []string{endpoints[0].URL, endpoints[1].URL, endpoints[2].URL}
 
-	// All 3 should connect to live IPs
-	validURLs := map[string]bool{
-		"grpc://10.0.1.1:443": true,
-		"grpc://10.0.1.2:443": true,
-		"grpc://10.0.1.3:443": true,
-	}
+	url0 := g.reResolveEndpointURL(0, origURLs[0])
+	url1 := g.reResolveEndpointURL(1, origURLs[1])
+	url2 := g.reResolveEndpointURL(2, origURLs[2])
+
+	// All 3 should pick a different IP (not their original one)
 	for i, u := range []string{url0, url1, url2} {
-		if !validURLs[u] {
-			t.Fatalf("endpoint %d got %q, expected one of the 3 live IPs", i, u)
+		if u == "" || u == origURLs[i] {
+			t.Fatalf("endpoint %d got %q (same as original %q)", i, u, origURLs[i])
 		}
 	}
 
-	// All 3 should be different (avoid-in-use logic)
+	// All 3 should be different from each other (avoid-in-use logic)
 	urls := map[string]bool{url0: true, url1: true, url2: true}
 	if len(urls) != 3 {
 		t.Fatalf("expected 3 unique URLs, got %d: %q %q %q", len(urls), url0, url1, url2)

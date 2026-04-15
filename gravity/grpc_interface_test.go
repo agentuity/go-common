@@ -1,6 +1,7 @@
 package gravity
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -33,10 +34,12 @@ func TestWritePacketMethodWithoutConnection(t *testing.T) {
 
 // TestUnprovisionMethod tests the Unprovision method with no streams
 func TestUnprovisionMethodWithoutStreams(t *testing.T) {
-	// Create a minimal GRPCGravityServer for testing (no streams)
+	// Create a minimal GravityClient for testing (no streams)
 	server := &GravityClient{
+		logger: logger.NewTestLogger(),
 		streamManager: &StreamManager{
-			controlStreams: make([]pb.GravitySessionService_EstablishSessionClient, 0),
+			controlStreams:   make([]pb.GravitySessionService_EstablishSessionClient, 0),
+			connectionHealth: make([]bool, 0),
 		},
 	}
 
@@ -48,8 +51,8 @@ func TestUnprovisionMethodWithoutStreams(t *testing.T) {
 	}
 
 	expectedMsg := "no control streams available"
-	if err.Error() != expectedMsg {
-		t.Errorf("Expected error message '%s', got '%s'", expectedMsg, err.Error())
+	if !strings.Contains(err.Error(), expectedMsg) {
+		t.Errorf("Expected error containing '%s', got '%s'", expectedMsg, err.Error())
 	}
 }
 

@@ -825,7 +825,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 						continue // dedupe
 					}
 					seen[ipStr] = true
-					// No pre-connect probe. The gRPC dial (with 5s TCP timeout)
+					// No pre-connect probe. The gRPC dial (with 2s TCP timeout)
 					// is the health check. Probing first wastes 3-15s per IP and
 					// creates chicken-and-egg when ion returns 503 until hadron
 					// connects. Just try to connect — fast fail on dead IPs.
@@ -2502,7 +2502,7 @@ func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMe
 	case *pb.SessionMessage_SessionHelloResponse:
 		g.logger.Debug("received SessionHelloResponse: msgID=%s, streamID=%s, streamIndex=%d", msg.Id, msg.StreamId, streamIndex)
 		g.helloAckedStreams.Store(streamIndex, true)
-		g.handleSessionHelloResponse(msg.Id, m.SessionHelloResponse)
+		g.handleSessionHelloResponse(streamIndex, msg.Id, m.SessionHelloResponse)
 	case *pb.SessionMessage_RouteDeploymentResponse:
 		g.handleRouteDeploymentResponse(msg.Id, m.RouteDeploymentResponse)
 	case *pb.SessionMessage_RouteSandboxResponse:
@@ -2567,8 +2567,8 @@ func (g *GravityClient) SetEvacuationCallback(cb func()) {
 }
 
 // Helper functions
-func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.SessionHelloResponse) {
-	g.logger.Debug("handleSessionHelloResponse called: msgID=%s, machineID=%s, gravityServer=%s", msgID, response.MachineId, response.GravityServer)
+func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string, response *pb.SessionHelloResponse) {
+	g.logger.Debug("handleSessionHelloResponse called: streamIndex=%d, msgID=%s, machineID=%s, gravityServer=%s", streamIndex, msgID, response.MachineId, response.GravityServer)
 
 	g.mu.Lock()
 
@@ -2688,13 +2688,25 @@ func (g *GravityClient) handleSessionHelloResponse(msgID string, response *pb.Se
 
 	closeSessionReady()
 
-	// Fire OnEndpointReady callback after session hello succeeds. This covers
-	// both initial connection and reconnection paths. The callback runs in a
-	// goroutine to avoid blocking the control stream handler.
-	if g.onEndpointReady != nil {
-		g.logger.Info("firing OnEndpointReady callback from session hello completion")
-		go g.onEndpointReady(0)
+	g.fireOnEndpointReady(streamIndex)
+}
+
+// fireOnEndpointReady safely invokes the OnEndpointReady callback in a
+// goroutine with a panic guard. Passes the real endpoint index so hadron
+// knows which gravity server just became ready.
+func (g *GravityClient) fireOnEndpointReady(endpointIndex int) {
+	if g.onEndpointReady == nil {
+		return
 	}
+	g.logger.Info("firing OnEndpointReady callback for endpoint %d", endpointIndex)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.logger.Error("OnEndpointReady callback panicked for endpoint %d: %v", endpointIndex, r)
+			}
+		}()
+		g.onEndpointReady(endpointIndex)
+	}()
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
@@ -4056,12 +4068,7 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 	}
 	g.streamManager.healthMu.Unlock()
 
-	// Fire the OnEndpointReady callback so hadron can re-register all
-	// active resources (deployment VIPs) on this newly connected endpoint.
-	if g.onEndpointReady != nil {
-		g.logger.Info("firing OnEndpointReady callback for endpoint %d", endpointIndex)
-		go g.onEndpointReady(endpointIndex)
-	}
+	g.fireOnEndpointReady(endpointIndex)
 
 	streamsPerGravity := g.poolConfig.StreamsPerGravity
 	if streamsPerGravity <= 0 {
@@ -4661,11 +4668,14 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 		},
 	}
 
-	if err := g.sendSessionMessageAsync(msg); err != nil {
+	// Broadcast to ALL connected ions so every ion with a tunnel to this
+	// hadron gets the sandbox VIP route.
+	g.logger.Info("SendRouteSandboxRequest: broadcasting sandbox %s (vip=%s) to all endpoints", sandboxID, virtualIP)
+	if err := g.broadcastSessionMessage(msg); err != nil {
 		return nil, fmt.Errorf("failed to send route sandbox request: %w", err)
 	}
 
-	// Wait for response with timeout
+	// Wait for first response with timeout — all ions process independently.
 	select {
 	case result := <-responseChan:
 		if result.Error != "" {
@@ -4728,6 +4738,8 @@ func (sm *StreamManager) releaseStream(stream *StreamInfo) {
 
 // Unprovision sends an unprovision request to the gravity server
 func (g *GravityClient) Unprovision(deploymentID string) error {
+	g.logger.Info("Unprovision: broadcasting removal of deployment %s to all endpoints", deploymentID)
+
 	req := &pb.UnprovisionRequest{
 		DeploymentId: deploymentID,
 	}
@@ -4740,7 +4752,13 @@ func (g *GravityClient) Unprovision(deploymentID string) error {
 		},
 	}
 
-	return g.sendSessionMessageAsync(msg)
+	// Broadcast to ALL connected ions so every ion removes the VIP route.
+	if err := g.broadcastSessionMessage(msg); err != nil {
+		g.logger.Error("Unprovision: broadcast failed for deployment %s: %v", deploymentID, err)
+		return err
+	}
+	g.logger.Info("Unprovision: broadcast succeeded for deployment %s", deploymentID)
+	return nil
 }
 
 // SendEvacuateRequest sends a request to evacuate sandboxes on this machine.

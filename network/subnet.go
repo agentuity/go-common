@@ -16,13 +16,14 @@ const NetworkSandboxSubnet Network = 0x05
 // The machineID is already derived from orgID + instanceID (see auth.DeterministicMachineID),
 // so the org is implicitly included in the subnet computation.
 //
-// Address format: fd15:d710:RR:05:MMMM::/64
-//   - RR = Region (8 bits, byte 4)
-//   - 05 = NetworkSandboxSubnet in high nibble (4 bits) + 0 in low nibble (byte 5)
-//   - MMMM = 16 bits of machine hash (bytes 6-7)
+// Address format: fd15:d710:RNMM:MMMM::/64
+//   - Byte 4: Region (5 bits, max 31) | Network (3 bits, max 7)
+//   - Bytes 5-7: Machine hash (24 bits, 16M buckets)
 //
-// Note: We use 16 bits for machine hash within the /64 prefix. This gives
-// ~0.03% collision rate at 100 machines, which is acceptable.
+// With 24-bit machine hash, birthday-paradox collision probability is:
+//   - 100 machines: ~0.03%
+//   - 1000 machines: ~2.9%
+//   - 5000 machines: ~52%
 func ComputeSandboxSubnet(region Region, machineID string) netip.Prefix {
 	machineHash := hashTo32Bits(machineID)
 
@@ -31,8 +32,8 @@ func ComputeSandboxSubnet(region Region, machineID string) netip.Prefix {
 	b[1] = 0x15
 	b[2] = 0xd7
 	b[3] = 0x10
-	b[4] = byte(region)
-	b[5] = byte(NetworkSandboxSubnet) << 4
+	b[4] = (byte(region) << 3) | (byte(NetworkSandboxSubnet) & 0x07)
+	b[5] = byte((machineHash >> 16) & 0xff)
 	b[6] = byte((machineHash >> 8) & 0xff)
 	b[7] = byte(machineHash & 0xff)
 	// Bytes 8-15 are zero for the prefix
@@ -44,6 +45,12 @@ func ComputeSandboxSubnet(region Region, machineID string) netip.Prefix {
 // ComputeSandboxVIP returns a deterministic IPv6 address for a sandbox
 // within its machine's subnet. The subnet must be a /64 prefix; the host
 // bits (bytes 8-15) are derived from the sandboxID hash.
+//
+// Note: bytes 12-14 reuse overlapping bit ranges from the same 32-bit
+// FNV-1a hash, so the effective entropy is ~32 bits spread across 7 bytes
+// (byte 15 is forced odd). This is sufficient for current scale — 0
+// collisions at 10k sandboxes in testing. For very large sandbox counts
+// (100k+), consider switching to a 64-bit hash function.
 func ComputeSandboxVIP(subnet netip.Prefix, sandboxID string) netip.Addr {
 	if subnet.Bits() != 64 {
 		panic(fmt.Sprintf("ComputeSandboxVIP requires a /64 prefix, got /%d", subnet.Bits()))

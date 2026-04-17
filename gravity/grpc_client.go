@@ -4900,7 +4900,7 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 			copy(dstIP, payload[24:40])
 			srcPort := binary.BigEndian.Uint16(payload[40:42])
 			dstPort := binary.BigEndian.Uint16(payload[42:44])
-			g.logger.Info("gravity.synack.sending src=%s:%d dst=%s:%d", srcIP, srcPort, dstIP, dstPort)
+			g.logger.Trace("gravity.synack.sending src=%s:%d dst=%s:%d", srcIP, srcPort, dstIP, dstPort)
 		}
 	}
 

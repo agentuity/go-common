@@ -111,13 +111,12 @@ func (g *GCEDiscoverer) Discover(ctx context.Context) ([]string, error) {
 		if !g.hasTag(inst) {
 			continue
 		}
-		// Extract the internal IP, preferring IPv6 (memberlist binds to IPv6
-		// when available, so peers must be reachable on their IPv6 address).
+		// Extract the internal IPv4 address. The IPv6 address on GCE
+		// instances is an overlay address (fd20:…) that is NOT routable
+		// between machines, causing memberlist peers to be unreachable.
+		// IPv4 private addresses (10.x.x.x) are always routable within
+		// the VPC.
 		for _, iface := range inst.NetworkInterfaces {
-			if iface.IPv6Address != "" {
-				peers = append(peers, iface.IPv6Address)
-				break
-			}
 			if iface.NetworkIP != "" {
 				peers = append(peers, iface.NetworkIP)
 				break

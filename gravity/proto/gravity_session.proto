@@ -252,6 +252,7 @@ message ExistingDeployment {
   google.protobuf.Duration pausedDuration = 10;
   bool on_demand = 11;
   string cert = 12; // PEM certificate that was issued (just cert, ca + key not required)
+  google.protobuf.Duration pausedTimeout = 13; // Per-sandbox paused timeout (0 = infinite)
 }
 
 message ResourceRequirements {

@@ -1941,7 +1941,8 @@ type ExistingDeployment struct {
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
 	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
-	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"` // PEM certificate that was issued (just cert, ca + key not required)
+	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"`                   // PEM certificate that was issued (just cert, ca + key not required)
+	PausedTimeout  *durationpb.Duration   `protobuf:"bytes,13,opt,name=pausedTimeout,proto3" json:"pausedTimeout,omitempty"` // Per-sandbox paused timeout (0 = infinite)
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2051,6 +2052,13 @@ func (x *ExistingDeployment) GetCert() string {
 		return x.Cert
 	}
 	return ""
+}
+
+func (x *ExistingDeployment) GetPausedTimeout() *durationpb.Duration {
+	if x != nil {
+		return x.PausedTimeout
+	}
+	return nil
 }
 
 type ResourceRequirements struct {
@@ -3550,7 +3558,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	" \x01(\tR\x06region\x12#\n" +
 	"\rinstance_type\x18\v \x01(\tR\finstanceType\x12#\n" +
 	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\x12+\n" +
-	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\xc9\x03\n" +
+	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\x8a\x04\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
@@ -3563,7 +3571,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x0epausedDuration\x18\n" +
 	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\x12\x1b\n" +
 	"\ton_demand\x18\v \x01(\bR\bonDemand\x12\x12\n" +
-	"\x04cert\x18\f \x01(\tR\x04cert\"\xe0\x01\n" +
+	"\x04cert\x18\f \x01(\tR\x04cert\x12?\n" +
+	"\rpausedTimeout\x18\r \x01(\v2\x19.google.protobuf.DurationR\rpausedTimeout\"\xe0\x01\n" +
 	"\x14ResourceRequirements\x12!\n" +
 	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +
 	"\tcpu_limit\x18\x02 \x01(\x03R\bcpuLimit\x12%\n" +
@@ -3805,28 +3814,29 @@ var file_gravity_session_proto_depIdxs = []int32{
 	25, // 33: gravity.ExistingDeployment.resources:type_name -> gravity.ResourceRequirements
 	26, // 34: gravity.ExistingDeployment.deployment_cert:type_name -> gravity.DeploymentCert
 	48, // 35: gravity.ExistingDeployment.pausedDuration:type_name -> google.protobuf.Duration
-	28, // 36: gravity.CodeMetadata.secret_rules:type_name -> gravity.SecretRule
-	0,  // 37: gravity.SecretRule.scheme:type_name -> gravity.SecretScheme
-	27, // 38: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
-	26, // 39: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
-	36, // 40: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
-	38, // 41: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
-	1,  // 42: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
-	4,  // 43: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
-	8,  // 44: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
-	30, // 45: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
-	34, // 46: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
-	2,  // 47: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
-	4,  // 48: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
-	8,  // 49: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
-	31, // 50: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
-	35, // 51: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
-	3,  // 52: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
-	48, // [48:53] is the sub-list for method output_type
-	43, // [43:48] is the sub-list for method input_type
-	43, // [43:43] is the sub-list for extension type_name
-	43, // [43:43] is the sub-list for extension extendee
-	0,  // [0:43] is the sub-list for field type_name
+	48, // 36: gravity.ExistingDeployment.pausedTimeout:type_name -> google.protobuf.Duration
+	28, // 37: gravity.CodeMetadata.secret_rules:type_name -> gravity.SecretRule
+	0,  // 38: gravity.SecretRule.scheme:type_name -> gravity.SecretScheme
+	27, // 39: gravity.DeploymentMetadataResponse.code_metadata:type_name -> gravity.CodeMetadata
+	26, // 40: gravity.DeploymentMetadataResponse.deployment_cert:type_name -> gravity.DeploymentCert
+	36, // 41: gravity.EvacuateRequest.sandboxes:type_name -> gravity.SandboxEvacInfo
+	38, // 42: gravity.EvacuationPlan.sandboxes:type_name -> gravity.EvacuateSandboxPlan
+	1,  // 43: gravity.CheckpointURLRequest.operation:type_name -> gravity.CheckpointURLOperation
+	4,  // 44: gravity.GravitySessionService.EstablishSession:input_type -> gravity.SessionMessage
+	8,  // 45: gravity.GravitySessionService.StreamSessionPackets:input_type -> gravity.TunnelPacket
+	30, // 46: gravity.GravitySessionService.GetDeploymentMetadata:input_type -> gravity.DeploymentMetadataRequest
+	34, // 47: gravity.GravitySessionService.GetSandboxMetadata:input_type -> gravity.SandboxMetadataRequest
+	2,  // 48: gravity.GravitySessionService.Identify:input_type -> gravity.IdentifyRequest
+	4,  // 49: gravity.GravitySessionService.EstablishSession:output_type -> gravity.SessionMessage
+	8,  // 50: gravity.GravitySessionService.StreamSessionPackets:output_type -> gravity.TunnelPacket
+	31, // 51: gravity.GravitySessionService.GetDeploymentMetadata:output_type -> gravity.DeploymentMetadataResponse
+	35, // 52: gravity.GravitySessionService.GetSandboxMetadata:output_type -> gravity.SandboxMetadataResponse
+	3,  // 53: gravity.GravitySessionService.Identify:output_type -> gravity.IdentifyResponse
+	49, // [49:54] is the sub-list for method output_type
+	44, // [44:49] is the sub-list for method input_type
+	44, // [44:44] is the sub-list for extension type_name
+	44, // [44:44] is the sub-list for extension extendee
+	0,  // [0:44] is the sub-list for field type_name
 }
 
 func init() { file_gravity_session_proto_init() }

@@ -69,11 +69,12 @@ type Configuration struct {
 type DeprovisionReason string
 
 const (
-	DeprovisionReasonIdleTimeout DeprovisionReason = "idle_timeout"
-	DeprovisionReasonError       DeprovisionReason = "error"
-	DeprovisionReasonExited      DeprovisionReason = "exit"
-	DeprovisionReasonShutdown    DeprovisionReason = "shutdown"
-	DeprovisionReasonUnprovision DeprovisionReason = "unprovision"
+	DeprovisionReasonIdleTimeout  DeprovisionReason = "idle_timeout"
+	DeprovisionReasonPausedTimeout DeprovisionReason = "paused_timeout"
+	DeprovisionReasonError        DeprovisionReason = "error"
+	DeprovisionReasonExited       DeprovisionReason = "exit"
+	DeprovisionReasonShutdown     DeprovisionReason = "shutdown"
+	DeprovisionReasonUnprovision  DeprovisionReason = "unprovision"
 )
 
 // Provider interface defines the minimal set of methods required by the gravity client

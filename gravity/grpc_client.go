@@ -2649,7 +2649,8 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 		}
 	}
 
-	// Configure provider with session info
+	// Configure provider with session info. Use preserved values (g.*)
+	// for fields that multi-tunnel reuse sessions may leave empty.
 	if err := g.provider.Configure(provider.Configuration{
 		Server:            g,
 		Context:           g.context,
@@ -2657,7 +2658,7 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 		APIURL:            g.apiURL,
 		SSHPublicKey:      response.SshPublicKey,
 		TelemetryURL:      g.otlpURL,
-		TelemetryAPIKey:   response.OtlpKey,
+		TelemetryAPIKey:   g.otlpToken,
 		GravityURL:        g.url,
 		AgentuityCACert:   g.caCert,
 		HostMapping:       g.hostMapping,

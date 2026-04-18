@@ -2583,11 +2583,27 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	g.authorizationToken = response.MachineToken
 	g.connectionIDs = append(g.connectionIDs, response.MachineId)
 
-	g.otlpURL = response.OtlpUrl
-	g.otlpToken = response.OtlpKey
-	g.apiURL = response.ApiUrl
-	g.hostEnvironment = response.Environment
-	g.hostMapping = response.HostMapping
+	// Only update config values when non-empty. Multi-tunnel reuse sessions
+	// return minimal responses without these fields — don't overwrite the
+	// good config from the primary session.
+	g.logger.Info("[session-config] response: apiUrl=%q otlpUrl=%q env=%d hostMappings=%d machineId=%s server=%s",
+		response.ApiUrl, response.OtlpUrl, len(response.Environment), len(response.HostMapping), response.MachineId, response.GravityServer)
+	if response.OtlpUrl != "" {
+		g.otlpURL = response.OtlpUrl
+	}
+	if response.OtlpKey != "" {
+		g.otlpToken = response.OtlpKey
+	}
+	if response.ApiUrl != "" {
+		g.apiURL = response.ApiUrl
+	}
+	if len(response.Environment) > 0 {
+		g.hostEnvironment = response.Environment
+	}
+	if len(response.HostMapping) > 0 {
+		g.hostMapping = response.HostMapping
+	}
+	g.logger.Info("[session-config] effective: apiUrl=%q otlpUrl=%q hostMappings=%d", g.apiURL, g.otlpURL, len(g.hostMapping))
 
 	if len(response.SshPublicKey) > 0 {
 		g.logger.Trace("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))

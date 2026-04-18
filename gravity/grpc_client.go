@@ -297,7 +297,18 @@ type GravityClient struct {
 	apiURL               string
 	hostMapping          []*pb.HostMapping
 	hostEnvironment      []string
-	once                 sync.Once
+	// Preserved session config fields — multi-tunnel reuse sessions send
+	// minimal responses without these. We store the values from the primary
+	// session and reuse them when subsequent responses are empty.
+	subnetRoutes      []string
+	machineSubnet     string
+	sessionHostname   string
+	sessionOrgID      string
+	machineToken      string
+	machineCertBundle string
+	sshPublicKey      []byte
+	signingPublicKey  []byte
+	once              sync.Once
 
 	// Messaging
 	evacuationCallback    func()
@@ -2603,14 +2614,31 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	if len(response.HostMapping) > 0 {
 		g.hostMapping = response.HostMapping
 	}
-	g.logger.Info("[session-config] effective: apiUrl=%q otlpUrl=%q hostMappings=%d", g.apiURL, g.otlpURL, len(g.hostMapping))
-
+	if len(response.SubnetRoutes) > 0 {
+		g.subnetRoutes = response.SubnetRoutes
+	}
+	if response.MachineSubnet != "" {
+		g.machineSubnet = response.MachineSubnet
+	}
+	if response.Hostname != "" {
+		g.sessionHostname = response.Hostname
+	}
+	if response.OrgId != "" {
+		g.sessionOrgID = response.OrgId
+	}
+	if response.MachineToken != "" {
+		g.machineToken = response.MachineToken
+	}
+	if response.MachineCertBundle != "" {
+		g.machineCertBundle = response.MachineCertBundle
+	}
 	if len(response.SshPublicKey) > 0 {
-		g.logger.Trace("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
+		g.sshPublicKey = response.SshPublicKey
 	}
 	if len(response.SigningPublicKey) > 0 {
-		g.logger.Trace("received signing public key from Gravity (%d bytes)", len(response.SigningPublicKey))
+		g.signingPublicKey = response.SigningPublicKey
 	}
+	g.logger.Info("[session-config] effective: apiUrl=%q otlpUrl=%q hostMappings=%d subnetRoutes=%d machineSubnet=%q", g.apiURL, g.otlpURL, len(g.hostMapping), len(g.subnetRoutes), g.machineSubnet)
 
 	g.mu.Unlock()
 
@@ -2640,9 +2668,9 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 
 	// Validate MachineSubnet if present. Empty is allowed for backward
 	// compatibility with ions that don't yet send it.
-	if response.MachineSubnet != "" {
-		if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
-			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+	if g.machineSubnet != "" {
+		if _, _, err := net.ParseCIDR(g.machineSubnet); err != nil {
+			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", g.machineSubnet, err)
 			signalConnectionID("")
 			closeSessionReady()
 			return
@@ -2656,21 +2684,21 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 		Context:           g.context,
 		Logger:            g.logger,
 		APIURL:            g.apiURL,
-		SSHPublicKey:      response.SshPublicKey,
+		SSHPublicKey:      g.sshPublicKey,
 		TelemetryURL:      g.otlpURL,
 		TelemetryAPIKey:   g.otlpToken,
 		GravityURL:        g.url,
 		AgentuityCACert:   g.caCert,
 		HostMapping:       g.hostMapping,
 		Environment:       g.hostEnvironment,
-		SubnetRoutes:      response.SubnetRoutes,
-		Hostname:          response.Hostname,
-		OrgID:             response.OrgId,
-		MachineToken:      response.MachineToken,
-		MachineID:         response.MachineId,
-		MachineCertBundle: response.MachineCertBundle,
-		MachineSubnet:     response.MachineSubnet,
-		SigningPublicKey:  response.SigningPublicKey,
+		SubnetRoutes:      g.subnetRoutes,
+		Hostname:          g.sessionHostname,
+		OrgID:             g.sessionOrgID,
+		MachineToken:      g.machineToken,
+		MachineID:         g.machineID,
+		MachineCertBundle: g.machineCertBundle,
+		MachineSubnet:     g.machineSubnet,
+		SigningPublicKey:  g.signingPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
 		signalConnectionID("")
@@ -2679,9 +2707,9 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	}
 	g.logger.Debug("provider configured successfully")
 
-	g.logger.Debug("configuring subnet routing for routes %v", response.SubnetRoutes)
+	g.logger.Debug("configuring subnet routing for routes %v", g.subnetRoutes)
 	if g.networkInterface != nil {
-		if err := g.networkInterface.RouteTraffic(response.SubnetRoutes); err != nil {
+		if err := g.networkInterface.RouteTraffic(g.subnetRoutes); err != nil {
 			g.logger.Error("failed to route traffic for gravity subnet: %v", err)
 			signalConnectionID("")
 			closeSessionReady()

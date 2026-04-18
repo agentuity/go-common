@@ -362,3 +362,112 @@ func TestComputeSandboxVIP_CollisionResistance(t *testing.T) {
 		t.Errorf("VIP collision rate should be < 0.1%% at 10000 sandboxes: got %.6f%%", collisionRate*100)
 	}
 }
+
+func TestComputeDeploymentSubnet_Consistency(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+
+	subnet1 := ComputeDeploymentSubnet(region, machineID)
+	subnet2 := ComputeDeploymentSubnet(region, machineID)
+
+	if subnet1 != subnet2 {
+		t.Errorf("ComputeDeploymentSubnet should produce consistent results:\n  got1: %s\n  got2: %s", subnet1, subnet2)
+	}
+}
+
+func TestComputeDeploymentSubnet_DifferentMachines(t *testing.T) {
+	region := RegionUSWest1
+
+	subnet1 := ComputeDeploymentSubnet(region, "machine_001")
+	subnet2 := ComputeDeploymentSubnet(region, "machine_002")
+
+	if subnet1 == subnet2 {
+		t.Errorf("ComputeDeploymentSubnet should produce different subnets for different machines:\n  got: %s", subnet1)
+	}
+}
+
+func TestComputeDeploymentSubnet_ValidPrefix(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+
+	subnet := ComputeDeploymentSubnet(region, machineID)
+
+	if !subnet.IsValid() {
+		t.Errorf("ComputeDeploymentSubnet should produce valid prefix: got %s", subnet)
+	}
+
+	if subnet.Bits() != 96 {
+		t.Errorf("ComputeDeploymentSubnet should produce /96 prefix: got /%d", subnet.Bits())
+	}
+}
+
+func TestComputeDeploymentSubnet_NetworkType(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+
+	subnet := ComputeDeploymentSubnet(region, machineID)
+	addr := subnet.Addr().As16()
+
+	networkType := addr[4] & 0x07
+	if networkType != byte(NetworkDeploymentSubnet) {
+		t.Errorf("Subnet should have NetworkDeploymentSubnet (0x06) in byte 4 low 3 bits: got 0x%02x", networkType)
+	}
+}
+
+func TestComputeDeploymentVIP_WithinSubnet(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+	deploymentID := "deployment_001"
+
+	subnet := ComputeDeploymentSubnet(region, machineID)
+	vip := ComputeDeploymentVIP(subnet, deploymentID)
+
+	if !subnet.Contains(vip) {
+		t.Errorf("ComputeDeploymentVIP should produce address within subnet:\n  subnet: %s\n  vip: %s", subnet, vip)
+	}
+}
+
+func TestComputeDeploymentVIP_PanicsOnNon96Prefix(t *testing.T) {
+	b := make([]byte, 16)
+	b[0] = 0xfd
+	b[1] = 0x15
+	addr, _ := netip.AddrFromSlice(b)
+	prefix80 := netip.PrefixFrom(addr, 80)
+
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("ComputeDeploymentVIP should panic on non-/96 prefix")
+		}
+	}()
+
+	ComputeDeploymentVIP(prefix80, "deployment_001")
+}
+
+func TestComputeDeploymentVIP_DifferentDeployments(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+
+	subnet := ComputeDeploymentSubnet(region, machineID)
+
+	vip1 := ComputeDeploymentVIP(subnet, "deployment_001")
+	vip2 := ComputeDeploymentVIP(subnet, "deployment_002")
+
+	if vip1 == vip2 {
+		t.Errorf("ComputeDeploymentVIP should produce different addresses for different deployments:\n  got: %s", vip1)
+	}
+}
+
+func TestComputeDeploymentVIP_Consistency(t *testing.T) {
+	region := RegionUSWest1
+	machineID := "machine_xyz789"
+	deploymentID := "deployment_001"
+
+	subnet := ComputeDeploymentSubnet(region, machineID)
+
+	vip1 := ComputeDeploymentVIP(subnet, deploymentID)
+	vip2 := ComputeDeploymentVIP(subnet, deploymentID)
+
+	if vip1 != vip2 {
+		t.Errorf("ComputeDeploymentVIP should produce consistent results:\n  got1: %s\n  got2: %s", vip1, vip2)
+	}
+}

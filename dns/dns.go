@@ -174,6 +174,9 @@ func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP,
 	// order). This is critical in environments where /etc/hosts has the
 	// correct mapping but external DNS returns a different address.
 	if ip := resolveFromHostsFile(hostname); ip != nil {
+		if !d.isLocal && (ip.IsPrivate() || ip.IsLoopback()) {
+			return false, nil, fmt.Errorf("hostname %s resolved to local/private address %s via /etc/hosts", hostname, ip)
+		}
 		return true, []net.IP{ip}, nil
 	}
 	hostname = formatFQDN(hostname)

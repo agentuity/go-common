@@ -163,7 +163,7 @@ func TestSendRouteSandboxRequest_ErrorFromServer(t *testing.T) {
 
 	errChan := make(chan error, 1)
 	go func() {
-		_, err := client.SendRouteSandboxRequest("sandbox-1", "fd00::1", time.Second)
+		_, err := client.SendRouteSandboxRequest("sandbox-1", "fd00::1", "", time.Second)
 		errChan <- err
 	}()
 
@@ -204,7 +204,7 @@ func TestSendRouteSandboxRequest_SuccessFromServer(t *testing.T) {
 
 	respChan := make(chan *pb.RouteSandboxResponse, 1)
 	go func() {
-		resp, err := client.SendRouteSandboxRequest("sandbox-1", "fd00::1", time.Second)
+		resp, err := client.SendRouteSandboxRequest("sandbox-1", "fd00::1", "", time.Second)
 		if err != nil {
 			respChan <- nil
 			return

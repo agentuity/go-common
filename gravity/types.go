@@ -52,6 +52,7 @@ type GravityConfig struct {
 	SkipAutoReconnect    bool
 	InstanceTags         []string // Tags for display only
 	InstanceType         string   // Type of instance (e.g., t2.micro)
+	RestartCount         uint32   // Systemd restart counter (0 = first start)
 	DefaultServerName    string   // Fallback TLS ServerName when connecting via IP address (default: "gravity.agentuity.com")
 	UseMultiConnect      bool     // Use multiple connections to gravity
 

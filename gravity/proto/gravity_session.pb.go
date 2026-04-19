@@ -1820,6 +1820,7 @@ type HostInfo struct {
 	InstanceType     string                 `protobuf:"bytes,11,opt,name=instance_type,json=instanceType,proto3" json:"instance_type,omitempty"`             // instance type of the client (n1-standard-32, m6i.8xlarge)
 	InstanceTags     []string               `protobuf:"bytes,12,rep,name=instance_tags,json=instanceTags,proto3" json:"instance_tags,omitempty"`             // tags on the instance
 	AvailabilityZone string                 `protobuf:"bytes,13,opt,name=availability_zone,json=availabilityZone,proto3" json:"availability_zone,omitempty"` // the availability zone for the client
+	RestartCount     uint32                 `protobuf:"varint,14,opt,name=restart_count,json=restartCount,proto3" json:"restart_count,omitempty"`            // systemd restart counter (0 = first start, >0 = crash-loop indicator)
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -1943,6 +1944,13 @@ func (x *HostInfo) GetAvailabilityZone() string {
 		return x.AvailabilityZone
 	}
 	return ""
+}
+
+func (x *HostInfo) GetRestartCount() uint32 {
+	if x != nil {
+		return x.RestartCount
+	}
+	return 0
 }
 
 type ExistingDeployment struct {
@@ -3576,7 +3584,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x1bConfigurationUpdateResponse\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\asuccess\x18\x02 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x03 \x01(\tR\x05error\"\x90\x03\n" +
+	"\x05error\x18\x03 \x01(\tR\x05error\"\xb5\x03\n" +
 	"\bHostInfo\x12\x18\n" +
 	"\astarted\x18\x01 \x01(\x04R\astarted\x12\x10\n" +
 	"\x03cpu\x18\x02 \x01(\rR\x03cpu\x12\x16\n" +
@@ -3592,7 +3600,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	" \x01(\tR\x06region\x12#\n" +
 	"\rinstance_type\x18\v \x01(\tR\finstanceType\x12#\n" +
 	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\x12+\n" +
-	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\xa5\x04\n" +
+	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\x12#\n" +
+	"\rrestart_count\x18\x0e \x01(\rR\frestartCount\"\xa5\x04\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +

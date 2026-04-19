@@ -5982,6 +5982,7 @@ func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 		Provider:         config.CloudProvider,
 		InstanceType:     config.InstanceType,
 		InstanceTags:     config.InstanceTags,
+		RestartCount:     config.RestartCount,
 	}, nil
 }
 

@@ -1840,16 +1840,27 @@ func (g *GravityClient) refreshEndpointHealth() {
 // establishControlStreams creates control streams for each connection
 func (g *GravityClient) establishControlStreams() error {
 	g.logger.Debug("creating control streams for %d connections", len(g.connections))
-	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, len(g.connections))
-	g.streamManager.controlSendMu = make([]sync.Mutex, len(g.connections))
-	g.streamManager.contexts = make([]context.Context, len(g.connections))
-	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
+	numConns := len(g.connections)
+	if numConns == 0 {
+		return fmt.Errorf("no gRPC connections available")
+	}
+	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, numConns)
+	g.streamManager.controlSendMu = make([]sync.Mutex, numConns)
+	g.streamManager.contexts = make([]context.Context, numConns)
+	g.streamManager.cancels = make([]context.CancelFunc, numConns)
 
 	if g.multiEndpointMode.Load() {
 		return g.establishControlStreamsMulti()
 	}
 
+	if len(g.sessionClients) == 0 {
+		return fmt.Errorf("no session clients available")
+	}
+
 	for i, client := range g.sessionClients {
+		if i >= numConns {
+			break // Don't exceed allocated slice capacity
+		}
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx

@@ -9,8 +9,10 @@ import (
 
 // Server interface for gravity server communication
 type Server interface {
-	// Unprovision is called to inform the server that we are unprovisioning the deployment
-	Unprovision(deploymentID string) error
+	// Unprovision is called to inform the server that we are unprovisioning the deployment.
+	// ownerID identifies the specific provision instance; gravity only removes the resource
+	// if ownerID matches the current owner (empty ownerID = unconditional remove).
+	Unprovision(deploymentID string, ownerID string) error
 	// Pause is called to tell the server to pause sending provisioned events
 	Pause(reason string) error
 	// Resume is called to tell the server to resume sending provisioned events
@@ -69,12 +71,12 @@ type Configuration struct {
 type DeprovisionReason string
 
 const (
-	DeprovisionReasonIdleTimeout  DeprovisionReason = "idle_timeout"
+	DeprovisionReasonIdleTimeout   DeprovisionReason = "idle_timeout"
 	DeprovisionReasonPausedTimeout DeprovisionReason = "paused_timeout"
-	DeprovisionReasonError        DeprovisionReason = "error"
-	DeprovisionReasonExited       DeprovisionReason = "exit"
-	DeprovisionReasonShutdown     DeprovisionReason = "shutdown"
-	DeprovisionReasonUnprovision  DeprovisionReason = "unprovision"
+	DeprovisionReasonError         DeprovisionReason = "error"
+	DeprovisionReasonExited        DeprovisionReason = "exit"
+	DeprovisionReasonShutdown      DeprovisionReason = "shutdown"
+	DeprovisionReasonUnprovision   DeprovisionReason = "unprovision"
 )
 
 // Provider interface defines the minimal set of methods required by the gravity client

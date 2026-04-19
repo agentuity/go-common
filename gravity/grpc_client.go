@@ -296,7 +296,18 @@ type GravityClient struct {
 	apiURL               string
 	hostMapping          []*pb.HostMapping
 	hostEnvironment      []string
-	once                 sync.Once
+	// Preserved session config fields — multi-tunnel reuse sessions send
+	// minimal responses without these. We store the values from the primary
+	// session and reuse them when subsequent responses are empty.
+	subnetRoutes      []string
+	machineSubnet     string
+	sessionHostname   string
+	sessionOrgID      string
+	machineToken      string
+	machineCertBundle string
+	sshPublicKey      []byte
+	signingPublicKey  []byte
+	once              sync.Once
 
 	// Messaging
 	evacuationCallback    func()
@@ -1822,16 +1833,35 @@ func (g *GravityClient) refreshEndpointHealth() {
 // establishControlStreams creates control streams for each connection
 func (g *GravityClient) establishControlStreams() error {
 	g.logger.Debug("creating control streams for %d connections", len(g.connections))
-	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, len(g.connections))
-	g.streamManager.controlSendMu = make([]sync.Mutex, len(g.connections))
-	g.streamManager.contexts = make([]context.Context, len(g.connections))
-	g.streamManager.cancels = make([]context.CancelFunc, len(g.connections))
+	numConns := len(g.connections)
+	if numConns == 0 {
+		return fmt.Errorf("no gRPC connections available")
+	}
+	g.streamManager.controlStreams = make([]pb.GravitySessionService_EstablishSessionClient, numConns)
+	g.streamManager.controlSendMu = make([]sync.Mutex, numConns)
+	g.streamManager.contexts = make([]context.Context, numConns)
+	g.streamManager.cancels = make([]context.CancelFunc, numConns)
 
 	if g.multiEndpointMode.Load() {
 		return g.establishControlStreamsMulti()
 	}
 
+	if len(g.sessionClients) == 0 {
+		return fmt.Errorf("no session clients available")
+	}
+
 	for i, client := range g.sessionClients {
+		// Guard ALL slice accesses — during concurrent reconnection,
+		// slices may be shorter than expected.
+		if i >= numConns ||
+			i >= len(g.streamManager.contexts) ||
+			i >= len(g.streamManager.cancels) ||
+			i >= len(g.streamManager.controlStreams) ||
+			i >= len(g.streamManager.controlSendMu) {
+			g.logger.Warn("establishControlStreams: index %d exceeds slice capacity (conns=%d, ctx=%d, streams=%d), breaking",
+				i, numConns, len(g.streamManager.contexts), len(g.streamManager.controlStreams))
+			break
+		}
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx
@@ -2155,6 +2185,12 @@ func (g *GravityClient) sendSessionHello() error {
 
 	// Single-endpoint: send on primary control stream only (original path)
 	g.logger.Debug("sending session hello on primary control stream")
+	if len(g.streamManager.controlStreams) == 0 {
+		return fmt.Errorf("controlStreams not initialized")
+	}
+	if len(g.circuitBreakers) == 0 {
+		return fmt.Errorf("circuitBreakers not initialized")
+	}
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 
@@ -2576,18 +2612,51 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	g.authorizationToken = response.MachineToken
 	g.connectionIDs = append(g.connectionIDs, response.MachineId)
 
-	g.otlpURL = response.OtlpUrl
-	g.otlpToken = response.OtlpKey
-	g.apiURL = response.ApiUrl
-	g.hostEnvironment = response.Environment
-	g.hostMapping = response.HostMapping
-
+	// Only update config values when non-empty. Multi-tunnel reuse sessions
+	// return minimal responses without these fields — don't overwrite the
+	// good config from the primary session.
+	g.logger.Info("[session-config] response: apiUrl=%q otlpUrl=%q env=%d hostMappings=%d machineId=%s server=%s",
+		response.ApiUrl, response.OtlpUrl, len(response.Environment), len(response.HostMapping), response.MachineId, response.GravityServer)
+	if response.OtlpUrl != "" {
+		g.otlpURL = response.OtlpUrl
+	}
+	if response.OtlpKey != "" {
+		g.otlpToken = response.OtlpKey
+	}
+	if response.ApiUrl != "" {
+		g.apiURL = response.ApiUrl
+	}
+	if len(response.Environment) > 0 {
+		g.hostEnvironment = response.Environment
+	}
+	if len(response.HostMapping) > 0 {
+		g.hostMapping = response.HostMapping
+	}
+	if len(response.SubnetRoutes) > 0 {
+		g.subnetRoutes = response.SubnetRoutes
+	}
+	if response.MachineSubnet != "" {
+		g.machineSubnet = response.MachineSubnet
+	}
+	if response.Hostname != "" {
+		g.sessionHostname = response.Hostname
+	}
+	if response.OrgId != "" {
+		g.sessionOrgID = response.OrgId
+	}
+	if response.MachineToken != "" {
+		g.machineToken = response.MachineToken
+	}
+	if response.MachineCertBundle != "" {
+		g.machineCertBundle = response.MachineCertBundle
+	}
 	if len(response.SshPublicKey) > 0 {
-		g.logger.Trace("received SSH public key from Gravity (%d bytes)", len(response.SshPublicKey))
+		g.sshPublicKey = response.SshPublicKey
 	}
 	if len(response.SigningPublicKey) > 0 {
-		g.logger.Trace("received signing public key from Gravity (%d bytes)", len(response.SigningPublicKey))
+		g.signingPublicKey = response.SigningPublicKey
 	}
+	g.logger.Info("[session-config] effective: apiUrl=%q otlpUrl=%q hostMappings=%d subnetRoutes=%d machineSubnet=%q", g.apiURL, g.otlpURL, len(g.hostMapping), len(g.subnetRoutes), g.machineSubnet)
 
 	g.mu.Unlock()
 
@@ -2617,36 +2686,37 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 
 	// Validate MachineSubnet if present. Empty is allowed for backward
 	// compatibility with ions that don't yet send it.
-	if response.MachineSubnet != "" {
-		if _, _, err := net.ParseCIDR(response.MachineSubnet); err != nil {
-			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", response.MachineSubnet, err)
+	if g.machineSubnet != "" {
+		if _, _, err := net.ParseCIDR(g.machineSubnet); err != nil {
+			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", g.machineSubnet, err)
 			signalConnectionID("")
 			closeSessionReady()
 			return
 		}
 	}
 
-	// Configure provider with session info
+	// Configure provider with session info. Use preserved values (g.*)
+	// for fields that multi-tunnel reuse sessions may leave empty.
 	if err := g.provider.Configure(provider.Configuration{
 		Server:            g,
 		Context:           g.context,
 		Logger:            g.logger,
 		APIURL:            g.apiURL,
-		SSHPublicKey:      response.SshPublicKey,
+		SSHPublicKey:      g.sshPublicKey,
 		TelemetryURL:      g.otlpURL,
-		TelemetryAPIKey:   response.OtlpKey,
+		TelemetryAPIKey:   g.otlpToken,
 		GravityURL:        g.url,
 		AgentuityCACert:   g.caCert,
 		HostMapping:       g.hostMapping,
 		Environment:       g.hostEnvironment,
-		SubnetRoutes:      response.SubnetRoutes,
-		Hostname:          response.Hostname,
-		OrgID:             response.OrgId,
-		MachineToken:      response.MachineToken,
-		MachineID:         response.MachineId,
-		MachineCertBundle: response.MachineCertBundle,
-		MachineSubnet:     response.MachineSubnet,
-		SigningPublicKey:  response.SigningPublicKey,
+		SubnetRoutes:      g.subnetRoutes,
+		Hostname:          g.sessionHostname,
+		OrgID:             g.sessionOrgID,
+		MachineToken:      g.machineToken,
+		MachineID:         g.machineID,
+		MachineCertBundle: g.machineCertBundle,
+		MachineSubnet:     g.machineSubnet,
+		SigningPublicKey:  g.signingPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
 		signalConnectionID("")
@@ -2655,9 +2725,9 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	}
 	g.logger.Debug("provider configured successfully")
 
-	g.logger.Debug("configuring subnet routing for routes %v", response.SubnetRoutes)
+	g.logger.Debug("configuring subnet routing for routes %v", g.subnetRoutes)
 	if g.networkInterface != nil {
-		if err := g.networkInterface.RouteTraffic(response.SubnetRoutes); err != nil {
+		if err := g.networkInterface.RouteTraffic(g.subnetRoutes); err != nil {
 			g.logger.Error("failed to route traffic for gravity subnet: %v", err)
 			signalConnectionID("")
 			closeSessionReady()
@@ -4288,6 +4358,9 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				buf := make([]byte, 4096)
+				n := runtime.Stack(buf, false)
+				g.logger.Error("reconnection panicked: %v\nstack:\n%s", r, string(buf[:n]))
 				done <- fmt.Errorf("reconnection panicked: %v", r)
 			}
 		}()
@@ -4405,8 +4478,30 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 		u.Host = u.Host + ":443"
 	}
 
+	// Resolve the hostname via /etc/hosts first, then fall back to DNS.
+	// gRPC's built-in DNS resolver does not consult /etc/hosts, which causes
+	// connection failures in environments where /etc/hosts has the correct
+	// mapping but system DNS returns a different address (e.g., Lima VMs,
+	// containers with custom host entries).
+	hostname := u.Hostname()
+	port := u.Port()
+	if ip := resolveFromHostsFile(hostname); ip != "" {
+		resolved := net.JoinHostPort(ip, port)
+		g.logger.Debug("parsed gRPC URL: input=%s, resolved=%s (via /etc/hosts)", inputURL, resolved)
+		return resolved, nil
+	}
+
 	g.logger.Debug("parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
 	return u.Host, nil
+}
+
+// resolveFromHostsFile looks up a hostname in /etc/hosts (cached).
+// Returns the first matching IP address, or empty string if not found.
+func resolveFromHostsFile(hostname string) string {
+	if ip := dns.ResolveFromHostsFile(hostname); ip != nil {
+		return ip.String()
+	}
+	return ""
 }
 
 // extractHostnameFromURL extracts the hostname (without port) from a gRPC URL for TLS ServerName
@@ -4556,7 +4651,7 @@ func (g *GravityClient) sendOnStream(stream pb.GravitySessionService_EstablishSe
 }
 
 // SendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
-func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
+func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP, ownerID string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	// which replaces the channel.
 	g.mu.RLock()
@@ -4596,6 +4691,7 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 			RouteDeployment: &pb.RouteDeploymentRequest{
 				DeploymentId: deploymentID,
 				VirtualIp:    virtualIP,
+				OwnerId:      ownerID,
 			},
 		},
 	}
@@ -4622,7 +4718,7 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 }
 
 // SendRouteSandboxRequest sends a route sandbox request and waits for response (sync)
-func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
+func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP, ownerID string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	// which replaces the channel.
 	g.mu.RLock()
@@ -4662,6 +4758,7 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 			RouteSandbox: &pb.RouteSandboxRequest{
 				SandboxId: sandboxID,
 				VirtualIp: virtualIP,
+				OwnerId:   ownerID,
 			},
 		},
 	}
@@ -4734,12 +4831,15 @@ func (sm *StreamManager) releaseStream(stream *StreamInfo) {
 
 // Provider.Server interface implementations
 
-// Unprovision sends an unprovision request to the gravity server
-func (g *GravityClient) Unprovision(deploymentID string) error {
-	g.logger.Info("Unprovision: broadcasting removal of deployment %s to all endpoints", deploymentID)
+// Unprovision sends an unprovision request to the gravity server.
+// ownerID identifies the specific provision instance; gravity only removes the resource
+// if ownerID matches the current owner (empty ownerID = unconditional remove for backward compat).
+func (g *GravityClient) Unprovision(deploymentID string, ownerID string) error {
+	g.logger.Info("Unprovision: broadcasting removal of deployment %s (ownerID=%s) to all endpoints", deploymentID, ownerID)
 
 	req := &pb.UnprovisionRequest{
 		DeploymentId: deploymentID,
+		OwnerId:      ownerID,
 	}
 
 	msgID := generateMessageID()
@@ -5833,7 +5933,7 @@ func (g *GravityClient) sendPing() {
 		return
 	}
 
-	if streams[0] == nil {
+	if len(streams) == 0 || streams[0] == nil {
 		g.logger.Debug("no control streams available for ping")
 		return
 	}

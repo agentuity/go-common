@@ -153,6 +153,7 @@ message RouteDeploymentRequest {
   string deployment_id = 1; // Unique identifier for the deployment
   reserved 2; // was: hostname (deprecated and removed)
   string virtual_ip = 3; // Hadron virtual IP for the deployment
+  string owner_id = 4; // Provision owner ID — distinguishes container incarnations
 }
 
 message RouteDeploymentResponse {
@@ -162,6 +163,7 @@ message RouteDeploymentResponse {
 // Unprovision request
 message UnprovisionRequest {
   string deployment_id = 1; // Unique identifier of deployment to remove
+  string owner_id = 2; // Provision owner ID — only unprovision if this matches the current resource
 }
 
 // Ping request for health checking
@@ -253,6 +255,7 @@ message ExistingDeployment {
   bool on_demand = 11;
   string cert = 12; // PEM certificate that was issued (just cert, ca + key not required)
   google.protobuf.Duration pausedTimeout = 13; // Per-sandbox paused timeout (0 = infinite)
+  string owner_id = 14; // Unique per-provision owner ID — distinguishes container incarnations
 }
 
 message ResourceRequirements {
@@ -325,6 +328,7 @@ message DeploymentMetadataResponse {
 message RouteSandboxRequest {
   string sandbox_id = 1;
   string virtual_ip = 2; // Hadron virtual IP for the sandbox
+  string owner_id = 3; // Provision owner ID — distinguishes container incarnations
 }
 
 message RouteSandboxResponse {

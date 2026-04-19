@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/agentuity/go-common/cache"
@@ -168,6 +169,16 @@ func (d *Dns) LookupMulti(ctx context.Context, hostname string) (bool, []net.IP,
 		}
 		return true, []net.IP{ip}, nil
 	}
+	// Check /etc/hosts before DNS-over-HTTPS. The system hosts file takes
+	// precedence over external resolvers (matching nsswitch.conf "files dns"
+	// order). This is critical in environments where /etc/hosts has the
+	// correct mapping but external DNS returns a different address.
+	if ip := resolveFromHostsFile(hostname); ip != nil {
+		if !d.isLocal && (ip.IsPrivate() || ip.IsLoopback()) {
+			return false, nil, fmt.Errorf("hostname %s resolved to local/private address %s via /etc/hosts", hostname, ip)
+		}
+		return true, []net.IP{ip}, nil
+	}
 	hostname = formatFQDN(hostname)
 	var cacheKey string
 	if d.cache != nil {
@@ -277,4 +288,71 @@ func WithCache(cache cache.Cache) WithConfig {
 	return func(config *dnsConfig) {
 		config.Cache = cache
 	}
+}
+
+// hostsFileCache caches parsed /etc/hosts entries to avoid reading
+// the file on every DNS lookup. Refreshed every 30 seconds.
+var (
+	hostsFileMu       sync.RWMutex
+	hostsFileEntries  map[string]net.IP // lowercase hostname → IP
+	hostsFileLoadedAt time.Time
+	hostsFileTTL      = 30 * time.Second
+)
+
+// ResolveFromHostsFile looks up a hostname in /etc/hosts (cached).
+// Returns the first matching IP, or nil if not found.
+func ResolveFromHostsFile(hostname string) net.IP {
+	return resolveFromHostsFile(hostname)
+}
+
+func resolveFromHostsFile(hostname string) net.IP {
+	hostsFileMu.RLock()
+	if hostsFileEntries != nil && time.Since(hostsFileLoadedAt) < hostsFileTTL {
+		ip := hostsFileEntries[strings.ToLower(strings.TrimSuffix(hostname, "."))]
+		hostsFileMu.RUnlock()
+		return ip
+	}
+	hostsFileMu.RUnlock()
+
+	// Reload
+	hostsFileMu.Lock()
+	defer hostsFileMu.Unlock()
+
+	// Double-check after acquiring write lock
+	if hostsFileEntries != nil && time.Since(hostsFileLoadedAt) < hostsFileTTL {
+		return hostsFileEntries[strings.ToLower(strings.TrimSuffix(hostname, "."))]
+	}
+
+	data, err := os.ReadFile("/etc/hosts")
+	if err != nil {
+		hostsFileEntries = make(map[string]net.IP)
+		hostsFileLoadedAt = time.Now()
+		return nil
+	}
+
+	entries := make(map[string]net.IP)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || line[0] == '#' {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		ip := net.ParseIP(fields[0])
+		if ip == nil {
+			continue
+		}
+		for _, name := range fields[1:] {
+			lower := strings.ToLower(name)
+			if _, exists := entries[lower]; !exists {
+				entries[lower] = ip
+			}
+		}
+	}
+	hostsFileEntries = entries
+	hostsFileLoadedAt = time.Now()
+
+	return entries[strings.ToLower(strings.TrimSuffix(hostname, "."))]
 }

@@ -4476,6 +4476,9 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
+				buf := make([]byte, 4096)
+				n := runtime.Stack(buf, false)
+				g.logger.Error("reconnection panicked: %v\nstack:\n%s", r, string(buf[:n]))
 				done <- fmt.Errorf("reconnection panicked: %v", r)
 			}
 		}()

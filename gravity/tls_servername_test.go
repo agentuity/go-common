@@ -269,3 +269,68 @@ func TestReconnectEndpoint_UsesTLSServerName(t *testing.T) {
 	assert.Empty(t, hostname,
 		"reconnect should fall back for hostname-based endpoints")
 }
+
+// TestPreferredTLSServerName_HostsFileDoesNotAffectSNI verifies that
+// preferredTLSServerName returns the original hostname from the URL even when
+// /etc/hosts would resolve it to an IP. The TLS SNI must use the hostname
+// (not the resolved IP) for certificate validation to work.
+func TestPreferredTLSServerName_HostsFileDoesNotAffectSNI(t *testing.T) {
+	g := &GravityClient{
+		logger:            logger.NewTestLogger(),
+		defaultServerName: "fallback.example.com",
+	}
+
+	tests := []struct {
+		name     string
+		url      string
+		expected string
+	}{
+		{
+			name:     "grpc scheme with hostname returns hostname",
+			url:      "grpc://gravity.agentuity.io:443",
+			expected: "gravity.agentuity.io",
+		},
+		{
+			name:     "grpc scheme without port returns hostname",
+			url:      "grpc://gravity.agentuity.io",
+			expected: "gravity.agentuity.io",
+		},
+		{
+			name:     "hostname with port no scheme returns hostname",
+			url:      "gravity.agentuity.io:443",
+			expected: "gravity.agentuity.io",
+		},
+		{
+			name:     "localhost returns hostname not IP",
+			url:      "grpc://localhost:443",
+			expected: "localhost",
+		},
+		{
+			name:     "IP address returns default server name",
+			url:      "grpc://192.168.1.1:443",
+			expected: "fallback.example.com",
+		},
+		{
+			name:     "IPv6 address returns default server name",
+			url:      "grpc://[fd15:d710::1]:443",
+			expected: "fallback.example.com",
+		},
+		{
+			name:     "empty URL returns empty",
+			url:      "",
+			expected: "",
+		},
+		{
+			name:     "whitespace URL returns empty",
+			url:      "   ",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := g.preferredTLSServerName(tt.url)
+			assert.Equal(t, tt.expected, got)
+		})
+	}
+}

@@ -4478,8 +4478,30 @@ func (g *GravityClient) parseGRPCURL(inputURL string) (string, error) {
 		u.Host = u.Host + ":443"
 	}
 
+	// Resolve the hostname via /etc/hosts first, then fall back to DNS.
+	// gRPC's built-in DNS resolver does not consult /etc/hosts, which causes
+	// connection failures in environments where /etc/hosts has the correct
+	// mapping but system DNS returns a different address (e.g., Lima VMs,
+	// containers with custom host entries).
+	hostname := u.Hostname()
+	port := u.Port()
+	if ip := resolveFromHostsFile(hostname); ip != "" {
+		resolved := net.JoinHostPort(ip, port)
+		g.logger.Debug("parsed gRPC URL: input=%s, resolved=%s (via /etc/hosts)", inputURL, resolved)
+		return resolved, nil
+	}
+
 	g.logger.Debug("parsed gRPC URL: input=%s, host=%s", inputURL, u.Host)
 	return u.Host, nil
+}
+
+// resolveFromHostsFile looks up a hostname in /etc/hosts (cached).
+// Returns the first matching IP address, or empty string if not found.
+func resolveFromHostsFile(hostname string) string {
+	if ip := dns.ResolveFromHostsFile(hostname); ip != nil {
+		return ip.String()
+	}
+	return ""
 }
 
 // extractHostnameFromURL extracts the hostname (without port) from a gRPC URL for TLS ServerName

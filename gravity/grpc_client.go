@@ -3725,15 +3725,21 @@ func (g *GravityClient) preferredTLSServerName(endpointURL string) string {
 	if strings.TrimSpace(endpointURL) == "" {
 		return ""
 	}
-	hostPort, err := g.parseGRPCURL(endpointURL)
+	// Extract hostname directly from the URL without DNS resolution.
+	// parseGRPCURL resolves /etc/hosts which can replace the hostname
+	// with an IP, breaking TLS SNI. We need the original hostname.
+	raw := endpointURL
+	if strings.HasPrefix(raw, "grpc://") {
+		raw = "https://" + raw[7:] // make it parseable by url.Parse
+	} else if !strings.Contains(raw, "://") {
+		raw = "https://" + raw
+	}
+	u, err := url.Parse(raw)
 	if err != nil {
 		return g.defaultServerName
 	}
-	host, _, err := net.SplitHostPort(hostPort)
-	if err != nil {
-		return g.defaultServerName
-	}
-	if net.ParseIP(host) != nil {
+	host := u.Hostname()
+	if host == "" || net.ParseIP(host) != nil {
 		return g.defaultServerName
 	}
 	return host

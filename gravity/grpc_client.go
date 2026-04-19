@@ -5884,7 +5884,7 @@ func (g *GravityClient) sendPing() {
 		return
 	}
 
-	if streams[0] == nil {
+	if len(streams) == 0 || streams[0] == nil {
 		g.logger.Debug("no control streams available for ping")
 		return
 	}

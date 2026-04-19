@@ -1122,6 +1122,7 @@ type RouteDeploymentRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier for the deployment
 	VirtualIp     string                 `protobuf:"bytes,3,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"`          // Hadron virtual IP for the deployment
+	OwnerId       string                 `protobuf:"bytes,4,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`                // Provision owner ID — distinguishes container incarnations
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1166,6 +1167,13 @@ func (x *RouteDeploymentRequest) GetDeploymentId() string {
 func (x *RouteDeploymentRequest) GetVirtualIp() string {
 	if x != nil {
 		return x.VirtualIp
+	}
+	return ""
+}
+
+func (x *RouteDeploymentRequest) GetOwnerId() string {
+	if x != nil {
+		return x.OwnerId
 	}
 	return ""
 }
@@ -1218,6 +1226,7 @@ func (x *RouteDeploymentResponse) GetIp() string {
 type UnprovisionRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	DeploymentId  string                 `protobuf:"bytes,1,opt,name=deployment_id,json=deploymentId,proto3" json:"deployment_id,omitempty"` // Unique identifier of deployment to remove
+	OwnerId       string                 `protobuf:"bytes,2,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`                // Provision owner ID — only unprovision if this matches the current resource
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1255,6 +1264,13 @@ func (*UnprovisionRequest) Descriptor() ([]byte, []int) {
 func (x *UnprovisionRequest) GetDeploymentId() string {
 	if x != nil {
 		return x.DeploymentId
+	}
+	return ""
+}
+
+func (x *UnprovisionRequest) GetOwnerId() string {
+	if x != nil {
+		return x.OwnerId
 	}
 	return ""
 }
@@ -1941,8 +1957,9 @@ type ExistingDeployment struct {
 	Paused         bool                   `protobuf:"varint,9,opt,name=paused,proto3" json:"paused,omitempty"`
 	PausedDuration *durationpb.Duration   `protobuf:"bytes,10,opt,name=pausedDuration,proto3" json:"pausedDuration,omitempty"`
 	OnDemand       bool                   `protobuf:"varint,11,opt,name=on_demand,json=onDemand,proto3" json:"on_demand,omitempty"`
-	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"`                   // PEM certificate that was issued (just cert, ca + key not required)
-	PausedTimeout  *durationpb.Duration   `protobuf:"bytes,13,opt,name=pausedTimeout,proto3" json:"pausedTimeout,omitempty"` // Per-sandbox paused timeout (0 = infinite)
+	Cert           string                 `protobuf:"bytes,12,opt,name=cert,proto3" json:"cert,omitempty"`                      // PEM certificate that was issued (just cert, ca + key not required)
+	PausedTimeout  *durationpb.Duration   `protobuf:"bytes,13,opt,name=pausedTimeout,proto3" json:"pausedTimeout,omitempty"`    // Per-sandbox paused timeout (0 = infinite)
+	OwnerId        string                 `protobuf:"bytes,14,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"` // Unique per-provision owner ID — distinguishes container incarnations
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2059,6 +2076,13 @@ func (x *ExistingDeployment) GetPausedTimeout() *durationpb.Duration {
 		return x.PausedTimeout
 	}
 	return nil
+}
+
+func (x *ExistingDeployment) GetOwnerId() string {
+	if x != nil {
+		return x.OwnerId
+	}
+	return ""
 }
 
 type ResourceRequirements struct {
@@ -2555,6 +2579,7 @@ type RouteSandboxRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	SandboxId     string                 `protobuf:"bytes,1,opt,name=sandbox_id,json=sandboxId,proto3" json:"sandbox_id,omitempty"`
 	VirtualIp     string                 `protobuf:"bytes,2,opt,name=virtual_ip,json=virtualIp,proto3" json:"virtual_ip,omitempty"` // Hadron virtual IP for the sandbox
+	OwnerId       string                 `protobuf:"bytes,3,opt,name=owner_id,json=ownerId,proto3" json:"owner_id,omitempty"`       // Provision owner ID — distinguishes container incarnations
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2599,6 +2624,13 @@ func (x *RouteSandboxRequest) GetSandboxId() string {
 func (x *RouteSandboxRequest) GetVirtualIp() string {
 	if x != nil {
 		return x.VirtualIp
+	}
+	return ""
+}
+
+func (x *RouteSandboxRequest) GetOwnerId() string {
+	if x != nil {
+		return x.OwnerId
 	}
 	return ""
 }
@@ -3503,15 +3535,17 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\x15provision_deployments\x18\x01 \x01(\bR\x14provisionDeployments\x127\n" +
 	"\x17unprovision_deployments\x18\x02 \x01(\bR\x16unprovisionDeployments\x126\n" +
 	"\x17dynamic_project_routing\x18\x03 \x01(\tR\x15dynamicProjectRouting\x12)\n" +
-	"\x10dynamic_hostname\x18\x04 \x01(\bR\x0fdynamicHostname\"b\n" +
+	"\x10dynamic_hostname\x18\x04 \x01(\bR\x0fdynamicHostname\"}\n" +
 	"\x16RouteDeploymentRequest\x12#\n" +
 	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x1d\n" +
 	"\n" +
-	"virtual_ip\x18\x03 \x01(\tR\tvirtualIpJ\x04\b\x02\x10\x03\")\n" +
+	"virtual_ip\x18\x03 \x01(\tR\tvirtualIp\x12\x19\n" +
+	"\bowner_id\x18\x04 \x01(\tR\aownerIdJ\x04\b\x02\x10\x03\")\n" +
 	"\x17RouteDeploymentResponse\x12\x0e\n" +
-	"\x02ip\x18\x01 \x01(\tR\x02ip\"9\n" +
+	"\x02ip\x18\x01 \x01(\tR\x02ip\"T\n" +
 	"\x12UnprovisionRequest\x12#\n" +
-	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\"G\n" +
+	"\rdeployment_id\x18\x01 \x01(\tR\fdeploymentId\x12\x19\n" +
+	"\bowner_id\x18\x02 \x01(\tR\aownerId\"G\n" +
 	"\vPingRequest\x128\n" +
 	"\ttimestamp\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\ttimestamp\"H\n" +
 	"\fPongResponse\x128\n" +
@@ -3558,7 +3592,7 @@ const file_gravity_session_proto_rawDesc = "" +
 	" \x01(\tR\x06region\x12#\n" +
 	"\rinstance_type\x18\v \x01(\tR\finstanceType\x12#\n" +
 	"\rinstance_tags\x18\f \x03(\tR\finstanceTags\x12+\n" +
-	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\x8a\x04\n" +
+	"\x11availability_zone\x18\r \x01(\tR\x10availabilityZone\"\xa5\x04\n" +
 	"\x12ExistingDeployment\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x124\n" +
 	"\astarted\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\astarted\x12!\n" +
@@ -3572,7 +3606,8 @@ const file_gravity_session_proto_rawDesc = "" +
 	" \x01(\v2\x19.google.protobuf.DurationR\x0epausedDuration\x12\x1b\n" +
 	"\ton_demand\x18\v \x01(\bR\bonDemand\x12\x12\n" +
 	"\x04cert\x18\f \x01(\tR\x04cert\x12?\n" +
-	"\rpausedTimeout\x18\r \x01(\v2\x19.google.protobuf.DurationR\rpausedTimeout\"\xe0\x01\n" +
+	"\rpausedTimeout\x18\r \x01(\v2\x19.google.protobuf.DurationR\rpausedTimeout\x12\x19\n" +
+	"\bowner_id\x18\x0e \x01(\tR\aownerId\"\xe0\x01\n" +
 	"\x14ResourceRequirements\x12!\n" +
 	"\fmemory_limit\x18\x01 \x01(\x03R\vmemoryLimit\x12\x1b\n" +
 	"\tcpu_limit\x18\x02 \x01(\x03R\bcpuLimit\x12%\n" +
@@ -3617,12 +3652,13 @@ const file_gravity_session_proto_rawDesc = "" +
 	"\vextra_hosts\x18\a \x03(\tR\n" +
 	"extraHosts\x12\x1f\n" +
 	"\vcert_bundle\x18\b \x01(\tR\n" +
-	"certBundle\"S\n" +
+	"certBundle\"n\n" +
 	"\x13RouteSandboxRequest\x12\x1d\n" +
 	"\n" +
 	"sandbox_id\x18\x01 \x01(\tR\tsandboxId\x12\x1d\n" +
 	"\n" +
-	"virtual_ip\x18\x02 \x01(\tR\tvirtualIp\"&\n" +
+	"virtual_ip\x18\x02 \x01(\tR\tvirtualIp\x12\x19\n" +
+	"\bowner_id\x18\x03 \x01(\tR\aownerId\"&\n" +
 	"\x14RouteSandboxResponse\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\"\x81\x01\n" +
 	"\x16SandboxMetadataRequest\x12\x1d\n" +

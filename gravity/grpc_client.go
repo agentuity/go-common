@@ -4766,7 +4766,7 @@ func (g *GravityClient) sendOnStream(stream pb.GravitySessionService_EstablishSe
 }
 
 // SendRouteDeploymentRequest sends a route deployment request and waits for response (sync)
-func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
+func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP, ownerID string, timeout time.Duration) (*pb.RouteDeploymentResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	// which replaces the channel.
 	g.mu.RLock()
@@ -4806,6 +4806,7 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 			RouteDeployment: &pb.RouteDeploymentRequest{
 				DeploymentId: deploymentID,
 				VirtualIp:    virtualIP,
+				OwnerId:      ownerID,
 			},
 		},
 	}
@@ -4832,7 +4833,7 @@ func (g *GravityClient) SendRouteDeploymentRequest(deploymentID, virtualIP strin
 }
 
 // SendRouteSandboxRequest sends a route sandbox request and waits for response (sync)
-func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
+func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP, ownerID string, timeout time.Duration) (*pb.RouteSandboxResponse, error) {
 	// Read sessionReady under lock to avoid racing with reconnection
 	// which replaces the channel.
 	g.mu.RLock()
@@ -4872,6 +4873,7 @@ func (g *GravityClient) SendRouteSandboxRequest(sandboxID, virtualIP string, tim
 			RouteSandbox: &pb.RouteSandboxRequest{
 				SandboxId: sandboxID,
 				VirtualIp: virtualIP,
+				OwnerId:   ownerID,
 			},
 		},
 	}
@@ -4944,12 +4946,15 @@ func (sm *StreamManager) releaseStream(stream *StreamInfo) {
 
 // Provider.Server interface implementations
 
-// Unprovision sends an unprovision request to the gravity server
-func (g *GravityClient) Unprovision(deploymentID string) error {
-	g.logger.Info("Unprovision: broadcasting removal of deployment %s to all endpoints", deploymentID)
+// Unprovision sends an unprovision request to the gravity server.
+// ownerID identifies the specific provision instance; gravity only removes the resource
+// if ownerID matches the current owner (empty ownerID = unconditional remove for backward compat).
+func (g *GravityClient) Unprovision(deploymentID string, ownerID string) error {
+	g.logger.Info("Unprovision: broadcasting removal of deployment %s (ownerID=%s) to all endpoints", deploymentID, ownerID)
 
 	req := &pb.UnprovisionRequest{
 		DeploymentId: deploymentID,
+		OwnerId:      ownerID,
 	}
 
 	msgID := generateMessageID()

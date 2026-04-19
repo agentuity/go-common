@@ -44,7 +44,7 @@ func TestUnprovisionMethodWithoutStreams(t *testing.T) {
 	}
 
 	// Test Unprovision with no streams should return error
-	err := server.Unprovision("test-deployment")
+	err := server.Unprovision("test-deployment", "")
 
 	if err == nil {
 		t.Error("Expected error for unprovision with no control streams")

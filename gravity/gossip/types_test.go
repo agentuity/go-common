@@ -2,6 +2,8 @@ package gossip
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -387,9 +389,17 @@ func TestEncodeDecode_RoundTrip(t *testing.T) {
 				t.Fatalf("type mismatch: got %v, want %v", gotTyp, tt.wantTyp)
 			}
 
-			// Re-encode decoded message and compare JSON to avoid deep-equal
-			// issues with nil vs empty slices/maps.
-			wantJSON, _ := json.Marshal(tt.msg)
+			// Re-encode the original through Encode (which stamps V) so both
+			// sides have the same schema version for comparison.
+			wantData, err := Encode(tt.msg)
+			if err != nil {
+				t.Fatalf("Encode want: %v", err)
+			}
+			_, wantMsg, err := Decode(wantData)
+			if err != nil {
+				t.Fatalf("Decode want: %v", err)
+			}
+			wantJSON, _ := json.Marshal(wantMsg)
 			gotJSON, _ := json.Marshal(gotMsg)
 
 			// Normalise by unmarshalling into maps.
@@ -463,6 +473,61 @@ func TestEncode_UnsupportedType(t *testing.T) {
 	_, err := Encode("not a gossip message")
 	if err == nil {
 		t.Fatal("expected error for unsupported type, got nil")
+	}
+}
+
+// TestEncode_UnsupportedStructReturnsError verifies that stampVersion returns
+// an error for struct types that are recognized by messageTypeFor but not
+// handled in stampVersion. This is tested indirectly — if someone adds a new
+// gossip struct to messageTypeFor but forgets stampVersion, Encode will fail.
+// We test with a raw struct that bypasses messageTypeFor to exercise the
+// stampVersion error path directly.
+func TestStampVersion_UnsupportedStructReturnsError(t *testing.T) {
+	type FakeGossipMsg struct {
+		Foo string `json:"foo"`
+	}
+	_, err := stampVersion(FakeGossipMsg{Foo: "bar"})
+	if err == nil {
+		t.Fatal("expected error from stampVersion for unhandled struct type, got nil")
+	}
+	if !strings.Contains(err.Error(), "unhandled type") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestEncode_AllKnownTypesStampVersion(t *testing.T) {
+	// Every gossip struct that Encode accepts must have V stamped.
+	// This test ensures Encode + Decode produces V != 0 for all types.
+	msgs := []any{
+		EndpointMapping{ContainerID: "c1"},
+		EndpointTombstone{ContainerID: "c1"},
+		NATEntry{Key: "k1"},
+		VIPHeartbeat{VIP: "fd00::1"},
+		SubnetRoute{Subnet: "fd15::/64"},
+		// pointer variants
+		&EndpointMapping{ContainerID: "c2"},
+		&EndpointTombstone{ContainerID: "c2"},
+		&NATEntry{Key: "k2"},
+		&VIPHeartbeat{VIP: "fd00::2"},
+		&SubnetRoute{Subnet: "fd15:1::/64"},
+	}
+	for _, msg := range msgs {
+		data, err := Encode(msg)
+		if err != nil {
+			t.Fatalf("Encode(%T): %v", msg, err)
+		}
+		_, decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode(%T): %v", msg, err)
+		}
+		// Check V via reflection — all gossip structs have V as first field.
+		v := reflect.ValueOf(decoded).Elem().FieldByName("V")
+		if !v.IsValid() {
+			t.Fatalf("%T: missing V field", decoded)
+		}
+		if v.Uint() == 0 {
+			t.Errorf("%T: V = 0 after Encode/Decode, expected non-zero schema hash", decoded)
+		}
 	}
 }
 

@@ -287,6 +287,7 @@ type GravityClient struct {
 	connected            bool
 	reconnecting         bool          // Tracks if reconnection is in progress
 	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
+	endpointFailCount    []atomic.Int32
 	connectionIDs        []string      // Stores connection IDs from server responses
 	connectionIDChan     chan string   // Channel to signal when connection ID is received
 	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
@@ -391,6 +392,8 @@ type StreamInfo struct {
 	lastUsed  time.Time  // Last time this stream was used
 	sendMu    sync.Mutex // Serializes Send calls on this stream
 }
+
+const endpointDiscoveryRefreshFailureThreshold int32 = 10
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
 type StreamManager struct {
@@ -805,7 +808,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 			// If hostname is already an IP address, skip DNS lookup
 			if ip := net.ParseIP(hostname); ip != nil {
-				ep := &GravityEndpoint{URL: endpointURL}
+				ep := &GravityEndpoint{URL: endpointURL, TLSServerName: g.preferredTLSServerName(endpointURL)}
 				ep.healthy.Store(false)
 				g.endpoints = append(g.endpoints, ep)
 				continue
@@ -840,12 +843,12 @@ func (g *GravityClient) startMultiEndpoint() error {
 				}
 			} else {
 				// DNS returned no IPs, fall back to original URL
-				ep := &GravityEndpoint{URL: endpointURL}
+				ep := &GravityEndpoint{URL: endpointURL, TLSServerName: g.preferredTLSServerName(endpointURL)}
 				ep.healthy.Store(false)
 				g.endpoints = append(g.endpoints, ep)
 			}
 		} else {
-			ep := &GravityEndpoint{URL: endpointURL}
+			ep := &GravityEndpoint{URL: endpointURL, TLSServerName: g.preferredTLSServerName(endpointURL)}
 			ep.healthy.Store(false)
 			g.endpoints = append(g.endpoints, ep)
 		}
@@ -910,6 +913,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.circuitBreakers = make([]*CircuitBreaker, connectionCount)
 	g.connectionURLs = make([]string, connectionCount)
 	g.endpointReconnecting = make([]atomic.Bool, connectionCount)
+	g.endpointFailCount = make([]atomic.Int32, connectionCount)
 	g.endpointStreamIndices = make(map[string][]int)
 
 	// Initialize connection health tracking
@@ -1649,7 +1653,7 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 		return
 	}
 
-	newEp := &GravityEndpoint{URL: newURL}
+	newEp := &GravityEndpoint{URL: newURL, TLSServerName: g.preferredTLSServerName(newURL)}
 	newEp.healthy.Store(false)
 	g.endpoints[oldIdx] = newEp
 	g.endpointsMu.Unlock()
@@ -1692,7 +1696,7 @@ func (g *GravityClient) addEndpoint(newURL string) {
 		}
 	}
 
-	newEp := &GravityEndpoint{URL: newURL}
+	newEp := &GravityEndpoint{URL: newURL, TLSServerName: g.preferredTLSServerName(newURL)}
 	newEp.healthy.Store(false) // will become healthy after reconnection
 	g.endpoints[slotIdx] = newEp
 	g.endpointsMu.Unlock()
@@ -1716,6 +1720,9 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	}
 	for len(g.endpointReconnecting) <= slotIdx {
 		g.endpointReconnecting = append(g.endpointReconnecting, atomic.Bool{})
+	}
+	for len(g.endpointFailCount) <= slotIdx {
+		g.endpointFailCount = append(g.endpointFailCount, atomic.Int32{})
 	}
 	g.mu.Unlock()
 
@@ -3714,6 +3721,134 @@ func (g *GravityClient) hasHealthyEndpoint() bool {
 	return false
 }
 
+func (g *GravityClient) preferredTLSServerName(endpointURL string) string {
+	if strings.TrimSpace(endpointURL) == "" {
+		return ""
+	}
+	hostPort, err := g.parseGRPCURL(endpointURL)
+	if err != nil {
+		return g.defaultServerName
+	}
+	host, _, err := net.SplitHostPort(hostPort)
+	if err != nil {
+		return g.defaultServerName
+	}
+	if net.ParseIP(host) != nil {
+		return g.defaultServerName
+	}
+	return host
+}
+
+func (g *GravityClient) resetEndpointFailureCount(endpointIndex int) {
+	g.mu.RLock()
+	if endpointIndex >= 0 && endpointIndex < len(g.endpointFailCount) {
+		g.endpointFailCount[endpointIndex].Store(0)
+	}
+	g.mu.RUnlock()
+}
+
+func (g *GravityClient) incrementEndpointFailureCount(endpointIndex int) int32 {
+	g.mu.RLock()
+	if endpointIndex < 0 || endpointIndex >= len(g.endpointFailCount) {
+		g.mu.RUnlock()
+		return 0
+	}
+	count := g.endpointFailCount[endpointIndex].Add(1)
+	g.mu.RUnlock()
+	return count
+}
+
+func (g *GravityClient) handleEndpointReconnectFailure(endpointIndex int, currentURL string) string {
+	failures := g.incrementEndpointFailureCount(endpointIndex)
+	if failures == 0 {
+		return currentURL
+	}
+
+	if failures%endpointDiscoveryRefreshFailureThreshold != 0 {
+		return currentURL
+	}
+
+	g.logger.Info("endpoint %d reached %d consecutive reconnection failures; refreshing service discovery",
+		endpointIndex, failures)
+
+	refreshedURL := g.refreshFailingEndpointFromDiscovery(endpointIndex, currentURL)
+	if refreshedURL == "" || refreshedURL == currentURL {
+		g.logger.Info("endpoint %d discovery refresh found no replacement after %d failures", endpointIndex, failures)
+		return currentURL
+	}
+
+	g.logger.Info("endpoint %d discovery refresh replaced %s -> %s after %d failures",
+		endpointIndex, currentURL, refreshedURL, failures)
+	g.resetEndpointFailureCount(endpointIndex)
+	return refreshedURL
+}
+
+func (g *GravityClient) refreshFailingEndpointFromDiscovery(endpointIndex int, currentURL string) string {
+	if g.discoveryResolveFunc == nil {
+		return ""
+	}
+
+	candidates := g.discoveryResolveFunc()
+	if len(candidates) == 0 {
+		return ""
+	}
+
+	unique := make([]string, 0, len(candidates))
+	seen := make(map[string]bool, len(candidates))
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[c] {
+			continue
+		}
+		seen[c] = true
+		unique = append(unique, c)
+	}
+	if len(unique) == 0 {
+		return ""
+	}
+
+	inUse := make(map[string]bool)
+	g.endpointsMu.RLock()
+	for i, ep := range g.endpoints {
+		if i == endpointIndex || ep == nil || strings.TrimSpace(ep.URL) == "" {
+			continue
+		}
+		inUse[ep.URL] = true
+	}
+	g.endpointsMu.RUnlock()
+
+	var replacement string
+	for _, c := range unique {
+		if c == currentURL || inUse[c] {
+			continue
+		}
+		replacement = c
+		break
+	}
+	if replacement == "" {
+		return ""
+	}
+
+	tlsServerName := g.preferredTLSServerName(replacement)
+
+	g.endpointsMu.Lock()
+	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+		g.endpoints[endpointIndex].URL = replacement
+		if tlsServerName != "" {
+			g.endpoints[endpointIndex].TLSServerName = tlsServerName
+		}
+	}
+	g.endpointsMu.Unlock()
+
+	g.mu.Lock()
+	if endpointIndex >= 0 && endpointIndex < len(g.connectionURLs) {
+		g.connectionURLs[endpointIndex] = replacement
+	}
+	g.mu.Unlock()
+
+	return replacement
+}
+
 func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 	defer g.endpointReconnecting[endpointIndex].Store(false)
 
@@ -3779,7 +3914,9 @@ func (g *GravityClient) reconnectEndpoint(endpointIndex int, reason string) {
 		g.logger.Info("endpoint %d reconnection attempt %d", endpointIndex, attempt)
 		if err := g.reconnectSingleEndpoint(endpointIndex, endpointURL); err != nil {
 			g.logger.Warn("endpoint %d reconnection attempt %d failed: %v", endpointIndex, attempt, err)
+			endpointURL = g.handleEndpointReconnectFailure(endpointIndex, endpointURL)
 		} else {
+			g.resetEndpointFailureCount(endpointIndex)
 			g.logger.Info("endpoint %d (%s) reconnected successfully after %d attempt(s)", endpointIndex, endpointURL, attempt)
 			return
 		}

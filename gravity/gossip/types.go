@@ -49,6 +49,7 @@ type EndpointMapping struct {
 	ProjectID   string   `json:"project_id"`
 	DNSNames    []string `json:"dns_names"`
 	Timestamp   int64    `json:"timestamp"`
+	SNIHostname string   `json:"sni_hostname,omitempty"` // d-hash for deployments, sandbox hostname for sandboxes
 }
 
 // EndpointTombstone marks an endpoint as removed so peers can clean up stale

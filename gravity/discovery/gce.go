@@ -44,11 +44,6 @@ type gceTokenResponse struct {
 	TokenType   string `json:"token_type"`
 }
 
-// gceInstanceList is a subset of the GCE instances.list response.
-type gceInstanceList struct {
-	Items []gceInstance `json:"items"`
-}
-
 // gceAggregatedList is a subset of the GCE instances.aggregatedList response.
 type gceAggregatedList struct {
 	Items         map[string]gceInstancesScopedList `json:"items"`

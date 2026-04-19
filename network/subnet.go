@@ -9,6 +9,10 @@ import (
 // This is separate from NetworkHadron (0x03) to avoid address collisions.
 const NetworkSandboxSubnet Network = 0x05
 
+// NetworkDeploymentSubnet is the network type for deployment subnets.
+// This is separate from NetworkSandboxSubnet (0x05) to avoid collisions.
+const NetworkDeploymentSubnet Network = 0x06
+
 // ComputeSandboxSubnet returns a deterministic /64 IPv6 subnet for a machine.
 // Both gravity and hadron must call this function with the same parameters
 // (region, machineID) to produce identical results.
@@ -67,6 +71,50 @@ func ComputeSandboxVIP(subnet netip.Prefix, sandboxID string) netip.Addr {
 	base[12] = byte((h >> 12) & 0xff)
 	base[13] = byte((h >> 4) & 0xff)
 	base[14] = byte((h >> 20) & 0xff)
+	base[15] = byte(h&0xff) | 1
+
+	addr, _ := netip.AddrFromSlice(base[:])
+	return addr
+}
+
+// ComputeDeploymentSubnet returns a deterministic /96 IPv6 subnet for a machine.
+// Both gravity and hadron must call this function with the same parameters
+// (region, machineID) to produce identical results.
+//
+// Address format: fd15:d710:RNMM:MMMM::/96
+//   - Byte 4: Region (5 bits, max 31) | Network (3 bits, max 7)
+//   - Bytes 5-7: Machine hash (24 bits, 16M buckets)
+func ComputeDeploymentSubnet(region Region, machineID string) netip.Prefix {
+	machineHash := hashTo32Bits(machineID)
+
+	b := make([]byte, 16)
+	b[0] = 0xfd
+	b[1] = 0x15
+	b[2] = 0xd7
+	b[3] = 0x10
+	b[4] = (byte(region) << 3) | (byte(NetworkDeploymentSubnet) & 0x07)
+	b[5] = byte((machineHash >> 16) & 0xff)
+	b[6] = byte((machineHash >> 8) & 0xff)
+	b[7] = byte(machineHash & 0xff)
+	// Bytes 8-15 are zero for the prefix
+
+	addr, _ := netip.AddrFromSlice(b)
+	return netip.PrefixFrom(addr, 96)
+}
+
+// ComputeDeploymentVIP returns a deterministic IPv6 address for a deployment
+// within its machine's subnet. The subnet must be a /96 prefix; the host
+// bits (bytes 12-15) are derived from the deploymentID hash.
+func ComputeDeploymentVIP(subnet netip.Prefix, deploymentID string) netip.Addr {
+	if subnet.Bits() != 96 {
+		panic(fmt.Sprintf("ComputeDeploymentVIP requires a /96 prefix, got /%d", subnet.Bits()))
+	}
+	h := hashTo32Bits(deploymentID)
+	base := subnet.Addr().As16()
+
+	base[12] = byte((h >> 24) & 0xff)
+	base[13] = byte((h >> 16) & 0xff)
+	base[14] = byte((h >> 8) & 0xff)
 	base[15] = byte(h&0xff) | 1
 
 	addr, _ := netip.AddrFromSlice(base[:])

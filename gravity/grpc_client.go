@@ -2173,6 +2173,12 @@ func (g *GravityClient) sendSessionHello() error {
 
 	// Single-endpoint: send on primary control stream only (original path)
 	g.logger.Debug("sending session hello on primary control stream")
+	if len(g.streamManager.controlStreams) == 0 {
+		return fmt.Errorf("controlStreams not initialized")
+	}
+	if len(g.circuitBreakers) == 0 {
+		return fmt.Errorf("circuitBreakers not initialized")
+	}
 	stream := g.streamManager.controlStreams[0]
 	circuitBreaker := g.circuitBreakers[0]
 

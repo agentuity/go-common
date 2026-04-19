@@ -1851,8 +1851,16 @@ func (g *GravityClient) establishControlStreams() error {
 	}
 
 	for i, client := range g.sessionClients {
-		if i >= numConns {
-			break // Don't exceed allocated slice capacity
+		// Guard ALL slice accesses — during concurrent reconnection,
+		// slices may be shorter than expected.
+		if i >= numConns ||
+			i >= len(g.streamManager.contexts) ||
+			i >= len(g.streamManager.cancels) ||
+			i >= len(g.streamManager.controlStreams) ||
+			i >= len(g.streamManager.controlSendMu) {
+			g.logger.Warn("establishControlStreams: index %d exceeds slice capacity (conns=%d, ctx=%d, streams=%d), breaking",
+				i, numConns, len(g.streamManager.contexts), len(g.streamManager.controlStreams))
+			break
 		}
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)

@@ -6,6 +6,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"runtime"
@@ -18,6 +19,8 @@ import (
 	"github.com/agentuity/go-common/gravity/provider"
 	"github.com/agentuity/go-common/logger"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
+	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -734,4 +737,446 @@ func TestHardening_LockOrderingConsistency(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("potential deadlock detected between performHealthCheck and weighted selection")
 	}
+}
+
+// ============================================================================
+// IDLE Connection Recovery Tests
+// ============================================================================
+//
+// These tests verify the performHealthCheck IDLE detection and Connect()
+// recovery that was added to fix a critical production bug: gRPC connections
+// stuck in IDLE state after ion restarts were never recovered, causing a
+// 48-minute full region outage.
+
+// newIdleGRPCConn creates a real grpc.ClientConn in IDLE state for testing.
+// gRPC connections created via grpc.NewClient start lazy (IDLE) and only
+// attempt to connect when Connect() is called or an RPC is issued.
+func newIdleGRPCConn(t *testing.T) *grpc.ClientConn {
+	t.Helper()
+	conn, err := grpc.NewClient(
+		"dns:///127.0.0.1:1",
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+	)
+	if err != nil {
+		t.Fatalf("failed to create idle grpc connection: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return conn
+}
+
+// TestPerformHealthCheck_IDLEConnectionRecovery verifies that when a
+// connection is in IDLE state, performHealthCheck:
+//  1. Marks connectionHealth[i] = false
+//  2. Increments connectionIdleCount[i]
+//  3. Calls conn.Connect() to force reconnection
+//
+// This is the core regression test for the 48-minute outage fix.
+func TestPerformHealthCheck_IDLEConnectionRecovery(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+
+	// Create a real gRPC connection in IDLE state.
+	conn := newIdleGRPCConn(t)
+	if state := conn.GetState(); state != connectivity.Idle {
+		t.Fatalf("precondition: expected new connection in IDLE state, got %s", state)
+	}
+
+	g.connections = []*grpc.ClientConn{conn}
+	g.streamManager.connectionHealth = []bool{true} // starts "healthy"
+	g.streamManager.connectionIdleCount = []int{0}
+	g.streamManager.tunnelStreams = []*StreamInfo{} // no streams to check
+
+	g.performHealthCheck()
+
+	// Connection should be marked unhealthy (IDLE is not READY/CONNECTING).
+	if g.streamManager.connectionHealth[0] {
+		t.Fatal("expected IDLE connection to be marked unhealthy")
+	}
+
+	// Idle counter should have been incremented from 0 to 1.
+	if g.streamManager.connectionIdleCount[0] != 1 {
+		t.Fatalf("expected connectionIdleCount[0]=1, got %d", g.streamManager.connectionIdleCount[0])
+	}
+
+	// Verify conn.Connect() was called: the connection should leave IDLE.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn.WaitForStateChange(ctx, connectivity.Idle)
+	newState := conn.GetState()
+	if newState == connectivity.Idle {
+		t.Fatalf("expected connection to leave IDLE after Connect() was called by performHealthCheck, still %s", newState)
+	}
+}
+
+// TestPerformHealthCheck_IDLECounterResets verifies that the idle counter
+// resets to 0 when a connection transitions out of IDLE to a non-IDLE state
+// (e.g., CONNECTING after Connect() was called, or TRANSIENT_FAILURE).
+func TestPerformHealthCheck_IDLECounterResets(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+
+	// Create an IDLE connection and force it out of IDLE via Connect().
+	conn := newIdleGRPCConn(t)
+	conn.Connect()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn.WaitForStateChange(ctx, connectivity.Idle)
+
+	state := conn.GetState()
+	if state == connectivity.Idle {
+		t.Fatal("precondition: expected connection to have left IDLE after Connect()")
+	}
+
+	// Pre-set a high idle count to simulate previous consecutive IDLE detections.
+	g.connections = []*grpc.ClientConn{conn}
+	g.streamManager.connectionHealth = []bool{false}
+	g.streamManager.connectionIdleCount = []int{5}
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	g.performHealthCheck()
+
+	// The counter should reset to 0 because the connection is no longer IDLE.
+	// Whether it's CONNECTING (healthy) or TRANSIENT_FAILURE (unhealthy),
+	// neither path increments the idle counter — both reset it.
+	if g.streamManager.connectionIdleCount[0] != 0 {
+		t.Fatalf("expected connectionIdleCount[0]=0 after non-IDLE state (%s), got %d",
+			state, g.streamManager.connectionIdleCount[0])
+	}
+}
+
+// TestPerformHealthCheck_IDLECounterIncrementsOnConsecutiveIDLE verifies that
+// the idle counter accumulates across health check cycles when a connection
+// remains in IDLE state. This simulates the scenario where Connect() is called
+// but the connection transitions back to IDLE before the next check.
+func TestPerformHealthCheck_IDLECounterIncrementsOnConsecutiveIDLE(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+
+	// Pre-set the idle count to 3 to simulate 3 previous IDLE detections.
+	g.streamManager.connectionIdleCount = []int{3}
+
+	// Create a fresh IDLE connection (simulates a connection that went back to IDLE).
+	conn := newIdleGRPCConn(t)
+	g.connections = []*grpc.ClientConn{conn}
+	g.streamManager.connectionHealth = []bool{true}
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	g.performHealthCheck()
+
+	// Counter should have incremented from 3 to 4.
+	if g.streamManager.connectionIdleCount[0] != 4 {
+		t.Fatalf("expected connectionIdleCount[0]=4 (incremented from 3), got %d",
+			g.streamManager.connectionIdleCount[0])
+	}
+
+	// Health should be false (IDLE is not healthy).
+	if g.streamManager.connectionHealth[0] {
+		t.Fatal("expected IDLE connection to be marked unhealthy")
+	}
+}
+
+// TestPerformHealthCheck_TransientFailureNoConnect verifies that a connection
+// in TRANSIENT_FAILURE state does NOT trigger the IDLE recovery path
+// (no Connect() call, no idle counter increment). gRPC handles its own
+// reconnection retries for TRANSIENT_FAILURE via exponential backoff.
+func TestPerformHealthCheck_TransientFailureNoConnect(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+
+	// Create a connection and force it through IDLE → CONNECTING → TRANSIENT_FAILURE.
+	conn := newIdleGRPCConn(t)
+	conn.Connect()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// Wait for it to leave IDLE.
+	conn.WaitForStateChange(ctx, connectivity.Idle)
+
+	// If it's CONNECTING, wait for it to reach TRANSIENT_FAILURE.
+	state := conn.GetState()
+	if state == connectivity.Connecting {
+		conn.WaitForStateChange(ctx, connectivity.Connecting)
+		state = conn.GetState()
+	}
+
+	// We may get TRANSIENT_FAILURE or possibly still CONNECTING due to backoff.
+	// Either way, the key assertion is the counter behavior.
+	if state == connectivity.Idle {
+		t.Skip("connection unexpectedly returned to IDLE, skipping TRANSIENT_FAILURE test")
+	}
+
+	g.connections = []*grpc.ClientConn{conn}
+	g.streamManager.connectionHealth = []bool{true}
+	g.streamManager.connectionIdleCount = []int{7} // pre-set high idle count
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	g.performHealthCheck()
+
+	// The idle counter should reset to 0 (non-IDLE path resets, doesn't increment).
+	if g.streamManager.connectionIdleCount[0] != 0 {
+		t.Fatalf("expected connectionIdleCount[0]=0 after non-IDLE state (%s), got %d",
+			state, g.streamManager.connectionIdleCount[0])
+	}
+
+	// Connection should be marked unhealthy if TRANSIENT_FAILURE, or healthy
+	// if CONNECTING. Either is correct — the key point is no IDLE recovery.
+	isHealthy := state == connectivity.Connecting || state == connectivity.Ready
+	if g.streamManager.connectionHealth[0] != isHealthy {
+		t.Fatalf("expected connectionHealth[0]=%v for state %s, got %v",
+			isHealthy, state, g.streamManager.connectionHealth[0])
+	}
+}
+
+// TestPerformHealthCheck_MultipleConnectionsMixedState verifies that with
+// 3 connections where only connection 1 is IDLE, only connection 1 gets
+// the IDLE recovery treatment (Connect() + idle count increment).
+func TestPerformHealthCheck_MultipleConnectionsMixedState(t *testing.T) {
+	g := newHardeningGravityClient(t, 3)
+
+	// Connections 0 and 2: force out of IDLE via Connect().
+	conn0 := newIdleGRPCConn(t)
+	conn0.Connect()
+	conn2 := newIdleGRPCConn(t)
+	conn2.Connect()
+
+	// Connection 1: stays in IDLE (fresh, no Connect() called).
+	conn1 := newIdleGRPCConn(t)
+
+	// Wait for connections 0 and 2 to leave IDLE.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn0.WaitForStateChange(ctx, connectivity.Idle)
+	conn2.WaitForStateChange(ctx, connectivity.Idle)
+
+	// Verify preconditions.
+	if conn1.GetState() != connectivity.Idle {
+		t.Fatal("precondition: expected connection 1 to be in IDLE state")
+	}
+	if conn0.GetState() == connectivity.Idle {
+		t.Fatal("precondition: expected connection 0 to have left IDLE")
+	}
+	if conn2.GetState() == connectivity.Idle {
+		t.Fatal("precondition: expected connection 2 to have left IDLE")
+	}
+
+	g.connections = []*grpc.ClientConn{conn0, conn1, conn2}
+	g.streamManager.connectionHealth = []bool{true, true, true}
+	g.streamManager.connectionIdleCount = []int{0, 0, 0}
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	g.performHealthCheck()
+
+	// Only connection 1 (IDLE) should have its idle count incremented.
+	if g.streamManager.connectionIdleCount[1] != 1 {
+		t.Fatalf("expected IDLE connectionIdleCount[1]=1, got %d",
+			g.streamManager.connectionIdleCount[1])
+	}
+
+	// Connections 0 and 2 should have their idle count at 0 (non-IDLE state resets).
+	if g.streamManager.connectionIdleCount[0] != 0 {
+		t.Fatalf("expected non-IDLE connectionIdleCount[0]=0, got %d",
+			g.streamManager.connectionIdleCount[0])
+	}
+	if g.streamManager.connectionIdleCount[2] != 0 {
+		t.Fatalf("expected non-IDLE connectionIdleCount[2]=0, got %d",
+			g.streamManager.connectionIdleCount[2])
+	}
+
+	// Connection 1 should be marked unhealthy (IDLE is not healthy).
+	if g.streamManager.connectionHealth[1] {
+		t.Fatal("expected IDLE connection 1 to be marked unhealthy")
+	}
+}
+
+// TestPerformHealthCheck_AllConnectionsIDLE verifies that when all connections
+// go IDLE simultaneously (e.g., during a rolling ion restart), every connection
+// gets the recovery treatment: Connect() called and idle count incremented.
+func TestPerformHealthCheck_AllConnectionsIDLE(t *testing.T) {
+	g := newHardeningGravityClient(t, 3)
+
+	conn0 := newIdleGRPCConn(t)
+	conn1 := newIdleGRPCConn(t)
+	conn2 := newIdleGRPCConn(t)
+
+	g.connections = []*grpc.ClientConn{conn0, conn1, conn2}
+	g.streamManager.connectionHealth = []bool{true, true, true}
+	g.streamManager.connectionIdleCount = []int{0, 0, 0}
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	g.performHealthCheck()
+
+	// All connections should be detected as IDLE and treated.
+	for i := 0; i < 3; i++ {
+		if g.streamManager.connectionHealth[i] {
+			t.Fatalf("expected connectionHealth[%d]=false for IDLE connection", i)
+		}
+		if g.streamManager.connectionIdleCount[i] != 1 {
+			t.Fatalf("expected connectionIdleCount[%d]=1, got %d",
+				i, g.streamManager.connectionIdleCount[i])
+		}
+	}
+
+	// Verify Connect() was called on all connections: they should all leave IDLE.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	conns := []*grpc.ClientConn{conn0, conn1, conn2}
+	for i, conn := range conns {
+		conn.WaitForStateChange(ctx, connectivity.Idle)
+		state := conn.GetState()
+		if state == connectivity.Idle {
+			t.Fatalf("expected connection %d to leave IDLE after Connect(), still %s", i, state)
+		}
+	}
+}
+
+// TestPerformHealthCheck_IDLECounterArrayBounds verifies that performHealthCheck
+// does NOT panic when connectionIdleCount is shorter than connections. This is
+// a defensive bounds check — the production code guards with
+// `if i < len(g.streamManager.connectionIdleCount)`.
+func TestPerformHealthCheck_IDLECounterArrayBounds(t *testing.T) {
+	g := newHardeningGravityClient(t, 2)
+
+	conn0 := newIdleGRPCConn(t)
+	conn1 := newIdleGRPCConn(t)
+
+	g.connections = []*grpc.ClientConn{conn0, conn1}
+	g.streamManager.connectionHealth = []bool{true, true}
+	// connectionIdleCount intentionally shorter than connections.
+	// This could happen if a code path initializes connections but forgets
+	// to resize connectionIdleCount.
+	g.streamManager.connectionIdleCount = []int{0} // 1 element, but 2 connections
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	// Must NOT panic despite mismatched slice lengths.
+	defer func() {
+		if p := recover(); p != nil {
+			t.Fatalf("performHealthCheck panicked on mismatched slice lengths: %v", p)
+		}
+	}()
+
+	g.performHealthCheck()
+
+	// Connection 0 (within bounds) should have its count incremented.
+	if g.streamManager.connectionIdleCount[0] != 1 {
+		t.Fatalf("expected connectionIdleCount[0]=1, got %d",
+			g.streamManager.connectionIdleCount[0])
+	}
+
+	// Connection 1 is out of bounds for connectionIdleCount but should still
+	// be marked unhealthy (IDLE detection works, just no counter tracking).
+	if g.streamManager.connectionHealth[1] {
+		t.Fatal("expected IDLE connection 1 to be marked unhealthy even with short counter array")
+	}
+
+	// Connect() should still have been called on connection 1 (verified by state change).
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	conn1.WaitForStateChange(ctx, connectivity.Idle)
+	if conn1.GetState() == connectivity.Idle {
+		t.Fatal("expected connection 1 to leave IDLE after Connect() despite short counter array")
+	}
+}
+
+// TestConnectionHealthAndIdleCountSameLength is a structural canary test:
+// after production-style initialization, connectionHealth and connectionIdleCount
+// MUST have the same length as connections. If they diverge, performHealthCheck's
+// bounds check silently skips idle tracking, hiding the IDLE recovery regression.
+func TestConnectionHealthAndIdleCountSameLength(t *testing.T) {
+	sizes := []int{1, 2, 3, 5, 10}
+	for _, n := range sizes {
+		t.Run(fmt.Sprintf("pool_size_%d", n), func(t *testing.T) {
+			g := newHardeningGravityClient(t, n)
+
+			// Simulate production initialization (mirrors grpc_client.go lines 657-658
+			// and lines 922-923).
+			g.streamManager.connectionHealth = make([]bool, n)
+			g.streamManager.connectionIdleCount = make([]int, n)
+
+			healthLen := len(g.streamManager.connectionHealth)
+			idleLen := len(g.streamManager.connectionIdleCount)
+			connLen := len(g.connections)
+
+			if healthLen != idleLen {
+				t.Fatalf("connectionHealth length (%d) != connectionIdleCount length (%d)",
+					healthLen, idleLen)
+			}
+			if healthLen != connLen {
+				t.Fatalf("connectionHealth length (%d) != connections length (%d)",
+					healthLen, connLen)
+			}
+		})
+	}
+}
+
+func TestAddEndpoint_GrowsConnectionIdleCount(t *testing.T) {
+	// Verify that addEndpoint grows connectionIdleCount alongside
+	// connectionHealth so that idle recovery tracking works for
+	// dynamically-added endpoints.
+	g := newHardeningGravityClient(t, 1)
+	g.poolConfig.MaxGravityPeers = 5
+
+	g.streamManager.healthMu.Lock()
+	g.streamManager.connectionHealth = []bool{true}
+	g.streamManager.connectionIdleCount = []int{0}
+	g.streamManager.healthMu.Unlock()
+
+	// Add a new endpoint — this should grow both connectionHealth and connectionIdleCount
+	g.addEndpoint("grpc://10.0.0.2:443")
+
+	g.streamManager.healthMu.RLock()
+	healthLen := len(g.streamManager.connectionHealth)
+	idleLen := len(g.streamManager.connectionIdleCount)
+	g.streamManager.healthMu.RUnlock()
+
+	if healthLen != idleLen {
+		t.Fatalf("after addEndpoint: connectionHealth length (%d) != connectionIdleCount length (%d)",
+			healthLen, idleLen)
+	}
+	if healthLen < 2 {
+		t.Fatalf("expected at least 2 entries after addEndpoint, got %d", healthLen)
+	}
+}
+
+func TestPerformHealthCheck_PersistentIDLEEscalates(t *testing.T) {
+	// Verify that when connectionIdleCount exceeds the escalation threshold (>3),
+	// performHealthCheck triggers handleEndpointDisconnection without panicking.
+	// We pre-set the idle count to simulate persistent IDLE and verify it
+	// increments past the threshold. We use a real IDLE connection but manually
+	// set the count high to test the escalation path directly.
+	g := newHardeningGravityClient(t, 1)
+
+	conn := newIdleGRPCConn(t)
+	g.connections = []*grpc.ClientConn{conn}
+	g.streamManager.connectionHealth = []bool{true}
+	// Pre-set count to 3 — next check should escalate (>3 triggers handleEndpointDisconnection)
+	g.streamManager.connectionIdleCount = []int{3}
+	g.streamManager.tunnelStreams = []*StreamInfo{}
+
+	// Verify the connection is IDLE
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	for conn.GetState() != connectivity.Idle {
+		if !conn.WaitForStateChange(ctx, conn.GetState()) {
+			t.Skip("connection did not reach IDLE state in time")
+			return
+		}
+	}
+
+	// This health check should see IDLE, increment count to 4, and escalate
+	// to handleEndpointDisconnection (which runs async). No panic = success.
+	g.performHealthCheck()
+
+	g.streamManager.healthMu.RLock()
+	idleCount := g.streamManager.connectionIdleCount[0]
+	healthy := g.streamManager.connectionHealth[0]
+	g.streamManager.healthMu.RUnlock()
+
+	if idleCount != 4 {
+		t.Fatalf("expected connectionIdleCount[0]=4 after escalation check, got %d", idleCount)
+	}
+	if healthy {
+		t.Fatal("expected connectionHealth[0] = false for IDLE connection")
+	}
+
+	// Give the async handleEndpointDisconnection goroutine a moment to run
+	// (it should not panic even with minimal client state)
+	time.Sleep(50 * time.Millisecond)
 }

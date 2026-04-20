@@ -1579,11 +1579,9 @@ func TestPerformHealthCheck_EmptyConnections_NoPanic(t *testing.T) {
 	g.performHealthCheck()
 }
 
-func TestPerformHealthCheck_MismatchedArrayLengths_Panics(t *testing.T) {
-	// connectionHealth shorter than connections — currently panics because
-	// performHealthCheck indexes connectionHealth[i] without bounds checking.
-	// This test documents the behavior. A future fix should add bounds guards
-	// to performHealthCheck so it handles dynamic array resizing gracefully.
+func TestPerformHealthCheck_MismatchedArrayLengths_NoPanic(t *testing.T) {
+	// connectionHealth shorter than connections — performHealthCheck should
+	// handle gracefully by skipping connections beyond the health array bounds.
 	g := newHardeningGravityClient(t, 1)
 
 	conn0 := newIdleGRPCConn(t)
@@ -1593,11 +1591,11 @@ func TestPerformHealthCheck_MismatchedArrayLengths_Panics(t *testing.T) {
 	g.streamManager.connectionIdleCount = []int{0}        // only 1 entry
 	g.streamManager.tunnelStreams = []*StreamInfo{}
 
-	// Currently panics — verify it panics so we know when it's fixed.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for mismatched array lengths (fix performHealthCheck bounds checking)")
-		}
-	}()
+	// Should not panic — connections beyond connectionHealth length are skipped
 	g.performHealthCheck()
+
+	// The one entry that IS within bounds should have been processed
+	if g.streamManager.connectionHealth[0] {
+		t.Fatal("expected connection 0 (IDLE) to be marked unhealthy")
+	}
 }

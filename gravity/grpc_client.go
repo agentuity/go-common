@@ -5618,6 +5618,9 @@ func (g *GravityClient) performHealthCheck() {
 	// Without this recovery, hadrons lose all tunnel connectivity to ions
 	// that restarted and never reconnect — causing a full region outage.
 	for i, conn := range g.connections {
+		if i >= len(g.streamManager.connectionHealth) {
+			break // connectionHealth not yet grown to match connections
+		}
 		if conn != nil {
 			state := conn.GetState()
 			isHealthy := state.String() == "READY" || state.String() == "CONNECTING"

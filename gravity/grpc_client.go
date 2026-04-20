@@ -1749,6 +1749,9 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	for len(g.streamManager.connectionHealth) <= slotIdx {
 		g.streamManager.connectionHealth = append(g.streamManager.connectionHealth, false)
 	}
+	for len(g.streamManager.connectionIdleCount) <= slotIdx {
+		g.streamManager.connectionIdleCount = append(g.streamManager.connectionIdleCount, 0)
+	}
 	g.streamManager.healthMu.Unlock()
 
 	g.logger.Info("peer discovery: added new endpoint %s at slot %d, starting reconnection", newURL, slotIdx)
@@ -5631,7 +5634,15 @@ func (g *GravityClient) performHealthCheck() {
 					// Force gRPC to move from IDLE → CONNECTING → READY
 					// (or TRANSIENT_FAILURE if the server is unreachable).
 					conn.Connect()
-					g.logger.Info("connection %d is IDLE (count=%d), forced reconnection via Connect()", i, idleCount)
+					if idleCount > 3 {
+						// Persistent IDLE — Connect() alone isn't recovering.
+						// Escalate to full endpoint reconnection which tears
+						// down and rebuilds streams.
+						g.logger.Warn("connection %d is persistently IDLE (count=%d), escalating to endpoint reconnection", i, idleCount)
+						go g.handleEndpointDisconnection(i, "persistent_idle")
+					} else {
+						g.logger.Info("connection %d is IDLE (count=%d), forced reconnection via Connect()", i, idleCount)
+					}
 				} else {
 					g.logger.Debug("connection %d is unhealthy, state: %s", i, stateStr)
 					// Reset idle counter on non-IDLE unhealthy states

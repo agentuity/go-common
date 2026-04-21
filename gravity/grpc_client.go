@@ -2594,6 +2594,8 @@ func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMe
 	case *pb.SessionMessage_MonitorReport:
 		// Server should not send monitor reports to client — ignore
 		g.logger.Debug("received unexpected monitor report from server, ignoring")
+	case *pb.SessionMessage_ResourceSyncResponse:
+		g.handleResourceSyncResponse(msg.Id, m.ResourceSyncResponse)
 	default:
 		g.logger.Debug("unhandled session message type: %T", m)
 	}
@@ -2890,6 +2892,11 @@ func (g *GravityClient) handleRouteSandboxResponse(msgID string, response *pb.Ro
 	} else {
 		g.logger.Debug("handleRouteSandboxResponse: No pending route sandbox request found for msgID: %s", msgID)
 	}
+}
+
+func (g *GravityClient) handleResourceSyncResponse(msgID string, response *pb.ResourceSyncResponse) {
+	g.logger.Debug("handleResourceSyncResponse: Received resource sync response for msgID=%s, added=%d, removed=%d, success=%v",
+		msgID, response.Added, response.Removed, response.Success)
 }
 
 func (g *GravityClient) handleCheckpointURLResponse(msgID string, response *pb.CheckpointURLResponse) {
@@ -5006,6 +5013,68 @@ func (g *GravityClient) Unprovision(deploymentID string, ownerID string) error {
 	}
 	g.logger.Info("Unprovision: broadcast succeeded for deployment %s", deploymentID)
 	return nil
+}
+
+// SendResourceSync sends the full set of active resources to gravity.
+// Gravity compares this against its cached state for the machine and
+// unprovisions any stale entries that hadron no longer has. This replaces
+// per-resource RouteDeploymentRequest calls during reconnection, providing
+// atomic full-state sync that prevents stale VIP entries in the gossip mesh.
+func (g *GravityClient) SendResourceSync(deployments []ResourceSyncItem, sandboxes []ResourceSyncItem, timeout time.Duration) (*pb.ResourceSyncResponse, error) {
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for session ready before resource sync")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for session ready")
+	}
+
+	pbDeployments := make([]*pb.ResourceSyncEntry, len(deployments))
+	for i, d := range deployments {
+		pbDeployments[i] = &pb.ResourceSyncEntry{
+			Id:        d.ID,
+			VirtualIp: d.VirtualIP,
+			OwnerId:   d.OwnerID,
+		}
+	}
+	pbSandboxes := make([]*pb.ResourceSyncEntry, len(sandboxes))
+	for i, s := range sandboxes {
+		pbSandboxes[i] = &pb.ResourceSyncEntry{
+			Id:        s.ID,
+			VirtualIp: s.VirtualIP,
+			OwnerId:   s.OwnerID,
+		}
+	}
+
+	msgID := generateMessageID()
+	msg := &pb.SessionMessage{
+		Id: msgID,
+		MessageType: &pb.SessionMessage_ResourceSync{
+			ResourceSync: &pb.ResourceSyncRequest{
+				Deployments: pbDeployments,
+				Sandboxes:   pbSandboxes,
+			},
+		},
+	}
+
+	// Broadcast to ALL connected ions.
+	if err := g.broadcastSessionMessage(msg); err != nil {
+		return nil, fmt.Errorf("failed to send resource sync: %w", err)
+	}
+
+	g.logger.Info("SendResourceSync: broadcast %d deployments + %d sandboxes", len(deployments), len(sandboxes))
+	return &pb.ResourceSyncResponse{Success: true, Added: int32(len(deployments) + len(sandboxes))}, nil
+}
+
+// ResourceSyncItem represents a single resource in a sync request.
+type ResourceSyncItem struct {
+	ID        string
+	VirtualIP string
+	OwnerID   string
 }
 
 // SendEvacuateRequest sends a request to evacuate sandboxes on this machine.

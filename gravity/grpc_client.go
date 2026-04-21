@@ -413,8 +413,9 @@ type StreamManager struct {
 	metricsMu     sync.RWMutex
 
 	// Connection health tracking
-	connectionHealth []bool // Health status per connection
-	healthMu         sync.RWMutex
+	connectionHealth    []bool // Health status per connection
+	connectionIdleCount []int  // Consecutive IDLE health check count per connection
+	healthMu            sync.RWMutex
 
 	// Stream contexts for cancellation
 	contexts []context.Context
@@ -654,6 +655,7 @@ func (g *GravityClient) Start() error {
 
 	// Initialize connection health tracking
 	g.streamManager.connectionHealth = make([]bool, connectionCount)
+	g.streamManager.connectionIdleCount = make([]int, connectionCount)
 	for i := range g.streamManager.connectionHealth {
 		g.streamManager.connectionHealth[i] = true // Start assuming healthy
 	}
@@ -918,6 +920,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	// Initialize connection health tracking
 	g.streamManager.connectionHealth = make([]bool, connectionCount)
+	g.streamManager.connectionIdleCount = make([]int, connectionCount)
 	for i := range g.streamManager.connectionHealth {
 		g.streamManager.connectionHealth[i] = true
 	}
@@ -1745,6 +1748,9 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	g.streamManager.healthMu.Lock()
 	for len(g.streamManager.connectionHealth) <= slotIdx {
 		g.streamManager.connectionHealth = append(g.streamManager.connectionHealth, false)
+	}
+	for len(g.streamManager.connectionIdleCount) <= slotIdx {
+		g.streamManager.connectionIdleCount = append(g.streamManager.connectionIdleCount, 0)
 	}
 	g.streamManager.healthMu.Unlock()
 
@@ -5605,15 +5611,54 @@ func (g *GravityClient) performHealthCheck() {
 	g.streamManager.healthMu.Lock()
 	defer g.streamManager.healthMu.Unlock()
 
-	// Check connection health
+	// Check connection health and recover IDLE connections.
+	// gRPC connections can transition to IDLE after the server restarts
+	// (e.g., during tableflip). In IDLE state, gRPC won't attempt to
+	// reconnect until a new RPC is issued or Connect() is called explicitly.
+	// Without this recovery, hadrons lose all tunnel connectivity to ions
+	// that restarted and never reconnect — causing a full region outage.
 	for i, conn := range g.connections {
+		if i >= len(g.streamManager.connectionHealth) {
+			break // connectionHealth not yet grown to match connections
+		}
 		if conn != nil {
 			state := conn.GetState()
 			isHealthy := state.String() == "READY" || state.String() == "CONNECTING"
 			g.streamManager.connectionHealth[i] = isHealthy
 
 			if !isHealthy {
-				g.logger.Debug("connection %d is unhealthy, state: %s", i, state.String())
+				stateStr := state.String()
+				if stateStr == "IDLE" {
+					idleCount := 0
+					if i < len(g.streamManager.connectionIdleCount) {
+						g.streamManager.connectionIdleCount[i]++
+						idleCount = g.streamManager.connectionIdleCount[i]
+					}
+					// Force gRPC to move from IDLE → CONNECTING → READY
+					// (or TRANSIENT_FAILURE if the server is unreachable).
+					conn.Connect()
+					if idleCount > 3 {
+						// Persistent IDLE — Connect() alone isn't recovering.
+						// Escalate to full endpoint reconnection which tears
+						// down and rebuilds streams.
+						g.logger.Warn("connection %d is persistently IDLE (count=%d), escalating to endpoint reconnection", i, idleCount)
+						go g.handleEndpointDisconnection(i, "persistent_idle")
+					} else {
+						g.logger.Info("connection %d is IDLE (count=%d), forced reconnection via Connect()", i, idleCount)
+					}
+				} else {
+					g.logger.Debug("connection %d is unhealthy, state: %s", i, stateStr)
+					// Reset idle counter on non-IDLE unhealthy states
+					// (TRANSIENT_FAILURE, SHUTDOWN already have retry logic)
+					if i < len(g.streamManager.connectionIdleCount) {
+						g.streamManager.connectionIdleCount[i] = 0
+					}
+				}
+			} else {
+				// Connection is healthy — reset idle counter
+				if i < len(g.streamManager.connectionIdleCount) {
+					g.streamManager.connectionIdleCount[i] = 0
+				}
 			}
 		} else {
 			g.streamManager.connectionHealth[i] = false

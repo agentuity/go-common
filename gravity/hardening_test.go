@@ -868,8 +868,21 @@ func TestPerformHealthCheck_IDLECounterIncrementsOnConsecutiveIDLE(t *testing.T)
 	}
 
 	// Health should be false (IDLE is not healthy).
-	if g.streamManager.connectionHealth[0] {
-		t.Fatal("expected IDLE connection to be marked unhealthy")
+	// The write happens in a background goroutine (handleEndpointDisconnection),
+	// so we need to wait for it to complete.
+	deadline := time.After(2 * time.Second)
+	for {
+		g.streamManager.healthMu.Lock()
+		healthy := g.streamManager.connectionHealth[0]
+		g.streamManager.healthMu.Unlock()
+		if !healthy {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("timed out waiting for IDLE connection to be marked unhealthy")
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

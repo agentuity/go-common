@@ -2594,6 +2594,8 @@ func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMe
 	case *pb.SessionMessage_MonitorReport:
 		// Server should not send monitor reports to client — ignore
 		g.logger.Debug("received unexpected monitor report from server, ignoring")
+	case *pb.SessionMessage_ResourceSyncResponse:
+		g.handleResourceSyncResponse(msg.Id, m.ResourceSyncResponse)
 	default:
 		g.logger.Debug("unhandled session message type: %T", m)
 	}
@@ -2890,6 +2892,11 @@ func (g *GravityClient) handleRouteSandboxResponse(msgID string, response *pb.Ro
 	} else {
 		g.logger.Debug("handleRouteSandboxResponse: No pending route sandbox request found for msgID: %s", msgID)
 	}
+}
+
+func (g *GravityClient) handleResourceSyncResponse(msgID string, response *pb.ResourceSyncResponse) {
+	g.logger.Debug("handleResourceSyncResponse: Received resource sync response for msgID=%s, added=%d, removed=%d, success=%v",
+		msgID, response.Added, response.Removed, response.Success)
 }
 
 func (g *GravityClient) handleCheckpointURLResponse(msgID string, response *pb.CheckpointURLResponse) {

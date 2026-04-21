@@ -93,6 +93,10 @@ message SessionMessage {
     // Checkpoint URL requests (65-66) — presigned URL generation for suspend/resume
     CheckpointURLRequest checkpoint_url_request = 65;
     CheckpointURLResponse checkpoint_url_response = 66;
+
+    // Resource sync (70-71) — full state sync after reconnect
+    ResourceSyncRequest resource_sync = 70;
+    ResourceSyncResponse resource_sync_response = 71;
   }
 }
 
@@ -438,4 +442,26 @@ message CheckpointURLResponse {
   int64 expiry_seconds = 4; // How long the presigned URL is valid
   bool success = 5;
   string error = 6; // Error message if success=false
+}
+
+// ResourceSyncRequest is sent by hadron after reconnect to declare its
+// full set of active resources. Gravity compares this against what it
+// has cached for the machine and unprovisions any stale entries.
+// This replaces the per-deployment RouteDeploymentRequest on reconnect.
+message ResourceSyncRequest {
+  repeated ResourceSyncEntry deployments = 1;
+  repeated ResourceSyncEntry sandboxes = 2;
+}
+
+message ResourceSyncEntry {
+  string id = 1;         // deployment_id or sandbox_id
+  string virtual_ip = 2; // hadron container IPv6 address
+  string owner_id = 3;   // provision owner ID
+}
+
+message ResourceSyncResponse {
+  bool success = 1;
+  int32 added = 2;       // resources newly registered
+  int32 removed = 3;     // stale resources unprovisioned
+  string error = 4;
 }

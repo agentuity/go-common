@@ -5008,6 +5008,68 @@ func (g *GravityClient) Unprovision(deploymentID string, ownerID string) error {
 	return nil
 }
 
+// SendResourceSync sends the full set of active resources to gravity.
+// Gravity compares this against its cached state for the machine and
+// unprovisions any stale entries that hadron no longer has. This replaces
+// per-resource RouteDeploymentRequest calls during reconnection, providing
+// atomic full-state sync that prevents stale VIP entries in the gossip mesh.
+func (g *GravityClient) SendResourceSync(deployments []ResourceSyncItem, sandboxes []ResourceSyncItem, timeout time.Duration) (*pb.ResourceSyncResponse, error) {
+	g.mu.RLock()
+	ready := g.sessionReady
+	g.mu.RUnlock()
+
+	select {
+	case <-ready:
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timeout waiting for session ready before resource sync")
+	case <-g.ctx.Done():
+		return nil, fmt.Errorf("context cancelled while waiting for session ready")
+	}
+
+	pbDeployments := make([]*pb.ResourceSyncEntry, len(deployments))
+	for i, d := range deployments {
+		pbDeployments[i] = &pb.ResourceSyncEntry{
+			Id:        d.ID,
+			VirtualIp: d.VirtualIP,
+			OwnerId:   d.OwnerID,
+		}
+	}
+	pbSandboxes := make([]*pb.ResourceSyncEntry, len(sandboxes))
+	for i, s := range sandboxes {
+		pbSandboxes[i] = &pb.ResourceSyncEntry{
+			Id:        s.ID,
+			VirtualIp: s.VirtualIP,
+			OwnerId:   s.OwnerID,
+		}
+	}
+
+	msgID := generateMessageID()
+	msg := &pb.SessionMessage{
+		Id: msgID,
+		MessageType: &pb.SessionMessage_ResourceSync{
+			ResourceSync: &pb.ResourceSyncRequest{
+				Deployments: pbDeployments,
+				Sandboxes:   pbSandboxes,
+			},
+		},
+	}
+
+	// Broadcast to ALL connected ions.
+	if err := g.broadcastSessionMessage(msg); err != nil {
+		return nil, fmt.Errorf("failed to send resource sync: %w", err)
+	}
+
+	g.logger.Info("SendResourceSync: broadcast %d deployments + %d sandboxes", len(deployments), len(sandboxes))
+	return &pb.ResourceSyncResponse{Success: true, Added: int32(len(deployments) + len(sandboxes))}, nil
+}
+
+// ResourceSyncItem represents a single resource in a sync request.
+type ResourceSyncItem struct {
+	ID        string
+	VirtualIP string
+	OwnerID   string
+}
+
 // SendEvacuateRequest sends a request to evacuate sandboxes on this machine.
 func (g *GravityClient) SendEvacuateRequest(machineID, reason string, sandboxes []*pb.SandboxEvacInfo) error {
 	msg := &pb.SessionMessage{

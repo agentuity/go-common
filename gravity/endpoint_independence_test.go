@@ -1661,6 +1661,81 @@ func TestSelectStreamForPacket_MarksEndpointUnhealthy_TriggersPerEndpointReconne
 	}
 }
 
+// TestSelectStreamForPacket_UsesBoundTunnelWhenEndpointHealthIsStale verifies
+// that response traffic can still use the endpoint it is already bound to when
+// endpoint health has gone stale but the tunnel stream itself is still healthy.
+// This covers the post-hello/post-tunnel reconnect window where
+// refreshEndpointHealth() may mark every endpoint unhealthy before the data
+// path has actually failed.
+func TestSelectStreamForPacket_UsesBoundTunnelWhenEndpointHealthIsStale(t *testing.T) {
+	t.Parallel()
+
+	g := newWritePacketTestClient(t, 2)
+
+	g.endpoints[0].healthy.Store(false)
+	g.endpoints[1].healthy.Store(false)
+	g.streamManager.connectionHealth[0] = false
+	g.streamManager.connectionHealth[1] = false
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+
+	boundStream := &hardeningMockTunnelStream{}
+	setupWritePacketStreams(g, []*StreamInfo{
+		{connIndex: 0, isHealthy: true, streamID: "ep0-t0", stream: boundStream, lastUsed: time.Now()},
+		{connIndex: 1, isHealthy: false, streamID: "ep1-t0", stream: &hardeningMockTunnelStream{}, lastUsed: time.Now()},
+	})
+
+	pkt := makeIPv6Packet()
+	preBindFlowToEndpoint(g, pkt, 0)
+
+	stream, err := g.selectStreamForPacket(pkt)
+	if err != nil {
+		t.Fatalf("expected bound healthy tunnel fallback, got: %v", err)
+	}
+	if stream.connIndex != 0 {
+		t.Fatalf("expected bound stream from endpoint 0, got connIndex=%d", stream.connIndex)
+	}
+}
+
+func TestSelectStreamForPacket_BoundTunnelFallbackRefreshesBindingTTL(t *testing.T) {
+	t.Parallel()
+
+	g := newWritePacketTestClient(t, 2)
+
+	g.endpoints[0].healthy.Store(false)
+	g.endpoints[1].healthy.Store(false)
+	g.streamManager.connectionHealth[0] = false
+	g.streamManager.connectionHealth[1] = false
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+
+	boundStream := &hardeningMockTunnelStream{}
+	setupWritePacketStreams(g, []*StreamInfo{
+		{connIndex: 0, isHealthy: true, streamID: "ep0-t0", stream: boundStream, lastUsed: time.Now()},
+	})
+
+	pkt := makeIPv6Packet()
+	preBindFlowToEndpoint(g, pkt, 0)
+
+	key := ExtractFlowKey(pkt)
+	before := time.Now().Add(-2 * time.Second)
+	g.selector.mu.Lock()
+	g.selector.bindings[key].LastUsed = before
+	g.selector.mu.Unlock()
+
+	_, err := g.selectStreamForPacket(pkt)
+	if err != nil {
+		t.Fatalf("expected bound healthy tunnel fallback, got: %v", err)
+	}
+
+	g.selector.mu.RLock()
+	after := g.selector.bindings[key].LastUsed
+	g.selector.mu.RUnlock()
+	if !after.After(before) {
+		t.Fatalf("expected binding lastUsed to advance, before=%v after=%v", before, after)
+	}
+}
+
 // --- Category D: Safety Net Edge Cases ---
 
 // TestTriggerAllEndpointReconnections_ClosingClient verifies that

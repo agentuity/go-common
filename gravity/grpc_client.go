@@ -5313,6 +5313,10 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 		for attempt := 0; attempt < len(endpoints); attempt++ {
 			endpoint := selector.Select(payload, endpoints)
 			if endpoint == nil {
+				if fallbackStream, fallbackURL, ok := g.selectBoundTunnelFallback(payload, selector); ok {
+					g.logger.Debug("selectStream: using bound endpoint %s despite unhealthy endpoint state because a healthy tunnel stream still exists", fallbackURL)
+					return fallbackStream, nil
+				}
 				// Log endpoint health summary for debugging selector failures.
 				var healthSummary []string
 				for i, ep := range endpoints {
@@ -5336,6 +5340,10 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 			g.logger.Warn("endpoint %s has no healthy tunnels, marking unhealthy and triggering reconnect", endpoint.URL)
 			g.triggerEndpointReconnectByURL(endpoint.URL)
 			g.wakePeerDiscovery()
+		}
+		if fallbackStream, fallbackURL, ok := g.selectBoundTunnelFallback(payload, selector); ok {
+			g.logger.Debug("selectStream: using bound endpoint %s after selector exhausted healthy endpoint attempts because a healthy tunnel stream still exists", fallbackURL)
+			return fallbackStream, nil
 		}
 		return nil, fmt.Errorf("no healthy tunnel streams on any endpoint")
 	}
@@ -5368,6 +5376,33 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 	stream.loadCount++
 	stream.lastUsed = time.Now()
 	return stream, nil
+}
+
+func (g *GravityClient) selectBoundTunnelFallback(payload []byte, selector *EndpointSelector) (*StreamInfo, string, bool) {
+	if selector == nil {
+		return nil, "", false
+	}
+
+	key := ExtractFlowKey(payload)
+	now := time.Now()
+
+	selector.mu.RLock()
+	binding, ok := selector.bindings[key]
+	selector.mu.RUnlock()
+	if !ok || binding == nil || binding.Endpoint == nil || now.Sub(binding.LastUsed) >= selector.ttl {
+		return nil, "", false
+	}
+
+	stream, err := g.selectStreamForEndpoint(payload, binding.Endpoint.URL)
+	if err != nil {
+		return nil, binding.Endpoint.URL, false
+	}
+	selector.mu.Lock()
+	if current, ok := selector.bindings[key]; ok && current == binding {
+		current.LastUsed = now
+	}
+	selector.mu.Unlock()
+	return stream, binding.Endpoint.URL, true
 }
 
 func (g *GravityClient) selectStreamForEndpoint(payload []byte, endpointURL string) (*StreamInfo, error) {

@@ -3997,6 +3997,17 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 		port = "443"
 	}
 
+	// In multi-endpoint mode, prefer the discovered direct endpoint set over
+	// re-resolving the TLS server name. For IP-based endpoints, TLSServerName is
+	// often the shared bootstrap hostname used for SNI, not the direct per-ion
+	// hostname that discovery returned. Re-resolving TLSServerName can therefore
+	// collapse multiple direct endpoints back onto the same shared/NLB address.
+	if g.multiEndpointMode.Load() && g.discoveryResolveFunc != nil {
+		if newURL, handled := g.reResolveFromDiscoveredSet(endpointIndex, currentURL, inUse); handled {
+			return newURL
+		}
+	}
+
 	// Re-resolve the original hostname
 	lookupFn := g.dnsLookupMulti
 	if lookupFn == nil {
@@ -4079,6 +4090,62 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 
 	// All resolved IPs are identical to current — no change
 	return ""
+}
+
+func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL string, inUse map[string]bool) (string, bool) {
+	allURLs := g.discoveryResolveFunc()
+	if len(allURLs) == 0 {
+		return "", false
+	}
+
+	currentSet := make(map[string]struct{}, len(allURLs))
+	var currentKnown bool
+	for _, raw := range allURLs {
+		u := strings.TrimSpace(raw)
+		if u == "" {
+			continue
+		}
+		currentSet[u] = struct{}{}
+		if u == currentURL {
+			currentKnown = true
+		}
+	}
+	if len(currentSet) == 0 {
+		return "", false
+	}
+
+	// First try to switch to another discovered direct endpoint that is not
+	// already in use by a sibling endpoint.
+	for _, raw := range allURLs {
+		u := strings.TrimSpace(raw)
+		if u == "" || u == currentURL {
+			continue
+		}
+		parsed, err := g.parseGRPCURL(u)
+		if err != nil {
+			continue
+		}
+		host, _, splitErr := net.SplitHostPort(parsed)
+		if splitErr != nil || inUse[host] {
+			continue
+		}
+
+		g.endpointsMu.Lock()
+		if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
+			g.endpoints[endpointIndex].URL = u
+		}
+		g.endpointsMu.Unlock()
+		return u, true
+	}
+
+	// If the current endpoint is already part of the discovered direct set and
+	// there is no unique replacement, keep retrying it rather than falling back
+	// to the shared bootstrap/NLB hostname via TLSServerName DNS.
+	if currentKnown {
+		return "", true
+	}
+
+	return "", false
 }
 
 // probeHealthEndpoint checks if a gravity endpoint is alive and ready by

@@ -1697,6 +1697,7 @@ func TestSelectStreamForPacket_UsesBoundTunnelWhenEndpointHealthIsStale(t *testi
 	}
 }
 
+<<<<<<< HEAD
 func TestSelectStreamForPacket_BoundTunnelFallbackRefreshesBindingTTL(t *testing.T) {
 	t.Parallel()
 
@@ -1736,6 +1737,8 @@ func TestSelectStreamForPacket_BoundTunnelFallbackRefreshesBindingTTL(t *testing
 	}
 }
 
+=======
+>>>>>>> origin/fix/gravity-bound-tunnel-fallback
 // --- Category D: Safety Net Edge Cases ---
 
 // TestTriggerAllEndpointReconnections_ClosingClient verifies that

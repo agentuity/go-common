@@ -5314,7 +5314,11 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 			endpoint := selector.Select(payload, endpoints)
 			if endpoint == nil {
 				if fallbackStream, fallbackURL, ok := g.selectBoundTunnelFallback(payload, selector); ok {
+<<<<<<< HEAD
 					g.logger.Debug("selectStream: using bound endpoint %s despite unhealthy endpoint state because a healthy tunnel stream still exists", fallbackURL)
+=======
+					g.logger.Warn("selectStream: using bound endpoint %s despite unhealthy endpoint state because a healthy tunnel stream still exists", fallbackURL)
+>>>>>>> origin/fix/gravity-bound-tunnel-fallback
 					return fallbackStream, nil
 				}
 				// Log endpoint health summary for debugging selector failures.
@@ -5342,7 +5346,11 @@ func (g *GravityClient) selectStreamForPacket(payload []byte) (*StreamInfo, erro
 			g.wakePeerDiscovery()
 		}
 		if fallbackStream, fallbackURL, ok := g.selectBoundTunnelFallback(payload, selector); ok {
+<<<<<<< HEAD
 			g.logger.Debug("selectStream: using bound endpoint %s after selector exhausted healthy endpoint attempts because a healthy tunnel stream still exists", fallbackURL)
+=======
+			g.logger.Warn("selectStream: using bound endpoint %s after selector exhausted healthy endpoint attempts because a healthy tunnel stream still exists", fallbackURL)
+>>>>>>> origin/fix/gravity-bound-tunnel-fallback
 			return fallbackStream, nil
 		}
 		return nil, fmt.Errorf("no healthy tunnel streams on any endpoint")
@@ -5397,11 +5405,14 @@ func (g *GravityClient) selectBoundTunnelFallback(payload []byte, selector *Endp
 	if err != nil {
 		return nil, binding.Endpoint.URL, false
 	}
+<<<<<<< HEAD
 	selector.mu.Lock()
 	if current, ok := selector.bindings[key]; ok && current == binding {
 		current.LastUsed = now
 	}
 	selector.mu.Unlock()
+=======
+>>>>>>> origin/fix/gravity-bound-tunnel-fallback
 	return stream, binding.Endpoint.URL, true
 }
 

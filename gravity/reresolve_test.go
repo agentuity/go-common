@@ -196,6 +196,41 @@ func TestReResolveEndpointURL_PreservesCustomPort(t *testing.T) {
 	}
 }
 
+func TestReResolveEndpointURL_PrefersDiscoveredDirectEndpointsOverBootstrapDNS(t *testing.T) {
+	mock := newMockDNSLookup()
+	// The bootstrap/default server name resolves to a shared/NLB address.
+	mock.setIPs("gravity-bootstrap.example.com", "136.117.243.165")
+
+	endpoint0 := &GravityEndpoint{
+		URL:           "grpc://136.117.167.146:443",
+		TLSServerName: "gravity-bootstrap.example.com",
+	}
+	endpoint1 := &GravityEndpoint{
+		URL:           "grpc://136.118.131.90:443",
+		TLSServerName: "gravity-bootstrap.example.com",
+	}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1}, mock)
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://136.117.167.146:443",
+			"grpc://136.118.131.90:443",
+		}
+	}
+
+	newURL := g.reResolveEndpointURL(0, endpoint0.URL)
+
+	if newURL != "" {
+		t.Fatalf("expected no rewrite when discovered direct set already covers the endpoint pool, got %q", newURL)
+	}
+	if endpoint0.URL != "grpc://136.117.167.146:443" {
+		t.Fatalf("expected endpoint URL to remain on direct ion address, got %q", endpoint0.URL)
+	}
+	if mock.callCount() != 0 {
+		t.Fatalf("expected reconnect to avoid bootstrap DNS re-resolution, got %d lookup(s)", mock.callCount())
+	}
+}
+
 func TestReResolveEndpointURL_HandlesIPv6(t *testing.T) {
 	mock := newMockDNSLookup()
 	mock.setIPs("gravity.example.com", "fd15::2")

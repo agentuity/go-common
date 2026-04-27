@@ -1529,14 +1529,6 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 	g.logger.Debug("peer discovery: resolved %d URLs, connected to %d/%d",
 		len(allURLs), currentCount, maxPeers)
 
-	// If DNS doesn't expose more hosts than we are already connected to,
-	// there is nothing to rotate.
-	if len(allURLs) <= currentCount {
-		g.logger.Debug("peer discovery: full coverage (%d URLs, %d connections), no cycling needed",
-			len(allURLs), currentCount)
-		return
-	}
-
 	// Find URLs we're not currently connected to.
 	var newURLs []string
 	for _, u := range allURLs {
@@ -1585,6 +1577,14 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 		}
 		g.logger.Info("peer discovery: replacing stale connection %s (no longer in DNS) with %s", evictURL, newURL)
 		g.cycleEndpoint(evictURL, newURL)
+		return
+	}
+
+	// If DNS doesn't expose more hosts than we are already connected to and
+	// none of the active endpoints are stale, there is nothing to rotate.
+	if len(allURLs) <= currentCount {
+		g.logger.Debug("peer discovery: full coverage (%d URLs, %d connections), no cycling needed",
+			len(allURLs), currentCount)
 		return
 	}
 

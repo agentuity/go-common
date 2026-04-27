@@ -298,8 +298,6 @@ func TestCheckPeerDiscovery_FullCoverage(t *testing.T) {
 
 func TestCheckPeerDiscovery_StaleURLReplaced(t *testing.T) {
 	// Connected to g1, g2, g3 but DNS returns g1, g2, g4, g5.
-	// The stale replacement path requires len(allURLs) > currentCount,
-	// so DNS must expose more hosts than we are connected to.
 	// g3 is stale (not in DNS) and should be replaced immediately.
 	connected := []string{
 		"grpc://g1.example.com",
@@ -333,6 +331,42 @@ func TestCheckPeerDiscovery_StaleURLReplaced(t *testing.T) {
 	}
 	if !urls["grpc://g4.example.com"] && !urls["grpc://g5.example.com"] {
 		t.Fatal("expected one of g4 or g5 to be added as replacement")
+	}
+}
+
+func TestCheckPeerDiscovery_StaleURLReplacedWhenResolvedCountMatchesConnectedCount(t *testing.T) {
+	// Connected to a stale bootstrap URL plus one correct ion URL.
+	// DNS now exposes the two correct direct ion URLs. Even though the
+	// resolved URL count matches the current connection count, the stale
+	// bootstrap URL must still be replaced.
+	connected := []string{
+		"grpc://bootstrap.example.com",
+		"grpc://ion-a.example.com",
+	}
+	g := newTestGravityClient(nil, connected)
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://ion-a.example.com",
+			"grpc://ion-b.example.com",
+		}
+	}
+	g.poolConfig.MaxGravityPeers = 2
+
+	g.checkPeerDiscovery(2 * time.Hour)
+
+	g.endpointsMu.RLock()
+	urls := make(map[string]bool)
+	for _, ep := range g.endpoints {
+		urls[ep.URL] = true
+	}
+	g.endpointsMu.RUnlock()
+
+	if urls["grpc://bootstrap.example.com"] {
+		t.Fatal("stale bootstrap endpoint was not replaced")
+	}
+	if !urls["grpc://ion-a.example.com"] || !urls["grpc://ion-b.example.com"] {
+		t.Fatalf("expected both direct ion endpoints after replacement, got %v", urls)
 	}
 }
 

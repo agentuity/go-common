@@ -92,7 +92,24 @@ const (
 	// ipv6 destination" → RST, breaking HTTP/2 connection reuse and
 	// long-lived connections.
 	DefaultBindingTTL = 10 * time.Minute
+
+	// gravityTransportKeepaliveTime keeps the transport-level HTTP/2 ping well
+	// above gRPC-Go's default server enforcement minimum (5 minutes). Gravity
+	// already has app-level liveness via control-stream pings and AGNT tunnel
+	// probes every 10 seconds, so the transport keepalive should be a slow
+	// backstop rather than the primary health signal.
+	gravityTransportKeepaliveTime = 10 * time.Minute
+
+	// gravityTransportKeepaliveTimeout bounds how long we wait for a transport
+	// ping ACK before the connection is considered unhealthy.
+	gravityTransportKeepaliveTimeout = 20 * time.Second
 )
+
+var gravityTransportKeepaliveParams = keepalive.ClientParameters{
+	Time:                gravityTransportKeepaliveTime,
+	Timeout:             gravityTransportKeepaliveTimeout,
+	PermitWithoutStream: false,
+}
 
 // TunnelKeepaliveMarker is a 4-byte magic prefix for tunnel keepalive packets.
 // When ion receives a packet starting with this marker, it echoes it back
@@ -671,11 +688,7 @@ func (g *GravityClient) Start() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),
 			grpc.WithInitialConnWindowSize(4<<20),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second,
-				Timeout:             10 * time.Second,
-				PermitWithoutStream: true,
-			}),
+			grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
@@ -973,11 +986,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),
 			grpc.WithInitialConnWindowSize(4<<20),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second,
-				Timeout:             10 * time.Second,
-				PermitWithoutStream: true,
-			}),
+			grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
@@ -4275,11 +4284,7 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithInitialWindowSize(1<<20),
 		grpc.WithInitialConnWindowSize(4<<20),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 		}),

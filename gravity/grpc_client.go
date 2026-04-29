@@ -1820,6 +1820,18 @@ func (g *GravityClient) refreshEndpointHealth() {
 	copy(connectionHealth, g.streamManager.connectionHealth)
 	g.streamManager.healthMu.RUnlock()
 
+	healthyTunnelByConn := make([]bool, len(connectionHealth))
+	g.streamManager.tunnelMu.RLock()
+	for _, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil || !streamInfo.isHealthy {
+			continue
+		}
+		if streamInfo.connIndex >= 0 && streamInfo.connIndex < len(healthyTunnelByConn) {
+			healthyTunnelByConn[streamInfo.connIndex] = true
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
 	g.mu.RLock()
 	connectionURLs := make([]string, len(g.connectionURLs))
 	copy(connectionURLs, g.connectionURLs)
@@ -1831,7 +1843,7 @@ func (g *GravityClient) refreshEndpointHealth() {
 			if endpointURL != endpoint.URL {
 				continue
 			}
-			if connIndex >= 0 && connIndex < len(connectionHealth) && connectionHealth[connIndex] {
+			if connIndex >= 0 && connIndex < len(connectionHealth) && connectionHealth[connIndex] && healthyTunnelByConn[connIndex] {
 				healthy = true
 				break
 			}
@@ -4448,13 +4460,6 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 	for _, s := range streamsToStart {
 		go g.handleTunnelStream(s.idx, s.stream, s.streamID)
 	}
-
-	g.endpointsMu.RLock()
-	if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
-		g.endpoints[endpointIndex].healthy.Store(true)
-		g.endpoints[endpointIndex].lastHeartbeat.Store(time.Now().Unix())
-	}
-	g.endpointsMu.RUnlock()
 
 	g.rebuildEndpointStreamIndices()
 	g.refreshEndpointHealth()

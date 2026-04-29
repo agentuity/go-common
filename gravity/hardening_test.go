@@ -1477,7 +1477,8 @@ func TestPerformHealthCheck_StreamRecovery_OnlyWhenConnectionReady(t *testing.T)
 }
 
 func TestRefreshEndpointHealth_DerivedFromConnectionHealth(t *testing.T) {
-	// refreshEndpointHealth derives endpoint health from connectionHealth.
+	// refreshEndpointHealth derives endpoint health from control-plane health
+	// plus the presence of at least one healthy tunnel stream for that endpoint.
 	// Verify the derivation is correct for mixed healthy/unhealthy connections.
 	g := newHardeningGravityClient(t, 2)
 
@@ -1497,11 +1498,17 @@ func TestRefreshEndpointHealth_DerivedFromConnectionHealth(t *testing.T) {
 	g.streamManager.healthMu.Lock()
 	g.streamManager.connectionHealth = []bool{true, false} // conn 0 healthy, conn 1 unhealthy
 	g.streamManager.healthMu.Unlock()
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, isHealthy: true, streamID: "s0"},
+		{connIndex: 1, isHealthy: true, streamID: "s1"},
+	}
+	g.streamManager.tunnelMu.Unlock()
 
 	g.refreshEndpointHealth()
 
 	if !ep0.healthy.Load() {
-		t.Fatal("endpoint 0 should be healthy (connection 0 is healthy)")
+		t.Fatal("endpoint 0 should be healthy (connection 0 and a tunnel stream are healthy)")
 	}
 	if ep1.healthy.Load() {
 		t.Fatal("endpoint 1 should be unhealthy (connection 1 is unhealthy)")
@@ -1509,7 +1516,8 @@ func TestRefreshEndpointHealth_DerivedFromConnectionHealth(t *testing.T) {
 }
 
 func TestRefreshEndpointHealth_AllUnhealthy(t *testing.T) {
-	// When all connections are unhealthy, all endpoints should be unhealthy.
+	// When all connections are unhealthy, all endpoints should be unhealthy
+	// even if tunnel stream entries are present.
 	g := newHardeningGravityClient(t, 3)
 
 	eps := make([]*GravityEndpoint, 3)
@@ -1532,6 +1540,13 @@ func TestRefreshEndpointHealth_AllUnhealthy(t *testing.T) {
 	g.streamManager.healthMu.Lock()
 	g.streamManager.connectionHealth = []bool{false, false, false}
 	g.streamManager.healthMu.Unlock()
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, isHealthy: true, streamID: "s0"},
+		{connIndex: 1, isHealthy: true, streamID: "s1"},
+		{connIndex: 2, isHealthy: true, streamID: "s2"},
+	}
+	g.streamManager.tunnelMu.Unlock()
 
 	g.refreshEndpointHealth()
 
@@ -1539,6 +1554,42 @@ func TestRefreshEndpointHealth_AllUnhealthy(t *testing.T) {
 		if ep.healthy.Load() {
 			t.Fatalf("endpoint %d should be unhealthy (all connections unhealthy)", i)
 		}
+	}
+}
+
+func TestRefreshEndpointHealth_RequiresHealthyTunnelStream(t *testing.T) {
+	g := newHardeningGravityClient(t, 2)
+
+	ep0 := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
+	ep1 := &GravityEndpoint{URL: "grpc://10.0.0.2:443"}
+
+	g.endpointsMu.Lock()
+	g.endpoints = []*GravityEndpoint{ep0, ep1}
+	g.endpointsMu.Unlock()
+
+	g.mu.Lock()
+	g.connectionURLs = []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"}
+	g.mu.Unlock()
+
+	g.streamManager.healthMu.Lock()
+	g.streamManager.connectionHealth = []bool{true, true}
+	g.streamManager.healthMu.Unlock()
+
+	// Endpoint 0 only has an unhealthy tunnel; endpoint 1 has a healthy one.
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, isHealthy: false, streamID: "s0"},
+		{connIndex: 1, isHealthy: true, streamID: "s1"},
+	}
+	g.streamManager.tunnelMu.Unlock()
+
+	g.refreshEndpointHealth()
+
+	if ep0.healthy.Load() {
+		t.Fatal("endpoint 0 should remain unhealthy without a healthy tunnel stream")
+	}
+	if !ep1.healthy.Load() {
+		t.Fatal("endpoint 1 should be healthy with a healthy connection and tunnel stream")
 	}
 }
 

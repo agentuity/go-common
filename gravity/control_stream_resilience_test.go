@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	pb "github.com/agentuity/go-common/gravity/proto"
 	"google.golang.org/grpc"
@@ -235,6 +236,7 @@ func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 	g.helloAckedStreams.Store(2, true)
 
 	go func() {
+		time.Sleep(20 * time.Millisecond)
 		g.connectionIDChan <- "machine-1"
 		g.connectionIDChan <- "machine-1"
 	}()

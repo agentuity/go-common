@@ -282,6 +282,7 @@ type GravityClient struct {
 	reconnectAttemptTimeout    time.Duration
 	reconnectionFailedCallback func(attempts int, lastErr error)
 	onEndpointReady            func(endpointIndex int)
+	onEndpointTunnelReady      func(endpointIndex int)
 
 	// State management
 	connected            bool
@@ -525,6 +526,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		reconnectAttemptTimeout:    config.ReconnectAttemptTimeout,
 		reconnectionFailedCallback: config.ReconnectionFailedCallback,
 		onEndpointReady:            config.OnEndpointReady,
+		onEndpointTunnelReady:      config.OnEndpointTunnelReady,
 		tracer:                     otel.Tracer("@agentuity/gravity/client"),
 	}
 	g.connectionCtx, g.connectionCancel = context.WithCancel(ctx)
@@ -749,6 +751,12 @@ func (g *GravityClient) Start() error {
 	g.mu.Lock()
 	g.connected = true
 	g.mu.Unlock()
+
+	g.rebuildEndpointStreamIndices()
+	g.refreshEndpointHealth()
+	for _, endpointIndex := range g.tunnelReadyEndpointIndices() {
+		g.fireOnEndpointTunnelReady(endpointIndex)
+	}
 
 	go g.tunnelLivenessMonitor()
 
@@ -1045,6 +1053,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.mu.Lock()
 	g.connected = true
 	g.mu.Unlock()
+
+	for _, endpointIndex := range g.tunnelReadyEndpointIndices() {
+		g.fireOnEndpointTunnelReady(endpointIndex)
+	}
 
 	// Start tunnel liveness monitor after startup succeeds (connected=true).
 	// Starting earlier would leak the goroutine if startup fails.
@@ -2813,6 +2825,79 @@ func (g *GravityClient) fireOnEndpointReady(endpointIndex int) {
 	}()
 }
 
+// fireOnEndpointTunnelReady safely invokes the OnEndpointTunnelReady callback
+// after an endpoint has at least one healthy tunnel stream and is eligible for
+// packet routing.
+func (g *GravityClient) fireOnEndpointTunnelReady(endpointIndex int) {
+	if g.onEndpointTunnelReady == nil {
+		return
+	}
+	g.logger.Info("firing OnEndpointTunnelReady callback for endpoint %d", endpointIndex)
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				g.logger.Error("OnEndpointTunnelReady callback panicked for endpoint %d: %v", endpointIndex, r)
+			}
+		}()
+		g.onEndpointTunnelReady(endpointIndex)
+	}()
+}
+
+func (g *GravityClient) tunnelReadyEndpointIndices() []int {
+	g.endpointsMu.RLock()
+	if len(g.endpoints) > 0 {
+		defer g.endpointsMu.RUnlock()
+
+		ready := make([]int, 0, len(g.endpoints))
+		for i, ep := range g.endpoints {
+			if ep == nil {
+				continue
+			}
+			if ep.healthy.Load() {
+				ready = append(ready, i)
+			}
+		}
+		return ready
+	}
+	g.endpointsMu.RUnlock()
+
+	// Legacy single-endpoint mode does not populate g.endpoints, but callers
+	// still need a readiness signal once any connection has a live control
+	// stream plus at least one healthy tunnel stream.
+	g.streamManager.healthMu.RLock()
+	connectionHealth := make([]bool, len(g.streamManager.connectionHealth))
+	copy(connectionHealth, g.streamManager.connectionHealth)
+	g.streamManager.healthMu.RUnlock()
+
+	healthyControlByConn := make([]bool, len(connectionHealth))
+	g.streamManager.controlMu.RLock()
+	for connIndex := range healthyControlByConn {
+		if connIndex >= 0 && connIndex < len(g.streamManager.controlStreams) && g.streamManager.controlStreams[connIndex] != nil {
+			healthyControlByConn[connIndex] = true
+		}
+	}
+	g.streamManager.controlMu.RUnlock()
+
+	healthyTunnelByConn := make([]bool, len(connectionHealth))
+	g.streamManager.tunnelMu.RLock()
+	for _, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil || !streamInfo.isHealthy {
+			continue
+		}
+		if streamInfo.connIndex >= 0 && streamInfo.connIndex < len(healthyTunnelByConn) {
+			healthyTunnelByConn[streamInfo.connIndex] = true
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	for connIndex := range connectionHealth {
+		if connectionHealth[connIndex] && healthyControlByConn[connIndex] && healthyTunnelByConn[connIndex] {
+			return []int{0}
+		}
+	}
+	return nil
+}
+
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
 	g.logger.Trace("received generic response: msgID=%s, success=%v, error=%s, event=%s",
 		msgID, response.Success, response.Error, response.Event)
@@ -4475,6 +4560,12 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 
 	g.rebuildEndpointStreamIndices()
 	g.refreshEndpointHealth()
+	for _, readyEndpointIndex := range g.tunnelReadyEndpointIndices() {
+		if readyEndpointIndex == endpointIndex {
+			g.fireOnEndpointTunnelReady(endpointIndex)
+			break
+		}
+	}
 
 	return nil
 }

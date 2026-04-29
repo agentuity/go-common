@@ -90,7 +90,13 @@ type GravityConfig struct {
 	// stream becomes healthy (after session hello succeeds). This fires on
 	// initial connection AND on reconnection. Use this to re-register
 	// active resources (deployment VIPs, sandbox routes) on the newly
-	// connected endpoint so it can route traffic immediately.
-	// The endpointIndex identifies which gravity server just became ready.
+	// connected endpoint for control-plane work only. The endpointIndex
+	// identifies which gravity server just became ready.
 	OnEndpointReady func(endpointIndex int)
+
+	// OnEndpointTunnelReady is invoked each time a gravity endpoint has at
+	// least one healthy tunnel stream and is eligible for packet routing.
+	// This fires on initial connection and on reconnection after tunnel
+	// streams are created successfully.
+	OnEndpointTunnelReady func(endpointIndex int)
 }

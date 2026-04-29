@@ -2864,8 +2864,8 @@ func (g *GravityClient) tunnelReadyEndpointIndices() []int {
 	// Legacy single-endpoint mode does not populate g.endpoints, but callers
 	// still need a readiness signal once any connection has a live control
 	// stream plus at least one healthy tunnel stream.
-	connectionHealth := make([]bool, len(g.streamManager.connectionHealth))
 	g.streamManager.healthMu.RLock()
+	connectionHealth := make([]bool, len(g.streamManager.connectionHealth))
 	copy(connectionHealth, g.streamManager.connectionHealth)
 	g.streamManager.healthMu.RUnlock()
 

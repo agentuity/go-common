@@ -92,7 +92,26 @@ const (
 	// ipv6 destination" → RST, breaking HTTP/2 connection reuse and
 	// long-lived connections.
 	DefaultBindingTTL = 10 * time.Minute
+
+	// gravityTransportKeepaliveTime keeps the transport-level HTTP/2 ping well
+	// above gRPC-Go's default server enforcement minimum (5 minutes). Gravity
+	// already has app-level liveness via control-stream pings and AGNT tunnel
+	// probes every 10 seconds, so the transport keepalive should be a slow
+	// backstop rather than the primary health signal.
+	gravityTransportKeepaliveTime = 10 * time.Minute
+
+	// gravityTransportKeepaliveTimeout bounds how long we wait for a transport
+	// ping ACK before the connection is considered unhealthy.
+	gravityTransportKeepaliveTimeout = 20 * time.Second
 )
+
+var gravityTransportKeepaliveParams = keepalive.ClientParameters{
+	Time:                gravityTransportKeepaliveTime,
+	Timeout:             gravityTransportKeepaliveTimeout,
+	PermitWithoutStream: false,
+}
+
+var disableMonitorReportsLogOnce sync.Once
 
 // TunnelKeepaliveMarker is a 4-byte magic prefix for tunnel keepalive packets.
 // When ion receives a packet starting with this marker, it echoes it back
@@ -671,11 +690,7 @@ func (g *GravityClient) Start() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),
 			grpc.WithInitialConnWindowSize(4<<20),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second,
-				Timeout:             10 * time.Second,
-				PermitWithoutStream: true,
-			}),
+			grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
@@ -973,11 +988,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 			grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 			grpc.WithInitialWindowSize(1<<20),
 			grpc.WithInitialConnWindowSize(4<<20),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:                30 * time.Second,
-				Timeout:             10 * time.Second,
-				PermitWithoutStream: true,
-			}),
+			grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 			grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 			}),
@@ -2619,6 +2630,22 @@ func (g *GravityClient) SetEvacuationCallback(cb func()) {
 // Helper functions
 func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string, response *pb.SessionHelloResponse) {
 	g.logger.Debug("handleSessionHelloResponse called: streamIndex=%d, msgID=%s, machineID=%s, gravityServer=%s", streamIndex, msgID, response.MachineId, response.GravityServer)
+	g.logger.Info("[session-hello] response summary: machineId=%q orgId=%q apiUrl=%q otlpUrl=%q env=%d hostMappings=%d subnetRoutes=%d gravityServer=%q hostname=%q machineSubnet=%q sshPublicKeyBytes=%d signingPublicKeyBytes=%d machineTokenBytes=%d machineCertBundleBytes=%d",
+		response.MachineId,
+		response.OrgId,
+		response.ApiUrl,
+		response.OtlpUrl,
+		len(response.Environment),
+		len(response.HostMapping),
+		len(response.SubnetRoutes),
+		response.GravityServer,
+		response.Hostname,
+		response.MachineSubnet,
+		len(response.SshPublicKey),
+		len(response.SigningPublicKey),
+		len(response.MachineToken),
+		len(response.MachineCertBundle),
+	)
 
 	g.mu.Lock()
 
@@ -3349,6 +3376,11 @@ func (g *GravityClient) handleResumeRequest(streamIndex int, msgID string, reque
 }
 
 func (g *GravityClient) sendOnControlStream(streamIndex int, msg *pb.SessionMessage) error {
+	if err := validateOutgoingSessionMessage(msg); err != nil {
+		g.logger.Error("refusing to send invalid session message on control stream %d: %v", streamIndex, err)
+		return err
+	}
+
 	g.streamManager.controlMu.RLock()
 	if streamIndex < 0 || streamIndex >= len(g.streamManager.controlStreams) {
 		g.streamManager.controlMu.RUnlock()
@@ -4275,11 +4307,7 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
 		grpc.WithInitialWindowSize(1<<20),
 		grpc.WithInitialConnWindowSize(4<<20),
-		grpc.WithKeepaliveParams(keepalive.ClientParameters{
-			Time:                30 * time.Second,
-			Timeout:             10 * time.Second,
-			PermitWithoutStream: true,
-		}),
+		grpc.WithKeepaliveParams(gravityTransportKeepaliveParams),
 		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
 			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, "tcp", addr)
 		}),
@@ -4763,6 +4791,42 @@ func generateMessageID() string {
 	return uid.String()
 }
 
+func parseOptionalBoolEnv(name string) bool {
+	value, ok := os.LookupEnv(name)
+	if !ok {
+		return false
+	}
+
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func monitorReportsDisabled() bool {
+	return parseOptionalBoolEnv("AGENTUITY_GRAVITY_DISABLE_MONITOR_REPORTS") ||
+		parseOptionalBoolEnv("HADRON_DISABLE_GRAVITY_MONITOR_REPORTS")
+}
+
+func outgoingSessionMessageType(msg *pb.SessionMessage) string {
+	if msg == nil || msg.MessageType == nil {
+		return "<nil>"
+	}
+	return fmt.Sprintf("%T", msg.MessageType)
+}
+
+func validateOutgoingSessionMessage(msg *pb.SessionMessage) error {
+	if msg == nil {
+		return errors.New("session message is nil")
+	}
+	if msg.MessageType == nil {
+		return fmt.Errorf("session message %q has nil MessageType", msg.Id)
+	}
+	return nil
+}
+
 // sendSessionMessageAsync sends a session message without waiting for response (async)
 func (g *GravityClient) sendSessionMessageAsync(msg *pb.SessionMessage) error {
 	stream, streamIndex := g.pickControlStream()
@@ -4852,6 +4916,11 @@ func (g *GravityClient) allHealthyControlStreams() []indexedStream {
 }
 
 func (g *GravityClient) sendOnStream(stream pb.GravitySessionService_EstablishSessionClient, streamIndex int, msg *pb.SessionMessage) error {
+	if err := validateOutgoingSessionMessage(msg); err != nil {
+		g.logger.Error("refusing to send invalid session message on control stream %d: %v", streamIndex, err)
+		return err
+	}
+
 	if streamIndex >= len(g.circuitBreakers) {
 		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", streamIndex, len(g.circuitBreakers))
 	}
@@ -6207,6 +6276,13 @@ func getHostInfo(config GravityConfig) (*pb.HostInfo, error) {
 // the report is silently dropped (stale data is worse than missing data).
 // The send is bounded by a short timeout so it cannot block the monitor loop.
 func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
+	if monitorReportsDisabled() {
+		disableMonitorReportsLogOnce.Do(func() {
+			g.logger.Warn("gravity monitor reports disabled via AGENTUITY_GRAVITY_DISABLE_MONITOR_REPORTS/HADRON_DISABLE_GRAVITY_MONITOR_REPORTS")
+		})
+		return nil
+	}
+
 	g.streamManager.controlMu.RLock()
 	if len(g.streamManager.controlStreams) == 0 || g.streamManager.controlStreams[0] == nil {
 		g.streamManager.controlMu.RUnlock()
@@ -6221,6 +6297,12 @@ func (g *GravityClient) SendMonitorReport(report *pb.NodeMonitorReport) error {
 			MonitorReport: report,
 		},
 	}
+	if err := validateOutgoingSessionMessage(msg); err != nil {
+		g.logger.Error("refusing to send invalid monitor report message: %v", err)
+		return err
+	}
+	g.logger.Debug("sending monitor report on control stream 0: id=%s seq=%d machine=%s type=%s",
+		msg.Id, report.GetSeq(), report.GetMachineId(), outgoingSessionMessageType(msg))
 
 	// Use a bounded send so controlStream.Send cannot block indefinitely.
 	done := make(chan error, 1)
@@ -6323,6 +6405,13 @@ func (g *GravityClient) sendPingOnStream(streamIndex int, controlStream pb.Gravi
 				Timestamp: timestamppb.New(started),
 			},
 		},
+	}
+	if err := validateOutgoingSessionMessage(pingMsg); err != nil {
+		g.logger.Error("refusing to send invalid ping on control stream %d: %v", streamIndex, err)
+		g.pendingMu.Lock()
+		delete(g.pending, pingID)
+		g.pendingMu.Unlock()
+		return
 	}
 
 	// Guard against a blocked Send(): if the control stream is wedged,

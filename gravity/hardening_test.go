@@ -1575,6 +1575,8 @@ func TestRefreshEndpointHealth_RequiresHealthyTunnelStream(t *testing.T) {
 
 	ep0 := &GravityEndpoint{URL: "grpc://10.0.0.1:443"}
 	ep1 := &GravityEndpoint{URL: "grpc://10.0.0.2:443"}
+	ep0.healthy.Store(true)
+	ep1.healthy.Store(true)
 
 	g.endpointsMu.Lock()
 	g.endpoints = []*GravityEndpoint{ep0, ep1}
@@ -1699,6 +1701,37 @@ func TestTunnelReadyEndpointIndices_UsesDerivedEndpointHealth(t *testing.T) {
 	ready := g.tunnelReadyEndpointIndices()
 	if len(ready) != 1 || ready[0] != 1 {
 		t.Fatalf("expected only endpoint 1 to be tunnel-ready, got %v", ready)
+	}
+}
+
+func TestTunnelReadyEndpointIndices_SingleEndpointModeUsesHealthyConnection(t *testing.T) {
+	g := newHardeningGravityClient(t, 2)
+
+	g.endpointsMu.Lock()
+	g.endpoints = nil
+	g.endpointsMu.Unlock()
+
+	g.streamManager.healthMu.Lock()
+	g.streamManager.connectionHealth = []bool{true, false}
+	g.streamManager.healthMu.Unlock()
+
+	g.streamManager.controlMu.Lock()
+	g.streamManager.controlStreams = []pb.GravitySessionService_EstablishSessionClient{
+		&configurableMockStream{},
+		nil,
+	}
+	g.streamManager.controlMu.Unlock()
+
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, isHealthy: true, streamID: "s0"},
+		{connIndex: 1, isHealthy: false, streamID: "s1"},
+	}
+	g.streamManager.tunnelMu.Unlock()
+
+	ready := g.tunnelReadyEndpointIndices()
+	if len(ready) != 1 || ready[0] != 0 {
+		t.Fatalf("expected single-endpoint mode to report endpoint 0 ready, got %v", ready)
 	}
 }
 // ============================================================================

@@ -2845,18 +2845,57 @@ func (g *GravityClient) fireOnEndpointTunnelReady(endpointIndex int) {
 
 func (g *GravityClient) tunnelReadyEndpointIndices() []int {
 	g.endpointsMu.RLock()
-	defer g.endpointsMu.RUnlock()
+	if len(g.endpoints) > 0 {
+		defer g.endpointsMu.RUnlock()
 
-	ready := make([]int, 0, len(g.endpoints))
-	for i, ep := range g.endpoints {
-		if ep == nil {
-			continue
+		ready := make([]int, 0, len(g.endpoints))
+		for i, ep := range g.endpoints {
+			if ep == nil {
+				continue
+			}
+			if ep.healthy.Load() {
+				ready = append(ready, i)
+			}
 		}
-		if ep.healthy.Load() {
-			ready = append(ready, i)
+		return ready
+	}
+	g.endpointsMu.RUnlock()
+
+	// Legacy single-endpoint mode does not populate g.endpoints, but callers
+	// still need a readiness signal once any connection has a live control
+	// stream plus at least one healthy tunnel stream.
+	connectionHealth := make([]bool, len(g.streamManager.connectionHealth))
+	g.streamManager.healthMu.RLock()
+	copy(connectionHealth, g.streamManager.connectionHealth)
+	g.streamManager.healthMu.RUnlock()
+
+	healthyControlByConn := make([]bool, len(connectionHealth))
+	g.streamManager.controlMu.RLock()
+	for connIndex := range healthyControlByConn {
+		if connIndex >= 0 && connIndex < len(g.streamManager.controlStreams) && g.streamManager.controlStreams[connIndex] != nil {
+			healthyControlByConn[connIndex] = true
 		}
 	}
-	return ready
+	g.streamManager.controlMu.RUnlock()
+
+	healthyTunnelByConn := make([]bool, len(connectionHealth))
+	g.streamManager.tunnelMu.RLock()
+	for _, streamInfo := range g.streamManager.tunnelStreams {
+		if streamInfo == nil || !streamInfo.isHealthy {
+			continue
+		}
+		if streamInfo.connIndex >= 0 && streamInfo.connIndex < len(healthyTunnelByConn) {
+			healthyTunnelByConn[streamInfo.connIndex] = true
+		}
+	}
+	g.streamManager.tunnelMu.RUnlock()
+
+	for connIndex := range connectionHealth {
+		if connectionHealth[connIndex] && healthyControlByConn[connIndex] && healthyTunnelByConn[connIndex] {
+			return []int{0}
+		}
+	}
+	return nil
 }
 
 func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {

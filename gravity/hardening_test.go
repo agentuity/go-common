@@ -1307,7 +1307,7 @@ func TestPerformHealthCheck_SingleEndpointIDLE_OthersHealthy(t *testing.T) {
 	g := newHardeningGravityClient(t, 3)
 
 	conn0 := newIdleGRPCConn(t)
-	conn0.Connect() // move to CONNECTING (healthy)
+	conn0.Connect()             // move to CONNECTING (healthy)
 	conn1 := newIdleGRPCConn(t) // stays IDLE
 	conn2 := newIdleGRPCConn(t)
 	conn2.Connect() // move to CONNECTING (healthy)
@@ -1426,7 +1426,7 @@ func TestPerformHealthCheck_StreamsMarkedUnhealthy_WhenConnectionIDLE(t *testing
 		{
 			connIndex: 0,
 			streamID:  "stream-test-0",
-			isHealthy: true, // was healthy before connection went IDLE
+			isHealthy: true,                             // was healthy before connection went IDLE
 			lastUsed:  time.Now().Add(-2 * time.Minute), // stale
 		},
 	}
@@ -1654,6 +1654,53 @@ func TestRefreshEndpointHealth_RequiresControlStream(t *testing.T) {
 	}
 }
 
+func TestTunnelReadyEndpointIndices_UsesDerivedEndpointHealth(t *testing.T) {
+	g := newHardeningGravityClient(t, 3)
+
+	eps := []*GravityEndpoint{
+		{URL: "grpc://10.0.0.1:443"},
+		{URL: "grpc://10.0.0.2:443"},
+		{URL: "grpc://10.0.0.3:443"},
+	}
+	for _, ep := range eps {
+		ep.healthy.Store(false)
+	}
+
+	g.endpointsMu.Lock()
+	g.endpoints = eps
+	g.endpointsMu.Unlock()
+
+	g.mu.Lock()
+	g.connectionURLs = []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443", "grpc://10.0.0.3:443"}
+	g.mu.Unlock()
+
+	g.streamManager.healthMu.Lock()
+	g.streamManager.connectionHealth = []bool{true, true, true}
+	g.streamManager.healthMu.Unlock()
+
+	g.streamManager.controlMu.Lock()
+	g.streamManager.controlStreams = []pb.GravitySessionService_EstablishSessionClient{
+		&configurableMockStream{},
+		&configurableMockStream{},
+		nil,
+	}
+	g.streamManager.controlMu.Unlock()
+
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, isHealthy: false, streamID: "s0"},
+		{connIndex: 1, isHealthy: true, streamID: "s1"},
+		{connIndex: 2, isHealthy: true, streamID: "s2"},
+	}
+	g.streamManager.tunnelMu.Unlock()
+
+	g.refreshEndpointHealth()
+
+	ready := g.tunnelReadyEndpointIndices()
+	if len(ready) != 1 || ready[0] != 1 {
+		t.Fatalf("expected only endpoint 1 to be tunnel-ready, got %v", ready)
+	}
+}
 // ============================================================================
 // P3: Timing & Lifecycle Tests
 // ============================================================================
@@ -1712,8 +1759,8 @@ func TestPerformHealthCheck_MismatchedArrayLengths_NoPanic(t *testing.T) {
 	conn0 := newIdleGRPCConn(t)
 	conn1 := newIdleGRPCConn(t)
 	g.connections = []*grpc.ClientConn{conn0, conn1}
-	g.streamManager.connectionHealth = []bool{true}       // only 1 entry for 2 connections
-	g.streamManager.connectionIdleCount = []int{0}        // only 1 entry
+	g.streamManager.connectionHealth = []bool{true} // only 1 entry for 2 connections
+	g.streamManager.connectionIdleCount = []int{0}  // only 1 entry
 	g.streamManager.tunnelStreams = []*StreamInfo{}
 
 	// Should not panic — connections beyond connectionHealth length are skipped

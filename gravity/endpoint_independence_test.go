@@ -2265,9 +2265,10 @@ func TestTunnelLiveness_AllEndpointsStale_OnlyReconnectsFirst(t *testing.T) {
 
 // TestDisconnectEndpointStreams_RefreshesHealth verifies that
 // disconnectEndpointStreams calls refreshEndpointHealth, which re-derives
-// endpoint health from connectionHealth. This is the critical discovery:
-// if tests set endpoint.healthy=false but leave connectionHealth=true,
-// refreshEndpointHealth will override the test's intent.
+// endpoint health from connectionHealth plus the presence of a healthy tunnel
+// stream. Tests that manipulate endpoint health directly must also consider
+// the underlying control/tunnel state or refreshEndpointHealth will overwrite
+// the manual change.
 func TestDisconnectEndpointStreams_RefreshesHealth(t *testing.T) {
 	t.Parallel()
 

@@ -1701,7 +1701,6 @@ func TestTunnelReadyEndpointIndices_UsesDerivedEndpointHealth(t *testing.T) {
 		t.Fatalf("expected only endpoint 1 to be tunnel-ready, got %v", ready)
 	}
 }
-
 // ============================================================================
 // P3: Timing & Lifecycle Tests
 // ============================================================================

@@ -237,11 +237,17 @@ type GravityClient struct {
 	multiEndpointMode atomic.Bool // true when client is effectively in multi-endpoint mode
 
 	// Peer discovery and cycling
-	discoveryResolveFunc  func() []string
-	peerDiscoveryInterval time.Duration
-	peerCycleInterval     time.Duration
-	lastCycleTime         atomic.Int64  // unix timestamp of last cycle
-	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
+	discoveryResolveFunc    func() []string
+	peerDiscoveryInterval   time.Duration
+	peerCycleInterval       time.Duration
+	lastCycleTime           atomic.Int64  // unix timestamp of last cycle
+	peerDiscoveryWake       chan struct{} // non-blocking signal to wake the discovery loop immediately
+	discoveryCtx            context.Context
+	discoveryCancel         context.CancelFunc
+	discoveryDone           chan struct{}
+	discoveryMu             sync.Mutex
+	discoveryResolveTimeout time.Duration
+	initialStartupDone      atomic.Bool
 
 	// dnsLookupMulti is the function used to resolve hostnames during
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
@@ -283,6 +289,7 @@ type GravityClient struct {
 	reconnectionFailedCallback func(attempts int, lastErr error)
 	onEndpointReady            func(endpointIndex int)
 	onEndpointTunnelReady      func(endpointIndex int)
+	reconnectEndpointHook      func(endpointIndex int, reason string) // test hook; nil in production
 
 	// State management
 	connected            bool
@@ -395,6 +402,7 @@ type StreamInfo struct {
 }
 
 const endpointDiscoveryRefreshFailureThreshold int32 = 10
+const defaultPeerDiscoveryResolveTimeout = 5 * time.Second
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
 type StreamManager struct {
@@ -795,6 +803,8 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
+	g.stopPeerDiscovery()
+
 	g.endpointsMu.Lock()
 	g.endpoints = make([]*GravityEndpoint, 0)
 	var errs []error
@@ -887,11 +897,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 		go g.bindingCleanupLoop()
 	})
 
-	// Start peer discovery and connection cycling when a resolver is configured.
-	if g.discoveryResolveFunc != nil {
-		go g.peerDiscoveryLoop()
-	}
-
 	g.logger.Debug("loading CA certificate for TLS...")
 	pool, err := x509.SystemCertPool()
 	if err != nil {
@@ -932,6 +937,12 @@ func (g *GravityClient) startMultiEndpoint() error {
 	for i := range g.streamManager.connectionHealth {
 		g.streamManager.connectionHealth[i] = true
 	}
+
+	// Cancel any prior discovery loop before beginning a fresh startup attempt.
+	// Peer discovery is launched only after the initial multi-endpoint startup
+	// completes successfully, so it cannot race establishControlStreams,
+	// sendSessionHello, or establishTunnelStreams.
+	g.initialStartupDone.Store(false)
 
 	g.logger.Debug("establishing %d gRPC connections", connectionCount)
 	for i := range connectionCount {
@@ -1052,7 +1063,10 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	g.mu.Lock()
 	g.connected = true
+	g.initialStartupDone.Store(true)
 	g.mu.Unlock()
+
+	g.startPeerDiscovery()
 
 	for _, endpointIndex := range g.tunnelReadyEndpointIndices() {
 		g.fireOnEndpointTunnelReady(endpointIndex)
@@ -1428,7 +1442,11 @@ func (g *GravityClient) bindingCleanupLoop() {
 	}
 }
 
-func (g *GravityClient) peerDiscoveryLoop() {
+func (g *GravityClient) peerDiscoveryLoop(ctx context.Context, done chan struct{}) {
+	defer func() {
+		close(done)
+	}()
+
 	idleInterval := g.peerDiscoveryInterval
 	if idleInterval <= 0 {
 		idleInterval = DefaultPeerDiscoveryInterval
@@ -1472,7 +1490,7 @@ func (g *GravityClient) peerDiscoveryLoop() {
 
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-g.peerDiscoveryWake:
 			// Woken by an endpoint going unhealthy — re-check immediately.
@@ -1508,11 +1526,17 @@ func (g *GravityClient) countHealthyEndpoints() int {
 }
 
 func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
+	if !g.initialStartupDone.Load() {
+		return
+	}
 	if g.discoveryResolveFunc == nil {
 		return
 	}
 
-	allURLs := g.discoveryResolveFunc()
+	allURLs, ok := g.resolvePeerDiscoveryURLs()
+	if !ok {
+		return
+	}
 	if len(allURLs) == 0 {
 		g.logger.Debug("peer discovery: resolve returned no URLs")
 		return
@@ -1673,8 +1697,21 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 	g.endpoints[oldIdx] = newEp
 	g.endpointsMu.Unlock()
 
+	g.mu.Lock()
+	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
+		g.connectionURLs[oldIdx] = ""
+	}
+	g.mu.Unlock()
+
 	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
-	g.logger.Debug("peer discovery: new endpoint %s will connect on next connection attempt", newURL)
+	g.disconnectEndpointStreams(oldIdx)
+	g.scheduleEndpointReconnect(oldIdx, "peer_discovery_cycle")
+
+	g.mu.Lock()
+	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
+		g.connectionURLs[oldIdx] = newURL
+	}
+	g.mu.Unlock()
 }
 
 // addEndpoint adds a new endpoint to an empty slot (nil or empty URL) in
@@ -1767,7 +1804,24 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	g.streamManager.healthMu.Unlock()
 
 	g.logger.Info("peer discovery: added new endpoint %s at slot %d, starting reconnection", newURL, slotIdx)
-	go g.reconnectEndpoint(slotIdx, "peer_discovery_add")
+	g.scheduleEndpointReconnect(slotIdx, "peer_discovery_add")
+}
+
+func (g *GravityClient) scheduleEndpointReconnect(endpointIndex int, reason string) {
+	if endpointIndex < 0 || endpointIndex >= len(g.endpointReconnecting) {
+		g.logger.Warn("invalid endpoint index %d for reconnect reason=%s", endpointIndex, reason)
+		return
+	}
+	if !g.endpointReconnecting[endpointIndex].CompareAndSwap(false, true) {
+		g.logger.Debug("endpoint %d already reconnecting, skipping scheduled reconnect: %s", endpointIndex, reason)
+		return
+	}
+	if g.reconnectEndpointHook != nil {
+		defer g.endpointReconnecting[endpointIndex].Store(false)
+		g.reconnectEndpointHook(endpointIndex, reason)
+		return
+	}
+	go g.reconnectEndpoint(endpointIndex, reason)
 }
 
 func pickRandomURL(urls []string) string {
@@ -3550,14 +3604,18 @@ func (g *GravityClient) stop() error {
 	g.handlerWg.Wait()
 
 	g.mu.Lock()
-	if g.connectionCancel != nil {
-		g.connectionCancel()
-	}
-	g.cancel()
-
-	g.cleanup()
+	connectionCancel := g.connectionCancel
+	cancel := g.cancel
 	g.connected = false
 	g.mu.Unlock()
+
+	if connectionCancel != nil {
+		connectionCancel()
+	}
+	if cancel != nil {
+		cancel()
+	}
+	g.cleanup()
 
 	return nil
 }
@@ -4729,11 +4787,14 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 // reconnect resets connection state and attempts to start a new connection
 func (g *GravityClient) reconnect() error {
 	g.logger.Debug("reconnect called")
+	g.stopPeerDiscovery()
+
 	// Reset connection state without holding lock during Start()
 	g.mu.Lock()
 	g.ensureConnectionContextLocked()
 	g.connected = false
 	g.closing = false // Reset closing flag to allow reconnection
+	g.initialStartupDone.Store(false)
 	g.sessionReady = make(chan struct{})
 
 	// Clear connection IDs from previous connection
@@ -4847,6 +4908,7 @@ func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) 
 
 func (g *GravityClient) cleanup() {
 	g.logger.Debug("cleanup called")
+	g.stopPeerDiscovery()
 
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {
@@ -4860,6 +4922,78 @@ func (g *GravityClient) cleanup() {
 		if conn != nil {
 			conn.Close()
 		}
+	}
+}
+
+func (g *GravityClient) startPeerDiscovery() {
+	if g.discoveryResolveFunc == nil {
+		return
+	}
+
+	g.discoveryMu.Lock()
+	defer g.discoveryMu.Unlock()
+
+	ctx, cancel := context.WithCancel(g.ctx)
+	done := make(chan struct{})
+	g.discoveryCtx = ctx
+	g.discoveryCancel = cancel
+	g.discoveryDone = done
+
+	go g.peerDiscoveryLoop(ctx, done)
+}
+
+func (g *GravityClient) stopPeerDiscovery() {
+	g.initialStartupDone.Store(false)
+
+	g.discoveryMu.Lock()
+	cancel := g.discoveryCancel
+	done := g.discoveryDone
+	g.discoveryCtx = nil
+	g.discoveryCancel = nil
+	g.discoveryDone = nil
+	g.discoveryMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (g *GravityClient) resolvePeerDiscoveryURLs() ([]string, bool) {
+	g.discoveryMu.Lock()
+	ctx := g.discoveryCtx
+	timeout := g.discoveryResolveTimeout
+	g.discoveryMu.Unlock()
+
+	if ctx == nil {
+		ctx = g.ctx
+	}
+	if timeout <= 0 {
+		timeout = defaultPeerDiscoveryResolveTimeout
+	}
+
+	resultCh := make(chan []string, 1)
+	go func() {
+		urls := g.discoveryResolveFunc()
+		select {
+		case resultCh <- urls:
+		case <-ctx.Done():
+		}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, false
+	case urls := <-resultCh:
+		return urls, true
+	case <-timer.C:
+		g.logger.Warn("peer discovery: resolver timed out after %s", timeout)
+		return nil, false
 	}
 }
 

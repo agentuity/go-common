@@ -819,7 +819,7 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 	}
 }
 
-func TestCleanup_WaitsForInFlightPeerDiscoveryCheck(t *testing.T) {
+func TestCleanup_CancelsBlockedPeerDiscoveryResolve(t *testing.T) {
 	g := newTestGravityClient([]string{
 		"grpc://g1.example.com",
 		"grpc://g2.example.com",
@@ -831,6 +831,7 @@ func TestCleanup_WaitsForInFlightPeerDiscoveryCheck(t *testing.T) {
 	g.peerDiscoveryWake = make(chan struct{}, 1)
 	started := make(chan struct{})
 	release := make(chan struct{})
+	g.discoveryResolveTimeout = 50 * time.Millisecond
 	g.discoveryResolveFunc = func() []string {
 		select {
 		case <-started:
@@ -861,15 +862,9 @@ func TestCleanup_WaitsForInFlightPeerDiscoveryCheck(t *testing.T) {
 
 	select {
 	case <-cleanupDone:
-		t.Fatal("expected cleanup to wait for in-flight peer discovery check")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(time.Second):
+		t.Fatal("expected cleanup to return promptly after canceling blocked peer discovery resolve")
 	}
 
 	close(release)
-
-	select {
-	case <-cleanupDone:
-	case <-time.After(time.Second):
-		t.Fatal("expected cleanup to return after peer discovery check completed")
-	}
 }

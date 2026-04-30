@@ -237,16 +237,17 @@ type GravityClient struct {
 	multiEndpointMode atomic.Bool // true when client is effectively in multi-endpoint mode
 
 	// Peer discovery and cycling
-	discoveryResolveFunc  func() []string
-	peerDiscoveryInterval time.Duration
-	peerCycleInterval     time.Duration
-	lastCycleTime         atomic.Int64  // unix timestamp of last cycle
-	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
-	discoveryCtx          context.Context
-	discoveryCancel       context.CancelFunc
-	discoveryDone         chan struct{}
-	discoveryMu           sync.Mutex
-	initialStartupDone    atomic.Bool
+	discoveryResolveFunc    func() []string
+	peerDiscoveryInterval   time.Duration
+	peerCycleInterval       time.Duration
+	lastCycleTime           atomic.Int64  // unix timestamp of last cycle
+	peerDiscoveryWake       chan struct{} // non-blocking signal to wake the discovery loop immediately
+	discoveryCtx            context.Context
+	discoveryCancel         context.CancelFunc
+	discoveryDone           chan struct{}
+	discoveryMu             sync.Mutex
+	discoveryResolveTimeout time.Duration
+	initialStartupDone      atomic.Bool
 
 	// dnsLookupMulti is the function used to resolve hostnames during
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
@@ -401,6 +402,7 @@ type StreamInfo struct {
 }
 
 const endpointDiscoveryRefreshFailureThreshold int32 = 10
+const defaultPeerDiscoveryResolveTimeout = 5 * time.Second
 
 // StreamManager manages multiple gRPC streams for multiplexing with advanced load balancing
 type StreamManager struct {
@@ -1531,7 +1533,10 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 		return
 	}
 
-	allURLs := g.discoveryResolveFunc()
+	allURLs, ok := g.resolvePeerDiscoveryURLs()
+	if !ok {
+		return
+	}
 	if len(allURLs) == 0 {
 		g.logger.Debug("peer discovery: resolve returned no URLs")
 		return
@@ -4953,6 +4958,42 @@ func (g *GravityClient) stopPeerDiscovery() {
 	}
 	if done != nil {
 		<-done
+	}
+}
+
+func (g *GravityClient) resolvePeerDiscoveryURLs() ([]string, bool) {
+	g.discoveryMu.Lock()
+	ctx := g.discoveryCtx
+	timeout := g.discoveryResolveTimeout
+	g.discoveryMu.Unlock()
+
+	if ctx == nil {
+		ctx = g.ctx
+	}
+	if timeout <= 0 {
+		timeout = defaultPeerDiscoveryResolveTimeout
+	}
+
+	resultCh := make(chan []string, 1)
+	go func() {
+		urls := g.discoveryResolveFunc()
+		select {
+		case resultCh <- urls:
+		case <-ctx.Done():
+		}
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, false
+	case urls := <-resultCh:
+		return urls, true
+	case <-timer.C:
+		g.logger.Warn("peer discovery: resolver timed out after %s", timeout)
+		return nil, false
 	}
 }
 

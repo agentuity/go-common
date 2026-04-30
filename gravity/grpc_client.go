@@ -283,6 +283,7 @@ type GravityClient struct {
 	reconnectionFailedCallback func(attempts int, lastErr error)
 	onEndpointReady            func(endpointIndex int)
 	onEndpointTunnelReady      func(endpointIndex int)
+	reconnectEndpointHook      func(endpointIndex int, reason string) // test hook; nil in production
 
 	// State management
 	connected            bool
@@ -1673,8 +1674,15 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 	g.endpoints[oldIdx] = newEp
 	g.endpointsMu.Unlock()
 
+	g.mu.Lock()
+	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
+		g.connectionURLs[oldIdx] = newURL
+	}
+	g.mu.Unlock()
+
 	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
-	g.logger.Debug("peer discovery: new endpoint %s will connect on next connection attempt", newURL)
+	g.disconnectEndpointStreams(oldIdx)
+	g.scheduleEndpointReconnect(oldIdx, "peer_discovery_cycle")
 }
 
 // addEndpoint adds a new endpoint to an empty slot (nil or empty URL) in
@@ -1767,7 +1775,23 @@ func (g *GravityClient) addEndpoint(newURL string) {
 	g.streamManager.healthMu.Unlock()
 
 	g.logger.Info("peer discovery: added new endpoint %s at slot %d, starting reconnection", newURL, slotIdx)
-	go g.reconnectEndpoint(slotIdx, "peer_discovery_add")
+	g.scheduleEndpointReconnect(slotIdx, "peer_discovery_add")
+}
+
+func (g *GravityClient) scheduleEndpointReconnect(endpointIndex int, reason string) {
+	if endpointIndex < 0 || endpointIndex >= len(g.endpointReconnecting) {
+		g.logger.Warn("invalid endpoint index %d for reconnect reason=%s", endpointIndex, reason)
+		return
+	}
+	if !g.endpointReconnecting[endpointIndex].CompareAndSwap(false, true) {
+		g.logger.Debug("endpoint %d already reconnecting, skipping scheduled reconnect: %s", endpointIndex, reason)
+		return
+	}
+	if g.reconnectEndpointHook != nil {
+		g.reconnectEndpointHook(endpointIndex, reason)
+		return
+	}
+	go g.reconnectEndpoint(endpointIndex, reason)
 }
 
 func pickRandomURL(urls []string) string {

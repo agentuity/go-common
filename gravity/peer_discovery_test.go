@@ -3,6 +3,8 @@ package gravity
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,19 +16,35 @@ import (
 func newTestGravityClient(urls []string, connected []string) *GravityClient {
 	ctx, cancel := context.WithCancel(context.Background())
 	g := &GravityClient{
-		ctx:    ctx,
-		cancel: cancel,
-		logger: logger.NewTestLogger(),
+		context: ctx,
+		ctx:     ctx,
+		cancel:  cancel,
+		logger:  logger.NewTestLogger(),
 		poolConfig: ConnectionPoolConfig{
 			MaxGravityPeers: 3,
 		},
+		streamManager: &StreamManager{},
 	}
 	g.gravityURLs = append([]string(nil), urls...)
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		if idx >= 0 && idx < len(g.endpointReconnecting) {
+			g.endpointReconnecting[idx].Store(false)
+		}
+	}
 
 	for _, u := range connected {
 		ep := &GravityEndpoint{URL: u}
 		ep.healthy.Store(true)
 		g.endpoints = append(g.endpoints, ep)
+		g.connectionURLs = append(g.connectionURLs, u)
+		g.endpointReconnecting = append(g.endpointReconnecting, atomic.Bool{})
+		g.endpointFailCount = append(g.endpointFailCount, atomic.Int32{})
+		g.streamManager.controlStreams = append(g.streamManager.controlStreams, nil)
+		g.streamManager.controlSendMu = append(g.streamManager.controlSendMu, sync.Mutex{})
+		g.streamManager.contexts = append(g.streamManager.contexts, nil)
+		g.streamManager.cancels = append(g.streamManager.cancels, nil)
+		g.streamManager.connectionHealth = append(g.streamManager.connectionHealth, true)
+		g.streamManager.connectionIdleCount = append(g.streamManager.connectionIdleCount, 0)
 	}
 
 	return g
@@ -611,5 +629,44 @@ func TestCycleEndpoint_PreservesSliceOrder(t *testing.T) {
 		if ep.URL != expected[i] {
 			t.Errorf("endpoint[%d]: expected %s, got %s", i, expected[i], ep.URL)
 		}
+	}
+}
+
+func TestCycleEndpoint_TriggersReconnectForReplacementSlot(t *testing.T) {
+	g := newTestGravityClient(nil, []string{
+		"grpc://g1.example.com",
+		"grpc://g2.example.com",
+		"grpc://g3.example.com",
+	})
+	defer g.cancel()
+
+	called := make(chan struct{}, 1)
+	var gotIdx int
+	var gotReason string
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		gotIdx = idx
+		gotReason = reason
+		called <- struct{}{}
+	}
+
+	g.cycleEndpoint("grpc://g2.example.com", "grpc://g4.example.com")
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("expected replacement endpoint reconnect to be scheduled")
+	}
+
+	if gotIdx != 1 {
+		t.Fatalf("expected reconnect for slot 1, got %d", gotIdx)
+	}
+	if gotReason != "peer_discovery_cycle" {
+		t.Fatalf("expected peer_discovery_cycle reason, got %q", gotReason)
+	}
+
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	if g.connectionURLs[1] != "grpc://g4.example.com" {
+		t.Fatalf("expected connection URL for replacement slot to be updated, got %q", g.connectionURLs[1])
 	}
 }

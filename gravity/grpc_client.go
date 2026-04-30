@@ -888,11 +888,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 		go g.bindingCleanupLoop()
 	})
 
-	// Start peer discovery and connection cycling when a resolver is configured.
-	if g.discoveryResolveFunc != nil {
-		go g.peerDiscoveryLoop()
-	}
-
 	g.logger.Debug("loading CA certificate for TLS...")
 	pool, err := x509.SystemCertPool()
 	if err != nil {
@@ -932,6 +927,13 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.streamManager.connectionIdleCount = make([]int, connectionCount)
 	for i := range g.streamManager.connectionHealth {
 		g.streamManager.connectionHealth[i] = true
+	}
+
+	// Start peer discovery only after per-endpoint reconnect state is sized.
+	// peerDiscoveryLoop can schedule reconnects immediately via addEndpoint()
+	// and cycleEndpoint(), so the reconnect guard slices must already exist.
+	if g.discoveryResolveFunc != nil {
+		go g.peerDiscoveryLoop()
 	}
 
 	g.logger.Debug("establishing %d gRPC connections", connectionCount)

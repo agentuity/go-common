@@ -25,6 +25,7 @@ func newTestGravityClient(urls []string, connected []string) *GravityClient {
 		},
 		streamManager: &StreamManager{},
 	}
+	g.initialStartupDone.Store(true)
 	g.gravityURLs = append([]string(nil), urls...)
 	g.reconnectEndpointHook = func(idx int, reason string) {
 		if idx >= 0 && idx < len(g.endpointReconnecting) {
@@ -640,12 +641,47 @@ func TestCycleEndpoint_TriggersReconnectForReplacementSlot(t *testing.T) {
 	})
 	defer g.cancel()
 
+	ctx := context.Background()
+	g.streamManager.controlMu.Lock()
+	g.streamManager.controlStreams[1] = &mockControlStream{ctx: ctx}
+	g.streamManager.controlMu.Unlock()
+	g.streamManager.tunnelMu.Lock()
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{
+			stream:    &mockTunnelStream{ctx: ctx},
+			connIndex: 1,
+			isHealthy: true,
+		},
+	}
+	g.streamManager.tunnelMu.Unlock()
+
 	called := make(chan struct{}, 1)
 	var gotIdx int
 	var gotReason string
 	g.reconnectEndpointHook = func(idx int, reason string) {
 		gotIdx = idx
 		gotReason = reason
+
+		g.streamManager.controlMu.RLock()
+		controlCleared := idx < len(g.streamManager.controlStreams) && g.streamManager.controlStreams[idx] == nil
+		g.streamManager.controlMu.RUnlock()
+		if !controlCleared {
+			t.Errorf("expected control stream for slot %d to be cleared before reconnect scheduling", idx)
+		}
+
+		g.streamManager.tunnelMu.RLock()
+		tunnelCleared := false
+		for _, si := range g.streamManager.tunnelStreams {
+			if si != nil && si.connIndex == idx {
+				tunnelCleared = !si.isHealthy
+				break
+			}
+		}
+		g.streamManager.tunnelMu.RUnlock()
+		if !tunnelCleared {
+			t.Errorf("expected tunnel stream for slot %d to be marked unhealthy before reconnect scheduling", idx)
+		}
+
 		called <- struct{}{}
 	}
 
@@ -668,6 +704,37 @@ func TestCycleEndpoint_TriggersReconnectForReplacementSlot(t *testing.T) {
 	defer g.mu.RUnlock()
 	if g.connectionURLs[1] != "grpc://g4.example.com" {
 		t.Fatalf("expected connection URL for replacement slot to be updated, got %q", g.connectionURLs[1])
+	}
+}
+
+func TestCheckPeerDiscovery_SkipsBeforeInitialStartupDone(t *testing.T) {
+	g := newTestGravityClient([]string{
+		"grpc://g1.example.com",
+		"grpc://g2.example.com",
+	}, []string{
+		"grpc://g1.example.com",
+	})
+	defer g.cancel()
+
+	g.initialStartupDone.Store(false)
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://g1.example.com",
+			"grpc://g2.example.com",
+		}
+	}
+
+	called := make(chan struct{}, 1)
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		called <- struct{}{}
+	}
+
+	g.checkPeerDiscovery(2 * time.Hour)
+
+	select {
+	case <-called:
+		t.Fatal("expected peer discovery to remain idle before initial startup completes")
+	case <-time.After(100 * time.Millisecond):
 	}
 }
 

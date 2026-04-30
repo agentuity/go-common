@@ -244,6 +244,7 @@ type GravityClient struct {
 	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
 	discoveryCtx          context.Context
 	discoveryCancel       context.CancelFunc
+	initialStartupDone    atomic.Bool
 
 	// dnsLookupMulti is the function used to resolve hostnames during
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
@@ -931,17 +932,15 @@ func (g *GravityClient) startMultiEndpoint() error {
 		g.streamManager.connectionHealth[i] = true
 	}
 
-	// Start peer discovery only after per-endpoint reconnect state is sized.
-	// peerDiscoveryLoop can schedule reconnects immediately via addEndpoint()
-	// and cycleEndpoint(), so the reconnect guard slices must already exist.
+	// Cancel any prior discovery loop before beginning a fresh startup attempt.
+	// Peer discovery is launched only after the initial multi-endpoint startup
+	// completes successfully, so it cannot race establishControlStreams,
+	// sendSessionHello, or establishTunnelStreams.
+	g.initialStartupDone.Store(false)
 	if g.discoveryCancel != nil {
 		g.discoveryCancel()
 		g.discoveryCtx = nil
 		g.discoveryCancel = nil
-	}
-	if g.discoveryResolveFunc != nil {
-		g.discoveryCtx, g.discoveryCancel = context.WithCancel(g.ctx)
-		go g.peerDiscoveryLoop(g.discoveryCtx)
 	}
 
 	g.logger.Debug("establishing %d gRPC connections", connectionCount)
@@ -1061,9 +1060,19 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.rebuildEndpointStreamIndices()
 	g.refreshEndpointHealth()
 
+	var discoveryCtx context.Context
 	g.mu.Lock()
 	g.connected = true
+	g.initialStartupDone.Store(true)
+	if g.discoveryResolveFunc != nil {
+		g.discoveryCtx, g.discoveryCancel = context.WithCancel(g.ctx)
+		discoveryCtx = g.discoveryCtx
+	}
 	g.mu.Unlock()
+
+	if discoveryCtx != nil {
+		go g.peerDiscoveryLoop(discoveryCtx)
+	}
 
 	for _, endpointIndex := range g.tunnelReadyEndpointIndices() {
 		g.fireOnEndpointTunnelReady(endpointIndex)
@@ -1519,6 +1528,9 @@ func (g *GravityClient) countHealthyEndpoints() int {
 }
 
 func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
+	if !g.initialStartupDone.Load() {
+		return
+	}
 	if g.discoveryResolveFunc == nil {
 		return
 	}
@@ -4769,7 +4781,14 @@ func (g *GravityClient) reconnect() error {
 	g.ensureConnectionContextLocked()
 	g.connected = false
 	g.closing = false // Reset closing flag to allow reconnection
+	g.initialStartupDone.Store(false)
 	g.sessionReady = make(chan struct{})
+
+	if g.discoveryCancel != nil {
+		g.discoveryCancel()
+		g.discoveryCtx = nil
+		g.discoveryCancel = nil
+	}
 
 	// Clear connection IDs from previous connection
 	g.connectionIDs = make([]string, 0, g.poolConfig.PoolSize)
@@ -4888,6 +4907,7 @@ func (g *GravityClient) cleanup() {
 		g.discoveryCtx = nil
 		g.discoveryCancel = nil
 	}
+	g.initialStartupDone.Store(false)
 
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {

@@ -242,6 +242,8 @@ type GravityClient struct {
 	peerCycleInterval     time.Duration
 	lastCycleTime         atomic.Int64  // unix timestamp of last cycle
 	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
+	discoveryCtx          context.Context
+	discoveryCancel       context.CancelFunc
 
 	// dnsLookupMulti is the function used to resolve hostnames during
 	// endpoint re-resolution. Defaults to dns.DefaultDNS.LookupMulti.
@@ -932,8 +934,14 @@ func (g *GravityClient) startMultiEndpoint() error {
 	// Start peer discovery only after per-endpoint reconnect state is sized.
 	// peerDiscoveryLoop can schedule reconnects immediately via addEndpoint()
 	// and cycleEndpoint(), so the reconnect guard slices must already exist.
+	if g.discoveryCancel != nil {
+		g.discoveryCancel()
+		g.discoveryCtx = nil
+		g.discoveryCancel = nil
+	}
 	if g.discoveryResolveFunc != nil {
-		go g.peerDiscoveryLoop()
+		g.discoveryCtx, g.discoveryCancel = context.WithCancel(g.ctx)
+		go g.peerDiscoveryLoop(g.discoveryCtx)
 	}
 
 	g.logger.Debug("establishing %d gRPC connections", connectionCount)
@@ -1431,7 +1439,7 @@ func (g *GravityClient) bindingCleanupLoop() {
 	}
 }
 
-func (g *GravityClient) peerDiscoveryLoop() {
+func (g *GravityClient) peerDiscoveryLoop(ctx context.Context) {
 	idleInterval := g.peerDiscoveryInterval
 	if idleInterval <= 0 {
 		idleInterval = DefaultPeerDiscoveryInterval
@@ -1475,7 +1483,7 @@ func (g *GravityClient) peerDiscoveryLoop() {
 
 	for {
 		select {
-		case <-g.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-g.peerDiscoveryWake:
 			// Woken by an endpoint going unhealthy — re-check immediately.
@@ -1790,6 +1798,7 @@ func (g *GravityClient) scheduleEndpointReconnect(endpointIndex int, reason stri
 		return
 	}
 	if g.reconnectEndpointHook != nil {
+		defer g.endpointReconnecting[endpointIndex].Store(false)
 		g.reconnectEndpointHook(endpointIndex, reason)
 		return
 	}
@@ -4873,6 +4882,12 @@ func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) 
 
 func (g *GravityClient) cleanup() {
 	g.logger.Debug("cleanup called")
+
+	if g.discoveryCancel != nil {
+		g.discoveryCancel()
+		g.discoveryCtx = nil
+		g.discoveryCancel = nil
+	}
 
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {

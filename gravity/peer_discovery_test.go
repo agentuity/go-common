@@ -670,3 +670,78 @@ func TestCycleEndpoint_TriggersReconnectForReplacementSlot(t *testing.T) {
 		t.Fatalf("expected connection URL for replacement slot to be updated, got %q", g.connectionURLs[1])
 	}
 }
+
+func TestScheduleEndpointReconnect_HookClearsReconnectGuard(t *testing.T) {
+	g := newTestGravityClient(nil, []string{"grpc://g1.example.com"})
+	defer g.cancel()
+
+	var calls int
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		calls++
+	}
+
+	g.scheduleEndpointReconnect(0, "first")
+	if calls != 1 {
+		t.Fatalf("expected first reconnect hook call, got %d", calls)
+	}
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected reconnect guard to be cleared after hook returns")
+	}
+
+	g.scheduleEndpointReconnect(0, "second")
+	if calls != 2 {
+		t.Fatalf("expected second reconnect hook call after guard reset, got %d", calls)
+	}
+}
+
+func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
+	g := newTestGravityClient([]string{
+		"grpc://g1.example.com",
+		"grpc://g2.example.com",
+	}, []string{
+		"grpc://g1.example.com",
+	})
+	defer g.cancel()
+
+	g.peerDiscoveryWake = make(chan struct{}, 1)
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://g1.example.com",
+			"grpc://g2.example.com",
+		}
+	}
+
+	called := make(chan struct{}, 1)
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		called <- struct{}{}
+	}
+
+	discoveryCtx, discoveryCancel := context.WithCancel(context.Background())
+	g.discoveryCtx, g.discoveryCancel = discoveryCtx, discoveryCancel
+	loopDone := make(chan struct{})
+	go func() {
+		defer close(loopDone)
+		g.peerDiscoveryLoop(discoveryCtx)
+	}()
+
+	g.cleanup()
+
+	select {
+	case <-discoveryCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("expected cleanup to cancel peer discovery context")
+	}
+
+	select {
+	case <-loopDone:
+	case <-time.After(time.Second):
+		t.Fatal("expected peer discovery loop to exit after cleanup canceled its context")
+	}
+
+	g.wakePeerDiscovery()
+	select {
+	case <-called:
+		t.Fatal("expected canceled peer discovery loop to stop scheduling reconnects")
+	case <-time.After(100 * time.Millisecond):
+	}
+}

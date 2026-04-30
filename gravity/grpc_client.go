@@ -244,6 +244,8 @@ type GravityClient struct {
 	peerDiscoveryWake     chan struct{} // non-blocking signal to wake the discovery loop immediately
 	discoveryCtx          context.Context
 	discoveryCancel       context.CancelFunc
+	discoveryDone         chan struct{}
+	discoveryMu           sync.Mutex
 	initialStartupDone    atomic.Bool
 
 	// dnsLookupMulti is the function used to resolve hostnames during
@@ -799,6 +801,8 @@ func (g *GravityClient) startMultiEndpoint() error {
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
+	g.stopPeerDiscovery()
+
 	g.endpointsMu.Lock()
 	g.endpoints = make([]*GravityEndpoint, 0)
 	var errs []error
@@ -937,11 +941,6 @@ func (g *GravityClient) startMultiEndpoint() error {
 	// completes successfully, so it cannot race establishControlStreams,
 	// sendSessionHello, or establishTunnelStreams.
 	g.initialStartupDone.Store(false)
-	if g.discoveryCancel != nil {
-		g.discoveryCancel()
-		g.discoveryCtx = nil
-		g.discoveryCancel = nil
-	}
 
 	g.logger.Debug("establishing %d gRPC connections", connectionCount)
 	for i := range connectionCount {
@@ -1060,19 +1059,12 @@ func (g *GravityClient) startMultiEndpoint() error {
 	g.rebuildEndpointStreamIndices()
 	g.refreshEndpointHealth()
 
-	var discoveryCtx context.Context
 	g.mu.Lock()
 	g.connected = true
 	g.initialStartupDone.Store(true)
-	if g.discoveryResolveFunc != nil {
-		g.discoveryCtx, g.discoveryCancel = context.WithCancel(g.ctx)
-		discoveryCtx = g.discoveryCtx
-	}
 	g.mu.Unlock()
 
-	if discoveryCtx != nil {
-		go g.peerDiscoveryLoop(discoveryCtx)
-	}
+	g.startPeerDiscovery()
 
 	for _, endpointIndex := range g.tunnelReadyEndpointIndices() {
 		g.fireOnEndpointTunnelReady(endpointIndex)
@@ -1448,7 +1440,11 @@ func (g *GravityClient) bindingCleanupLoop() {
 	}
 }
 
-func (g *GravityClient) peerDiscoveryLoop(ctx context.Context) {
+func (g *GravityClient) peerDiscoveryLoop(ctx context.Context, done chan struct{}) {
+	defer func() {
+		close(done)
+	}()
+
 	idleInterval := g.peerDiscoveryInterval
 	if idleInterval <= 0 {
 		idleInterval = DefaultPeerDiscoveryInterval
@@ -1698,13 +1694,19 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 
 	g.mu.Lock()
 	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
-		g.connectionURLs[oldIdx] = newURL
+		g.connectionURLs[oldIdx] = ""
 	}
 	g.mu.Unlock()
 
 	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
 	g.disconnectEndpointStreams(oldIdx)
 	g.scheduleEndpointReconnect(oldIdx, "peer_discovery_cycle")
+
+	g.mu.Lock()
+	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
+		g.connectionURLs[oldIdx] = newURL
+	}
+	g.mu.Unlock()
 }
 
 // addEndpoint adds a new endpoint to an empty slot (nil or empty URL) in
@@ -3597,14 +3599,18 @@ func (g *GravityClient) stop() error {
 	g.handlerWg.Wait()
 
 	g.mu.Lock()
-	if g.connectionCancel != nil {
-		g.connectionCancel()
-	}
-	g.cancel()
-
-	g.cleanup()
+	connectionCancel := g.connectionCancel
+	cancel := g.cancel
 	g.connected = false
 	g.mu.Unlock()
+
+	if connectionCancel != nil {
+		connectionCancel()
+	}
+	if cancel != nil {
+		cancel()
+	}
+	g.cleanup()
 
 	return nil
 }
@@ -4776,6 +4782,8 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 // reconnect resets connection state and attempts to start a new connection
 func (g *GravityClient) reconnect() error {
 	g.logger.Debug("reconnect called")
+	g.stopPeerDiscovery()
+
 	// Reset connection state without holding lock during Start()
 	g.mu.Lock()
 	g.ensureConnectionContextLocked()
@@ -4783,12 +4791,6 @@ func (g *GravityClient) reconnect() error {
 	g.closing = false // Reset closing flag to allow reconnection
 	g.initialStartupDone.Store(false)
 	g.sessionReady = make(chan struct{})
-
-	if g.discoveryCancel != nil {
-		g.discoveryCancel()
-		g.discoveryCtx = nil
-		g.discoveryCancel = nil
-	}
 
 	// Clear connection IDs from previous connection
 	g.connectionIDs = make([]string, 0, g.poolConfig.PoolSize)
@@ -4901,13 +4903,7 @@ func (g *GravityClient) extractHostnameFromURL(inputURL string) (string, error) 
 
 func (g *GravityClient) cleanup() {
 	g.logger.Debug("cleanup called")
-
-	if g.discoveryCancel != nil {
-		g.discoveryCancel()
-		g.discoveryCtx = nil
-		g.discoveryCancel = nil
-	}
-	g.initialStartupDone.Store(false)
+	g.stopPeerDiscovery()
 
 	// Cancel all stream contexts
 	for _, cancel := range g.streamManager.cancels {
@@ -4921,6 +4917,42 @@ func (g *GravityClient) cleanup() {
 		if conn != nil {
 			conn.Close()
 		}
+	}
+}
+
+func (g *GravityClient) startPeerDiscovery() {
+	if g.discoveryResolveFunc == nil {
+		return
+	}
+
+	g.discoveryMu.Lock()
+	defer g.discoveryMu.Unlock()
+
+	ctx, cancel := context.WithCancel(g.ctx)
+	done := make(chan struct{})
+	g.discoveryCtx = ctx
+	g.discoveryCancel = cancel
+	g.discoveryDone = done
+
+	go g.peerDiscoveryLoop(ctx, done)
+}
+
+func (g *GravityClient) stopPeerDiscovery() {
+	g.initialStartupDone.Store(false)
+
+	g.discoveryMu.Lock()
+	cancel := g.discoveryCancel
+	done := g.discoveryDone
+	g.discoveryCtx = nil
+	g.discoveryCancel = nil
+	g.discoveryDone = nil
+	g.discoveryMu.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 

@@ -662,6 +662,13 @@ func TestCycleEndpoint_TriggersReconnectForReplacementSlot(t *testing.T) {
 		gotIdx = idx
 		gotReason = reason
 
+		g.mu.RLock()
+		urlCleared := idx < len(g.connectionURLs) && g.connectionURLs[idx] == ""
+		g.mu.RUnlock()
+		if !urlCleared {
+			t.Errorf("expected connection URL for slot %d to be cleared before reconnect scheduling", idx)
+		}
+
 		g.streamManager.controlMu.RLock()
 		controlCleared := idx < len(g.streamManager.controlStreams) && g.streamManager.controlStreams[idx] == nil
 		g.streamManager.controlMu.RUnlock()
@@ -783,13 +790,12 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 		called <- struct{}{}
 	}
 
-	discoveryCtx, discoveryCancel := context.WithCancel(context.Background())
-	g.discoveryCtx, g.discoveryCancel = discoveryCtx, discoveryCancel
-	loopDone := make(chan struct{})
-	go func() {
-		defer close(loopDone)
-		g.peerDiscoveryLoop(discoveryCtx)
-	}()
+	g.startPeerDiscovery()
+
+	g.discoveryMu.Lock()
+	discoveryCtx := g.discoveryCtx
+	discoveryDone := g.discoveryDone
+	g.discoveryMu.Unlock()
 
 	g.cleanup()
 
@@ -800,7 +806,7 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 	}
 
 	select {
-	case <-loopDone:
+	case <-discoveryDone:
 	case <-time.After(time.Second):
 		t.Fatal("expected peer discovery loop to exit after cleanup canceled its context")
 	}
@@ -810,5 +816,60 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 	case <-called:
 		t.Fatal("expected canceled peer discovery loop to stop scheduling reconnects")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestCleanup_WaitsForInFlightPeerDiscoveryCheck(t *testing.T) {
+	g := newTestGravityClient([]string{
+		"grpc://g1.example.com",
+		"grpc://g2.example.com",
+	}, []string{
+		"grpc://g1.example.com",
+	})
+	defer g.cancel()
+
+	g.peerDiscoveryWake = make(chan struct{}, 1)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	g.discoveryResolveFunc = func() []string {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		return []string{
+			"grpc://g1.example.com",
+			"grpc://g2.example.com",
+		}
+	}
+
+	g.startPeerDiscovery()
+	g.wakePeerDiscovery()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("expected peer discovery check to start")
+	}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		defer close(cleanupDone)
+		g.cleanup()
+	}()
+
+	select {
+	case <-cleanupDone:
+		t.Fatal("expected cleanup to wait for in-flight peer discovery check")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+
+	select {
+	case <-cleanupDone:
+	case <-time.After(time.Second):
+		t.Fatal("expected cleanup to return after peer discovery check completed")
 	}
 }

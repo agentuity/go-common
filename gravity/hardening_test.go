@@ -700,6 +700,9 @@ func TestHardening_SessionHelloConfigureFailureUnblocksWait(t *testing.T) {
 		if sig.streamIndex != 0 || sig.machineID != "" {
 			t.Fatalf("expected empty machine ID failure signal for stream 0, got %+v", sig)
 		}
+		if sig.errMessage == "" {
+			t.Fatal("expected configure failure message on session hello signal")
+		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("expected failure signal on connectionIDChan")
 	}

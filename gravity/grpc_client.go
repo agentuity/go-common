@@ -394,6 +394,30 @@ type GravityClient struct {
 type sessionHelloSignal struct {
 	streamIndex int
 	machineID   string
+	errMessage  string
+}
+
+func sessionHelloChannelCapacity(poolSize, gravityURLCount int) int {
+	return max(1, poolSize) * max(1, gravityURLCount)
+}
+
+func firstSessionHelloFailureMessage(messages map[int]string) string {
+	for _, msg := range messages {
+		if msg != "" {
+			return msg
+		}
+	}
+	return "unknown session hello failure"
+}
+
+func sessionHelloErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if st, ok := status.FromError(err); ok && st.Message() != "" {
+		return st.Message()
+	}
+	return err.Error()
 }
 
 // StreamInfo tracks individual stream health and load
@@ -516,7 +540,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		caCert:                 config.CACert,
 		defaultServerName:      config.DefaultServerName,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
-		connectionIDChan:       make(chan sessionHelloSignal, max(1, poolConfig.PoolSize*len(config.GravityURLs))),
+		connectionIDChan:       make(chan sessionHelloSignal, sessionHelloChannelCapacity(poolConfig.PoolSize, len(config.GravityURLs))),
 		sessionReady:           make(chan struct{}),
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
@@ -2139,6 +2163,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 	var machineID string
 	helloResponseCount := 0
 	failedResponses := make(map[int]bool)
+	failureMessages := make(map[int]string)
 	successResponses := make(map[int]bool)
 	deadline := time.NewTimer(time.Minute)
 	defer deadline.Stop()
@@ -2151,10 +2176,15 @@ func (g *GravityClient) establishTunnelStreams() error {
 			}
 			if sig.machineID == "" {
 				failedResponses[sig.streamIndex] = true
-				g.logger.Error("session hello rejected by server on stream %d (%d/%d failures)", sig.streamIndex, len(failedResponses), len(expectedStreams))
+				failureMessages[sig.streamIndex] = sig.errMessage
+				if sig.errMessage != "" {
+					g.logger.Error("session hello rejected by server on stream %d (%d/%d failures): %s", sig.streamIndex, len(failedResponses), len(expectedStreams), sig.errMessage)
+				} else {
+					g.logger.Error("session hello rejected by server on stream %d (%d/%d failures)", sig.streamIndex, len(failedResponses), len(expectedStreams))
+				}
 				if len(failedResponses) == len(expectedStreams) && helloResponseCount == 0 {
 					g.logger.Error("session failed - authentication rejected by all expected servers")
-					return fmt.Errorf("session failed - authentication rejected by server")
+					return fmt.Errorf("session failed - authentication rejected by server: %s", firstSessionHelloFailureMessage(failureMessages))
 				}
 				continue
 			}
@@ -2179,7 +2209,7 @@ func (g *GravityClient) establishTunnelStreams() error {
 			}
 			if len(failedResponses) > 0 {
 				g.logger.Error("session failed - authentication rejected by %d/%d expected servers", len(failedResponses), len(expectedStreams))
-				return fmt.Errorf("session failed - authentication rejected by server")
+				return fmt.Errorf("session failed - authentication rejected by server: %s", firstSessionHelloFailureMessage(failureMessages))
 			}
 			g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
 			return fmt.Errorf("timeout waiting for machine ID from server")
@@ -2509,7 +2539,7 @@ func (g *GravityClient) logControlStreamReceiveError(streamIndex int, err error)
 
 func (g *GravityClient) signalSessionHelloFailure(streamIndex int, err error) {
 	g.logger.Error("control stream %d closed before session hello response; signaling startup failure: %s", streamIndex, err.Error())
-	g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex})
+	g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, errMessage: sessionHelloErrorMessage(err)})
 }
 
 func (g *GravityClient) sendSessionHelloSignal(sig sessionHelloSignal) bool {
@@ -2869,7 +2899,7 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	if g.machineSubnet != "" {
 		if _, _, err := net.ParseCIDR(g.machineSubnet); err != nil {
 			g.logger.Error("session hello returned invalid MachineSubnet %q: %v", g.machineSubnet, err)
-			signalConnectionID("")
+			g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, errMessage: fmt.Sprintf("invalid MachineSubnet %q: %s", g.machineSubnet, err.Error())})
 			closeSessionReady()
 			return
 		}
@@ -2899,7 +2929,7 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 		SigningPublicKey:  g.signingPublicKey,
 	}); err != nil {
 		g.logger.Error("error configuring provider after session hello: %v", err)
-		signalConnectionID("")
+		g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, errMessage: fmt.Sprintf("provider configuration failed: %s", err.Error())})
 		closeSessionReady()
 		return
 	}
@@ -2909,7 +2939,7 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	if g.networkInterface != nil {
 		if err := g.networkInterface.RouteTraffic(g.subnetRoutes); err != nil {
 			g.logger.Error("failed to route traffic for gravity subnet: %v", err)
-			signalConnectionID("")
+			g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, errMessage: fmt.Sprintf("route traffic failed: %s", err.Error())})
 			closeSessionReady()
 			return
 		}
@@ -3034,7 +3064,7 @@ func (g *GravityClient) handleGenericResponse(streamIndex int, msgID string, res
 	// Check if this is an error response for a session hello message
 	if msgID == "session_hello" && !response.Success {
 		g.logger.Error("session hello failed: %s", response.Error)
-		if !g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex}) {
+		if !g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, errMessage: response.Error}) {
 			g.logger.Warn("session hello failure signal dropped for stream %d", streamIndex)
 		}
 		return
@@ -4564,6 +4594,7 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 	helloCh := make(chan sessionHelloSignal, 1)
 	g.sessionHelloChans.Store(endpointIndex, helloCh)
 	defer g.sessionHelloChans.Delete(endpointIndex)
+	g.helloAckedStreams.Delete(endpointIndex)
 
 	go g.handleControlStream(endpointIndex, stream)
 
@@ -4582,6 +4613,9 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 			if sig.machineID == "" {
 				cancel()
 				_ = conn.Close()
+				if sig.errMessage != "" {
+					return fmt.Errorf("session hello rejected by server: %s", sig.errMessage)
+				}
 				return fmt.Errorf("session hello rejected by server")
 			}
 			g.logger.Debug("endpoint %d session hello accepted (machine ID: %s)", endpointIndex, sig.machineID)

@@ -3,6 +3,7 @@ package gravity
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,6 +323,28 @@ func TestEstablishTunnelStreams_IgnoresFailureForUnexpectedStream(t *testing.T) 
 	}
 }
 
+func TestEstablishTunnelStreams_ReturnsSessionHelloFailureMessage(t *testing.T) {
+	g := newResilienceTestClient(t, 1, false)
+	g.poolConfig.StreamsPerConnection = 1
+	g.connectionIDChan = make(chan sessionHelloSignal, 1)
+	g.connectionIDChan <- sessionHelloSignal{
+		streamIndex: 0,
+		errMessage:  "no organization registered with this public key",
+	}
+	g.streamManager.controlStreams = []pb.GravitySessionService_EstablishSessionClient{
+		&mockControlStream{ctx: g.ctx},
+	}
+	g.sessionClients = []pb.GravitySessionServiceClient{&mockSessionClient{}}
+
+	err := g.establishTunnelStreams()
+	if err == nil {
+		t.Fatal("expected session hello failure")
+	}
+	if !strings.Contains(err.Error(), "no organization registered with this public key") {
+		t.Fatalf("expected concrete rejection message, got: %v", err)
+	}
+}
+
 func TestHandleControlStream_PreHelloReceiveErrorSignalsFailure(t *testing.T) {
 	g := newResilienceTestClient(t, 1, false)
 	g.connectionIDChan = make(chan sessionHelloSignal, 1)
@@ -339,6 +362,9 @@ func TestHandleControlStream_PreHelloReceiveErrorSignalsFailure(t *testing.T) {
 	case sig := <-g.connectionIDChan:
 		if sig.streamIndex != 0 || sig.machineID != "" {
 			t.Fatalf("expected failure signal for stream 0, got %+v", sig)
+		}
+		if sig.errMessage != "no organization registered with this public key" {
+			t.Fatalf("expected gRPC status message, got %q", sig.errMessage)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected pre-hello receive error to signal startup failure")
@@ -375,5 +401,39 @@ func TestSendSessionHelloSignal_RoutesToEndpointChannel(t *testing.T) {
 	case sig := <-g.connectionIDChan:
 		t.Fatalf("did not expect signal on shared channel: %+v", sig)
 	default:
+	}
+}
+
+func TestHandleGenericResponse_SessionHelloFailureIncludesError(t *testing.T) {
+	g := newResilienceTestClient(t, 1, false)
+	g.connectionIDChan = make(chan sessionHelloSignal, 1)
+
+	g.handleGenericResponse(0, "session_hello", &pb.ProtocolResponse{
+		Success: false,
+		Error:   "certificate rejected",
+	})
+
+	select {
+	case sig := <-g.connectionIDChan:
+		if sig.streamIndex != 0 || sig.machineID != "" {
+			t.Fatalf("expected failure signal for stream 0, got %+v", sig)
+		}
+		if sig.errMessage != "certificate rejected" {
+			t.Fatalf("expected protocol response error, got %q", sig.errMessage)
+		}
+	default:
+		t.Fatal("expected session hello failure signal")
+	}
+}
+
+func TestSessionHelloChannelCapacityScalesWithPoolSizeForSingleURL(t *testing.T) {
+	if got := sessionHelloChannelCapacity(4, 1); got != 4 {
+		t.Fatalf("expected capacity 4 for pool size 4 and one URL, got %d", got)
+	}
+	if got := sessionHelloChannelCapacity(4, 0); got != 4 {
+		t.Fatalf("expected capacity 4 for pool size 4 and no GravityURLs, got %d", got)
+	}
+	if got := sessionHelloChannelCapacity(4, 3); got != 12 {
+		t.Fatalf("expected capacity 12 for pool size 4 and three URLs, got %d", got)
 	}
 }

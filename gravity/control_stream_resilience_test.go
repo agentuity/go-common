@@ -280,3 +280,52 @@ func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 		}
 	}
 }
+
+func TestEstablishTunnelStreams_UsesAlreadyReceivedMachineID(t *testing.T) {
+	g := newResilienceTestClient(t, 1, false)
+	g.poolConfig.StreamsPerConnection = 1
+	g.connectionIDChan = make(chan string, 1)
+	g.connectionIDChan <- "machine-1"
+	g.streamManager.controlStreams = []pb.GravitySessionService_EstablishSessionClient{
+		&mockControlStream{ctx: g.ctx},
+	}
+	client := &mockSessionClient{}
+	g.sessionClients = []pb.GravitySessionServiceClient{client}
+	g.helloAckedStreams.Store(0, true)
+
+	if err := g.establishTunnelStreams(); err != nil {
+		t.Fatalf("expected already received machine ID to be used, got error: %v", err)
+	}
+	if client.streamPacketsCalls != 1 {
+		t.Fatalf("expected StreamSessionPackets calls=1, got %d", client.streamPacketsCalls)
+	}
+}
+
+func TestHandleControlStream_PreHelloReceiveErrorSignalsFailure(t *testing.T) {
+	g := newResilienceTestClient(t, 1, false)
+	g.connectionIDChan = make(chan string, 1)
+	stream := &configurableMockStream{
+		recvErr: status.Error(codes.Unauthenticated, "no organization registered with this public key"),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		g.handleControlStream(0, stream)
+	}()
+
+	select {
+	case id := <-g.connectionIDChan:
+		if id != "" {
+			t.Fatalf("expected empty failure signal, got %q", id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected pre-hello receive error to signal startup failure")
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("expected control stream handler to exit")
+	}
+}

@@ -723,6 +723,12 @@ func (g *GravityClient) Start() error {
 	}
 	g.logger.Debug("control streams established successfully")
 
+	// Clear stale handshake signals before sending a new session hello.
+	// The control stream handler can receive SessionHelloResponse immediately
+	// after sendSessionHello returns; draining later can discard the valid
+	// machine ID and leave startup waiting until timeout.
+	g.drainConnectionIDChan()
+
 	g.logger.Debug("sending session hello...")
 	// Send session hello to authenticate and get session info
 	err = g.sendSessionHello()
@@ -1030,6 +1036,12 @@ func (g *GravityClient) startMultiEndpoint() error {
 		return fmt.Errorf("failed to establish control streams: %w", err)
 	}
 	g.logger.Debug("control streams established successfully")
+
+	// Clear stale handshake signals before sending a new session hello.
+	// The control stream handler can receive SessionHelloResponse immediately
+	// after sendSessionHello returns; draining later can discard the valid
+	// machine ID and leave startup waiting until timeout.
+	g.drainConnectionIDChan()
 
 	g.logger.Debug("sending session hello...")
 	err = g.sendSessionHello()
@@ -2116,9 +2128,6 @@ func (g *GravityClient) establishTunnelStreams() error {
 		g.logger.Debug("waiting for machine ID from server...")
 	}
 
-	// Drain any stale responses from previous sessions (reconnect path).
-	g.drainConnectionIDChan()
-
 	// Single shared deadline — don't let late responses extend the total wait.
 	// Track how many responses we received to only create tunnel streams on
 	// connections where the session hello was acknowledged.
@@ -2422,7 +2431,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 				isCanceled = true
 				g.logger.Debug("control stream %d closed due to context cancellation", streamIndex)
 			} else {
-				g.logger.Error("control stream %d receive error: %v", streamIndex, err)
+				g.logControlStreamReceiveError(streamIndex, err)
 			}
 
 			// Trigger reconnection for any stream death unless we're
@@ -2432,6 +2441,9 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 			closing := g.closing
 			g.mu.RUnlock()
 			if !closing {
+				if _, acked := g.helloAckedStreams.Load(streamIndex); !acked {
+					g.signalSessionHelloFailure(streamIndex, err)
+				}
 				isConnectionLost := isCanceled || errors.Is(err, io.EOF)
 				if !isConnectionLost {
 					if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -2452,6 +2464,26 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 
 		g.logger.Trace("control stream %d received message: ID=%s, Type=%T", streamIndex, msg.Id, msg.MessageType)
 		g.processSessionMessage(streamIndex, msg)
+	}
+}
+
+func (g *GravityClient) logControlStreamReceiveError(streamIndex int, err error) {
+	if st, ok := status.FromError(err); ok {
+		g.logger.Error("control stream %d receive error: type=%T grpc_code=%s grpc_message=%q error=%q", streamIndex, err, st.Code().String(), st.Message(), err.Error())
+		for i, detail := range st.Details() {
+			g.logger.Error("control stream %d receive error detail %d: type=%T value=%+v", streamIndex, i, detail, detail)
+		}
+		return
+	}
+	g.logger.Error("control stream %d receive error: type=%T error=%q", streamIndex, err, err.Error())
+}
+
+func (g *GravityClient) signalSessionHelloFailure(streamIndex int, err error) {
+	g.logger.Error("control stream %d closed before session hello response; signaling startup failure: %s", streamIndex, err.Error())
+	select {
+	case g.connectionIDChan <- "":
+	default:
+		g.logger.Warn("control stream %d session hello failure signal dropped: connectionIDChan full", streamIndex)
 	}
 }
 

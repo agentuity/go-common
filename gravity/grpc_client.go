@@ -296,10 +296,11 @@ type GravityClient struct {
 	reconnecting         bool          // Tracks if reconnection is in progress
 	endpointReconnecting []atomic.Bool // Per-endpoint reconnect guard (multi-endpoint only)
 	endpointFailCount    []atomic.Int32
-	connectionIDs        []string      // Stores connection IDs from server responses
-	connectionIDChan     chan string   // Channel to signal when connection ID is received
-	helloAckedStreams    sync.Map      // streamIndex (int) → true: tracks which streams received SessionHelloResponse
-	sessionReady         chan struct{} // Closed when session is fully authenticated and configured
+	connectionIDs        []string                // Stores connection IDs from server responses
+	connectionIDChan     chan sessionHelloSignal // Channel to signal session hello results
+	sessionHelloChans    sync.Map                // streamIndex (int) → chan sessionHelloSignal for endpoint reconnect handshakes
+	helloAckedStreams    sync.Map                // streamIndex (int) → true: tracks which streams received SessionHelloResponse
+	sessionReady         chan struct{}           // Closed when session is fully authenticated and configured
 	otlpURL              string
 	otlpToken            string
 	apiURL               string
@@ -388,6 +389,11 @@ type GravityClient struct {
 
 	// network interface for routing
 	networkInterface network.NetworkInterface
+}
+
+type sessionHelloSignal struct {
+	streamIndex int
+	machineID   string
 }
 
 // StreamInfo tracks individual stream health and load
@@ -510,7 +516,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		caCert:                 config.CACert,
 		defaultServerName:      config.DefaultServerName,
 		connectionIDs:          make([]string, 0, poolConfig.PoolSize),
-		connectionIDChan:       make(chan string, max(1, poolConfig.PoolSize*len(config.GravityURLs))),
+		connectionIDChan:       make(chan sessionHelloSignal, max(1, poolConfig.PoolSize*len(config.GravityURLs))),
 		sessionReady:           make(chan struct{}),
 		response:               make(chan *pb.ProtocolResponse, 100),
 		pending:                make(map[string]chan *pb.ProtocolResponse),
@@ -2109,22 +2115,21 @@ func (g *GravityClient) establishTunnelStreams() error {
 	// processed the session hello before we open tunnel streams.
 	// Use len(g.connections) rather than raw g.gravityURLs because
 	// resolveGravityURLs() deduplicates and trims to MaxGravityPeers.
-	numExpected := 1
+	expectedStreams := make(map[int]bool)
 	if len(g.connections) > 1 {
 		g.streamManager.controlMu.RLock()
-		healthyCount := 0
-		for _, s := range g.streamManager.controlStreams {
+		for idx, s := range g.streamManager.controlStreams {
 			if s != nil {
-				healthyCount++
+				expectedStreams[idx] = true
 			}
 		}
 		g.streamManager.controlMu.RUnlock()
-		if healthyCount == 0 {
+		if len(expectedStreams) == 0 {
 			return fmt.Errorf("no healthy control streams available")
 		}
-		numExpected = healthyCount
-		g.logger.Debug("waiting for session hello responses from %d healthy Gravity servers (%d total)...", healthyCount, len(g.connections))
+		g.logger.Debug("waiting for session hello responses from %d healthy Gravity servers (%d total)...", len(expectedStreams), len(g.connections))
 	} else {
+		expectedStreams[0] = true
 		g.logger.Debug("waiting for machine ID from server...")
 	}
 
@@ -2133,31 +2138,55 @@ func (g *GravityClient) establishTunnelStreams() error {
 	// connections where the session hello was acknowledged.
 	var machineID string
 	helloResponseCount := 0
+	failedResponses := make(map[int]bool)
+	successResponses := make(map[int]bool)
 	deadline := time.NewTimer(time.Minute)
 	defer deadline.Stop()
-	for i := 0; i < numExpected; i++ {
+	for len(successResponses)+len(failedResponses) < len(expectedStreams) {
 		select {
-		case id := <-g.connectionIDChan:
-			if id == "" {
-				g.logger.Error("session failed - authentication rejected by server (response %d/%d)", i+1, numExpected)
-				return fmt.Errorf("session failed - authentication rejected by server")
+		case sig := <-g.connectionIDChan:
+			if !expectedStreams[sig.streamIndex] {
+				g.logger.Debug("ignoring session hello signal for unexpected stream %d", sig.streamIndex)
+				continue
+			}
+			if sig.machineID == "" {
+				failedResponses[sig.streamIndex] = true
+				g.logger.Error("session hello rejected by server on stream %d (%d/%d failures)", sig.streamIndex, len(failedResponses), len(expectedStreams))
+				if len(failedResponses) == len(expectedStreams) && helloResponseCount == 0 {
+					g.logger.Error("session failed - authentication rejected by all expected servers")
+					return fmt.Errorf("session failed - authentication rejected by server")
+				}
+				continue
+			}
+			if failedResponses[sig.streamIndex] {
+				g.logger.Debug("ignoring late session hello success for stream %d after failure", sig.streamIndex)
+				continue
+			}
+			if successResponses[sig.streamIndex] {
+				g.logger.Debug("ignoring duplicate session hello success for stream %d", sig.streamIndex)
+				continue
 			}
 			if machineID == "" {
-				machineID = id
+				machineID = sig.machineID
 			}
+			successResponses[sig.streamIndex] = true
 			helloResponseCount++
-			g.logger.Debug("session hello response %d/%d received (machine ID: %s)", i+1, numExpected, id)
+			g.logger.Debug("session hello response %d/%d received from stream %d (machine ID: %s)", helloResponseCount, len(expectedStreams), sig.streamIndex, sig.machineID)
 		case <-deadline.C:
-			if machineID != "" && i > 0 {
-				g.logger.Warn("timeout waiting for session hello response %d/%d, proceeding with %d responses", i+1, numExpected, i)
+			if machineID != "" {
+				g.logger.Warn("timeout waiting for remaining session hello responses, proceeding with %d/%d responses", helloResponseCount, len(expectedStreams))
 				goto proceed
+			}
+			if len(failedResponses) > 0 {
+				g.logger.Error("session failed - authentication rejected by %d/%d expected servers", len(failedResponses), len(expectedStreams))
+				return fmt.Errorf("session failed - authentication rejected by server")
 			}
 			g.logger.Error("timeout waiting for machine ID from server - possible server issue or network problem")
 			return fmt.Errorf("timeout waiting for machine ID from server")
 		}
 	}
 proceed:
-	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams (%d/%d hellos acknowledged)", machineID, helloResponseCount, numExpected)
+	g.logger.Debug("machine ID received: %s, proceeding with tunnel streams (%d/%d hellos acknowledged)", machineID, helloResponseCount, len(expectedStreams))
 
 	// Build the set of connections that actually received a SessionHelloResponse.
 	// Tracked by helloAckedStreams (set in processSessionMessage when the response
@@ -2176,7 +2205,7 @@ proceed:
 	// If we got fewer responses than expected, mark non-responding endpoints unhealthy.
 	// Also mark connectionHealth[i] = false so refreshEndpointHealth() doesn't
 	// override our healthy=false with its connectionHealth-based rebuild.
-	if helloResponseCount < numExpected {
+	if helloResponseCount < len(expectedStreams) {
 		g.endpointsMu.RLock()
 		for i, ep := range g.endpoints {
 			if ep != nil && !helloAcked[i] {
@@ -2480,10 +2509,27 @@ func (g *GravityClient) logControlStreamReceiveError(streamIndex int, err error)
 
 func (g *GravityClient) signalSessionHelloFailure(streamIndex int, err error) {
 	g.logger.Error("control stream %d closed before session hello response; signaling startup failure: %s", streamIndex, err.Error())
+	g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex})
+}
+
+func (g *GravityClient) sendSessionHelloSignal(sig sessionHelloSignal) bool {
+	if chValue, ok := g.sessionHelloChans.Load(sig.streamIndex); ok {
+		ch := chValue.(chan sessionHelloSignal)
+		select {
+		case ch <- sig:
+			return true
+		default:
+			g.logger.Warn("session hello signal dropped for stream %d: endpoint channel full", sig.streamIndex)
+			return false
+		}
+	}
+
 	select {
-	case g.connectionIDChan <- "":
+	case g.connectionIDChan <- sig:
+		return true
 	default:
-		g.logger.Warn("control stream %d session hello failure signal dropped: connectionIDChan full", streamIndex)
+		g.logger.Warn("session hello signal dropped for stream %d: shared channel full", sig.streamIndex)
+		return false
 	}
 }
 
@@ -2688,7 +2734,7 @@ func (g *GravityClient) processSessionMessage(streamIndex int, msg *pb.SessionMe
 	case *pb.SessionMessage_Resume:
 		g.handleResumeRequest(streamIndex, msg.Id, m.Resume)
 	case *pb.SessionMessage_Response:
-		g.handleGenericResponse(msg.Id, m.Response)
+		g.handleGenericResponse(streamIndex, msg.Id, m.Response)
 	case *pb.SessionMessage_Event:
 		g.handleEvent(streamIndex, msg.Id, m.Event)
 	case *pb.SessionMessage_Pong:
@@ -2798,15 +2844,12 @@ func (g *GravityClient) handleSessionHelloResponse(streamIndex int, msgID string
 	g.mu.Unlock()
 
 	signalConnectionID := func(id string) {
-		select {
-		case g.connectionIDChan <- id:
+		if g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex, machineID: id}) {
 			if id == "" {
 				g.logger.Debug("sent empty machine ID to signal session hello failure")
 			} else {
-				g.logger.Debug("machine ID sent to channel successfully")
+				g.logger.Debug("machine ID sent to channel successfully for stream %d", streamIndex)
 			}
-		default:
-			g.logger.Warn("connectionIDChan full, dropped machine ID signal")
 		}
 	}
 
@@ -2984,17 +3027,15 @@ func (g *GravityClient) tunnelReadyEndpointIndices() []int {
 	return nil
 }
 
-func (g *GravityClient) handleGenericResponse(msgID string, response *pb.ProtocolResponse) {
+func (g *GravityClient) handleGenericResponse(streamIndex int, msgID string, response *pb.ProtocolResponse) {
 	g.logger.Trace("received generic response: msgID=%s, success=%v, error=%s, event=%s",
 		msgID, response.Success, response.Error, response.Event)
 
 	// Check if this is an error response for a session hello message
 	if msgID == "session_hello" && !response.Success {
 		g.logger.Error("session hello failed: %s", response.Error)
-		select {
-		case g.connectionIDChan <- "":
-		default:
-			g.logger.Warn("session hello failure: connectionIDChan full, failure signal dropped")
+		if !g.sendSessionHelloSignal(sessionHelloSignal{streamIndex: streamIndex}) {
+			g.logger.Warn("session hello failure signal dropped for stream %d", streamIndex)
 		}
 		return
 	}
@@ -4520,6 +4561,10 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 	g.streamManager.cancels[endpointIndex] = cancel
 	g.streamManager.controlMu.Unlock()
 
+	helloCh := make(chan sessionHelloSignal, 1)
+	g.sessionHelloChans.Store(endpointIndex, helloCh)
+	defer g.sessionHelloChans.Delete(endpointIndex)
+
 	go g.handleControlStream(endpointIndex, stream)
 
 	g.drainConnectionIDChan()
@@ -4529,23 +4574,29 @@ func (g *GravityClient) reconnectSingleEndpoint(endpointIndex int, endpointURL s
 		return fmt.Errorf("failed to send session hello: %w", err)
 	}
 
-	select {
-	case id := <-g.connectionIDChan:
-		if id == "" {
+	deadline := time.NewTimer(30 * time.Second)
+	defer deadline.Stop()
+	for {
+		select {
+		case sig := <-helloCh:
+			if sig.machineID == "" {
+				cancel()
+				_ = conn.Close()
+				return fmt.Errorf("session hello rejected by server")
+			}
+			g.logger.Debug("endpoint %d session hello accepted (machine ID: %s)", endpointIndex, sig.machineID)
+			goto accepted
+		case <-deadline.C:
 			cancel()
 			_ = conn.Close()
-			return fmt.Errorf("session hello rejected by server")
+			return fmt.Errorf("timeout waiting for session hello response")
+		case <-g.ctx.Done():
+			cancel()
+			_ = conn.Close()
+			return g.ctx.Err()
 		}
-		g.logger.Debug("endpoint %d session hello accepted (machine ID: %s)", endpointIndex, id)
-	case <-time.After(30 * time.Second):
-		cancel()
-		_ = conn.Close()
-		return fmt.Errorf("timeout waiting for session hello response")
-	case <-g.ctx.Done():
-		cancel()
-		_ = conn.Close()
-		return g.ctx.Err()
 	}
+accepted:
 
 	// Handshake succeeded — now mark the connection healthy so
 	// sendSessionMessageAsync and stream selectors can use it.

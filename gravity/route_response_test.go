@@ -58,10 +58,10 @@ func TestHandleGenericResponse_ErrorRoutesToSandboxPending(t *testing.T) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteSandbox:    map[string]chan routeSandboxResult{msgID: resultChan},
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
-		connectionIDChan:       make(chan string, 1),
+		connectionIDChan:       make(chan sessionHelloSignal, 1),
 	}
 
-	g.handleGenericResponse(msgID, &pb.ProtocolResponse{Id: msgID, Success: false, Error: "boom"})
+	g.handleGenericResponse(0, msgID, &pb.ProtocolResponse{Id: msgID, Success: false, Error: "boom"})
 
 	select {
 	case result := <-resultChan:
@@ -82,10 +82,10 @@ func TestHandleGenericResponse_ErrorRoutesToDeploymentPending(t *testing.T) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		pendingRouteDeployment: map[string]chan routeDeploymentResult{msgID: resultChan},
-		connectionIDChan:       make(chan string, 1),
+		connectionIDChan:       make(chan sessionHelloSignal, 1),
 	}
 
-	g.handleGenericResponse(msgID, &pb.ProtocolResponse{Id: msgID, Success: false, Error: "boom"})
+	g.handleGenericResponse(0, msgID, &pb.ProtocolResponse{Id: msgID, Success: false, Error: "boom"})
 
 	select {
 	case result := <-resultChan:
@@ -107,10 +107,10 @@ func TestHandleGenericResponse_SuccessDoesNotRouteToSandbox(t *testing.T) {
 		pending:                map[string]chan *pb.ProtocolResponse{msgID: responseChan},
 		pendingRouteSandbox:    map[string]chan routeSandboxResult{msgID: resultChan},
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
-		connectionIDChan:       make(chan string, 1),
+		connectionIDChan:       make(chan sessionHelloSignal, 1),
 	}
 
-	g.handleGenericResponse(msgID, &pb.ProtocolResponse{Id: msgID, Success: true})
+	g.handleGenericResponse(0, msgID, &pb.ProtocolResponse{Id: msgID, Success: true})
 
 	select {
 	case response := <-responseChan:
@@ -134,10 +134,10 @@ func TestHandleGenericResponse_ErrorNotFoundAnywhere(t *testing.T) {
 		pending:                make(map[string]chan *pb.ProtocolResponse),
 		pendingRouteSandbox:    make(map[string]chan routeSandboxResult),
 		pendingRouteDeployment: make(map[string]chan routeDeploymentResult),
-		connectionIDChan:       make(chan string, 1),
+		connectionIDChan:       make(chan sessionHelloSignal, 1),
 	}
 
-	g.handleGenericResponse("missing", &pb.ProtocolResponse{Id: "missing", Success: false, Error: "boom"})
+	g.handleGenericResponse(0, "missing", &pb.ProtocolResponse{Id: "missing", Success: false, Error: "boom"})
 }
 
 func TestSendRouteSandboxRequest_ErrorFromServer(t *testing.T) {

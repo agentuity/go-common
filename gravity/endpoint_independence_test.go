@@ -76,7 +76,7 @@ func newEndpointTestClient(t *testing.T, n int) *GravityClient {
 		endpoints:             make([]*GravityEndpoint, n),
 		endpointReconnecting:  make([]atomic.Bool, n),
 		circuitBreakers:       make([]*CircuitBreaker, n),
-		connectionIDChan:      make(chan string, 16),
+		connectionIDChan:      make(chan sessionHelloSignal, 16),
 		endpointStreamIndices: make(map[string][]int),
 		closed:                make(chan struct{}, 1),
 		streamManager: &StreamManager{
@@ -490,9 +490,9 @@ func TestHandleEndpointDisconnection_ConcurrentPerEndpoint(t *testing.T) {
 
 func TestDrainConnectionIDChan_DrainsAllValues(t *testing.T) {
 	g := newEndpointTestClient(t, 1)
-	g.connectionIDChan = make(chan string, 8)
+	g.connectionIDChan = make(chan sessionHelloSignal, 8)
 	for i := 0; i < 5; i++ {
-		g.connectionIDChan <- fmt.Sprintf("id-%d", i)
+		g.connectionIDChan <- sessionHelloSignal{streamIndex: i, machineID: fmt.Sprintf("id-%d", i)}
 	}
 
 	g.drainConnectionIDChan()
@@ -504,7 +504,7 @@ func TestDrainConnectionIDChan_DrainsAllValues(t *testing.T) {
 
 func TestDrainConnectionIDChan_EmptyNoOp(t *testing.T) {
 	g := newEndpointTestClient(t, 1)
-	g.connectionIDChan = make(chan string, 1)
+	g.connectionIDChan = make(chan sessionHelloSignal, 1)
 
 	done := make(chan struct{})
 	go func() {
@@ -981,7 +981,7 @@ func TestTriggerAllEndpointReconnections_AllUnhealthy_ReconnectsAll(t *testing.T
 		endpoints:             make([]*GravityEndpoint, 3),
 		endpointReconnecting:  make([]atomic.Bool, 3),
 		circuitBreakers:       make([]*CircuitBreaker, 3),
-		connectionIDChan:      make(chan string, 16),
+		connectionIDChan:      make(chan sessionHelloSignal, 16),
 		endpointStreamIndices: make(map[string][]int),
 		closed:                make(chan struct{}, 1),
 		streamManager: &StreamManager{
@@ -1834,7 +1834,7 @@ func TestTriggerAllEndpointReconnections_ConcurrentCalls(t *testing.T) {
 		endpoints:             make([]*GravityEndpoint, 3),
 		endpointReconnecting:  make([]atomic.Bool, 3),
 		circuitBreakers:       make([]*CircuitBreaker, 3),
-		connectionIDChan:      make(chan string, 16),
+		connectionIDChan:      make(chan sessionHelloSignal, 16),
 		endpointStreamIndices: make(map[string][]int),
 		closed:                make(chan struct{}, 1),
 		peerDiscoveryWake:     make(chan struct{}, 1),
@@ -1908,7 +1908,7 @@ func TestTriggerAllEndpointReconnections_SingleEndpointMode(t *testing.T) {
 		endpoints:             make([]*GravityEndpoint, 1),
 		endpointReconnecting:  make([]atomic.Bool, 1),
 		circuitBreakers:       make([]*CircuitBreaker, 1),
-		connectionIDChan:      make(chan string, 16),
+		connectionIDChan:      make(chan sessionHelloSignal, 16),
 		endpointStreamIndices: make(map[string][]int),
 		closed:                make(chan struct{}, 1),
 		peerDiscoveryWake:     make(chan struct{}, 1),

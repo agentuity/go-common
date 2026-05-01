@@ -274,10 +274,10 @@ func TestHardening_ReconnectDrainsAllConnectionIDs(t *testing.T) {
 	g := newHardeningGravityClient(t, 1)
 
 	// Push multiple stale IDs into the real channel.
-	g.connectionIDChan <- "a"
-	g.connectionIDChan <- "b"
-	g.connectionIDChan <- "c"
-	g.connectionIDChan <- "d"
+	g.connectionIDChan <- sessionHelloSignal{streamIndex: 0, machineID: "a"}
+	g.connectionIDChan <- sessionHelloSignal{streamIndex: 1, machineID: "b"}
+	g.connectionIDChan <- sessionHelloSignal{streamIndex: 2, machineID: "c"}
+	g.connectionIDChan <- sessionHelloSignal{streamIndex: 3, machineID: "d"}
 
 	// Call the production drain helper used by reconnect().
 	g.drainConnectionIDChan()
@@ -696,9 +696,12 @@ func TestHardening_SessionHelloConfigureFailureUnblocksWait(t *testing.T) {
 	}
 
 	select {
-	case id := <-g.connectionIDChan:
-		if id != "" {
-			t.Fatalf("expected empty machine ID failure signal, got %q", id)
+	case sig := <-g.connectionIDChan:
+		if sig.streamIndex != 0 || sig.machineID != "" {
+			t.Fatalf("expected empty machine ID failure signal for stream 0, got %+v", sig)
+		}
+		if sig.errMessage == "" {
+			t.Fatal("expected configure failure message on session hello signal")
 		}
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("expected failure signal on connectionIDChan")
@@ -1734,6 +1737,7 @@ func TestTunnelReadyEndpointIndices_SingleEndpointModeUsesHealthyConnection(t *t
 		t.Fatalf("expected single-endpoint mode to report endpoint 0 ready, got %v", ready)
 	}
 }
+
 // ============================================================================
 // P3: Timing & Lifecycle Tests
 // ============================================================================

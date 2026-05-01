@@ -476,7 +476,7 @@ func TestStreamManager_RegisterStream(t *testing.T) {
 	g.helloAckedStreams.Store(0, true)
 	go func() {
 		time.Sleep(20 * time.Millisecond)
-		g.connectionIDChan <- "machine-1"
+		g.connectionIDChan <- sessionHelloSignal{streamIndex: 0, machineID: "machine-1"}
 	}()
 
 	if err := g.establishTunnelStreams(); err != nil {

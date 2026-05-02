@@ -92,6 +92,11 @@ const (
 	// ipv6 destination" → RST, breaking HTTP/2 connection reuse and
 	// long-lived connections.
 	DefaultBindingTTL = 10 * time.Minute
+
+	// GravityHealthProbeUserAgent identifies hadron/gravity-client HTTP
+	// readiness probes to ion. Ion uses this to answer control-plane
+	// readiness without admitting public traffic during tableflip.
+	GravityHealthProbeUserAgent = "Agentuity-Gravity-HealthProbe/1.0"
 )
 
 // TunnelKeepaliveMarker is a 4-byte magic prefix for tunnel keepalive packets.
@@ -4539,6 +4544,7 @@ func (g *GravityClient) doHealthProbe(probeURL string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	req.Header.Set("User-Agent", GravityHealthProbeUserAgent)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return 0, err

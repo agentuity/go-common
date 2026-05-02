@@ -242,6 +242,7 @@ type GravityClient struct {
 	peerCycleInterval       time.Duration
 	lastCycleTime           atomic.Int64  // unix timestamp of last cycle
 	peerDiscoveryWake       chan struct{} // non-blocking signal to wake the discovery loop immediately
+	peerDiscoveryDisabled   bool
 	discoveryCtx            context.Context
 	discoveryCancel         context.CancelFunc
 	discoveryDone           chan struct{}
@@ -835,6 +836,7 @@ func (g *GravityClient) startMultiEndpoint() error {
 		g.mu.Unlock()
 		return ErrNoGravityFound
 	}
+	g.peerDiscoveryDisabled = allGravityURLsAreDirectIPs(urls)
 	g.mu.Unlock()
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
@@ -1188,6 +1190,50 @@ func (g *GravityClient) resolveGravityURLs() []string {
 	}
 
 	return urls
+}
+
+func allGravityURLsAreDirectIPs(urls []string) bool {
+	hasURL := false
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		hasURL = true
+		if !isDirectIPGravityURL(raw) {
+			return false
+		}
+	}
+	return hasURL
+}
+
+func isDirectIPGravityURL(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+
+	if ip := net.ParseIP(strings.Trim(raw, "[]")); ip != nil {
+		return true
+	}
+
+	parseable := raw
+	if strings.HasPrefix(parseable, "grpc://") {
+		parseable = "https://" + parseable[len("grpc://"):]
+	} else if !strings.Contains(parseable, "://") {
+		parseable = "https://" + parseable
+	}
+
+	u, err := url.Parse(parseable)
+	if err != nil {
+		return false
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	return net.ParseIP(host) != nil
 }
 
 // tunnelLivenessMonitor periodically sends keepalive probes on tunnel streams
@@ -5044,6 +5090,10 @@ func (g *GravityClient) cleanup() {
 
 func (g *GravityClient) startPeerDiscovery() {
 	if g.discoveryResolveFunc == nil {
+		return
+	}
+	if g.peerDiscoveryDisabled {
+		g.logger.Debug("peer discovery: disabled for direct IP Gravity URLs")
 		return
 	}
 

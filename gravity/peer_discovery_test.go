@@ -198,6 +198,58 @@ func TestResolveGravityURLs_MaxPeersZeroIncludesAll(t *testing.T) {
 	}
 }
 
+func TestAllGravityURLsAreDirectIPs(t *testing.T) {
+	tests := []struct {
+		name string
+		urls []string
+		want bool
+	}{
+		{
+			name: "single IPv4 URL",
+			urls: []string{"grpc://10.0.0.1:443"},
+			want: true,
+		},
+		{
+			name: "multiple IPv4 URLs",
+			urls: []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"},
+			want: true,
+		},
+		{
+			name: "bracketed IPv6 URL",
+			urls: []string{"grpc://[fd15:d710::1]:443"},
+			want: true,
+		},
+		{
+			name: "hostnames are not direct IPs",
+			urls: []string{"grpc://gravity.example.com:443"},
+			want: false,
+		},
+		{
+			name: "mixed hostname and IP keeps discovery enabled",
+			urls: []string{"grpc://10.0.0.1:443", "grpc://gravity.example.com:443"},
+			want: false,
+		},
+		{
+			name: "empty input",
+			urls: []string{"", "  "},
+			want: false,
+		},
+		{
+			name: "host port without scheme",
+			urls: []string{"10.0.0.1:443"},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := allGravityURLsAreDirectIPs(tt.urls); got != tt.want {
+				t.Fatalf("allGravityURLsAreDirectIPs(%#v) = %v, want %v", tt.urls, got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------- pickRandomURL ----------
 
 func TestPickRandomURL_SingleElement(t *testing.T) {
@@ -816,6 +868,29 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 	case <-called:
 		t.Fatal("expected canceled peer discovery loop to stop scheduling reconnects")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestStartPeerDiscovery_DisabledForDirectIPGravityURLs(t *testing.T) {
+	g := newTestGravityClient([]string{"grpc://10.0.0.1:443"}, []string{"grpc://10.0.0.1:443"})
+	defer g.cancel()
+
+	g.peerDiscoveryWake = make(chan struct{}, 1)
+	g.discoveryResolveFunc = func() []string {
+		t.Fatal("discovery resolver should not be called for direct IP Gravity URLs")
+		return nil
+	}
+	g.peerDiscoveryDisabled = allGravityURLsAreDirectIPs(g.gravityURLs)
+
+	g.startPeerDiscovery()
+
+	g.discoveryMu.Lock()
+	discoveryCtx := g.discoveryCtx
+	discoveryDone := g.discoveryDone
+	g.discoveryMu.Unlock()
+
+	if discoveryCtx != nil || discoveryDone != nil {
+		t.Fatal("expected peer discovery loop not to start for direct IP Gravity URLs")
 	}
 }
 

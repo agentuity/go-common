@@ -211,6 +211,32 @@ func TestEstablishControlStreams_SingleEndpointPreservesOriginalBehavior(t *test
 	}
 }
 
+func TestControlStreamContextCanceledDuringClientShutdownDoesNotReconnect(t *testing.T) {
+	g := newResilienceTestClient(t, 3, true)
+	g.streamManager.controlStreams[1] = &mockControlStream{ctx: g.ctx}
+
+	g.cancel()
+	g.handleControlStream(1, &mockControlStream{ctx: g.ctx})
+
+	if g.endpointReconnecting[1].Load() {
+		t.Fatal("expected context cancellation from client shutdown not to reconnect endpoint")
+	}
+}
+
+func TestTunnelStreamContextCanceledDuringClientShutdownDoesNotReconnect(t *testing.T) {
+	g := newResilienceTestClient(t, 3, true)
+	g.streamManager.tunnelStreams = []*StreamInfo{
+		{connIndex: 0, streamID: "stream-0", isHealthy: true},
+	}
+
+	g.cancel()
+	g.handleTunnelStream(0, &mockTunnelStream{ctx: g.ctx}, "stream-0")
+
+	if g.endpointReconnecting[0].Load() {
+		t.Fatal("expected context cancellation from client shutdown not to reconnect endpoint")
+	}
+}
+
 func TestEstablishTunnelStreams_SkipsNilClients(t *testing.T) {
 	g := newResilienceTestClient(t, 4, true)
 	g.poolConfig.StreamsPerGravity = 2

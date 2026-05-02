@@ -2542,10 +2542,7 @@ func (g *GravityClient) handleControlStream(streamIndex int, stream pb.GravitySe
 			// Trigger reconnection for any stream death unless we're
 			// intentionally closing. Context cancellation (codes.Canceled)
 			// can happen during server restarts — not just graceful shutdown.
-			g.mu.RLock()
-			closing := g.closing
-			g.mu.RUnlock()
-			if !closing {
+			if !g.isShuttingDown() {
 				if _, acked := g.helloAckedStreams.Load(streamIndex); !acked {
 					g.signalSessionHelloFailure(streamIndex, err)
 				}
@@ -2650,10 +2647,7 @@ func (g *GravityClient) handleTunnelStream(streamIndex int, stream pb.GravitySes
 			// Trigger reconnection for any stream death unless we're
 			// intentionally closing. Context cancellation can happen
 			// during server restarts — not just graceful shutdown.
-			g.mu.RLock()
-			closing := g.closing
-			g.mu.RUnlock()
-			if !closing {
+			if !g.isShuttingDown() {
 				isConnectionLost := isCanceled || errors.Is(err, io.EOF)
 				if !isConnectionLost {
 					if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
@@ -2785,6 +2779,21 @@ func (g *GravityClient) handleTunnelStreamDisconnection(streamIndex int) {
 		}
 	} else {
 		go g.handleServerDisconnection(reason)
+	}
+}
+
+func (g *GravityClient) isShuttingDown() bool {
+	g.mu.RLock()
+	closing := g.closing
+	g.mu.RUnlock()
+	if closing {
+		return true
+	}
+	select {
+	case <-g.ctx.Done():
+		return true
+	default:
+		return false
 	}
 }
 

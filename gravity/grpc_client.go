@@ -2027,6 +2027,21 @@ func (g *GravityClient) rebuildEndpointStreamIndices() {
 	g.mu.Unlock()
 }
 
+func (g *GravityClient) ensureTunnelStreamSlots(endpointIndex, streamsPerGravity int) {
+	if endpointIndex < 0 {
+		return
+	}
+	if streamsPerGravity <= 0 {
+		streamsPerGravity = DefaultStreamsPerGravity
+	}
+	required := (endpointIndex + 1) * streamsPerGravity
+	g.streamManager.tunnelMu.Lock()
+	for len(g.streamManager.tunnelStreams) < required {
+		g.streamManager.tunnelStreams = append(g.streamManager.tunnelStreams, nil)
+	}
+	g.streamManager.tunnelMu.Unlock()
+}
+
 func (g *GravityClient) refreshEndpointHealth() {
 	g.endpointsMu.RLock()
 	endpoints := make([]*GravityEndpoint, len(g.endpoints))
@@ -4770,6 +4785,7 @@ accepted:
 	if streamsPerGravity <= 0 {
 		streamsPerGravity = DefaultStreamsPerGravity
 	}
+	g.ensureTunnelStreamSlots(endpointIndex, streamsPerGravity)
 	tunnelOffset := endpointIndex * streamsPerGravity
 
 	streamsToStart := make([]struct {

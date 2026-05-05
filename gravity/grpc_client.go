@@ -841,8 +841,16 @@ func (g *GravityClient) startMultiEndpoint() error {
 		g.mu.Unlock()
 		return ErrNoGravityFound
 	}
-	g.peerDiscoveryDisabled = allGravityURLsAreDirectIPs(urls)
+	primaryURL := g.url
+	hasDiscoveryResolver := g.discoveryResolveFunc != nil
 	g.mu.Unlock()
+
+	var discoveryURLs []string
+	discoveryResolved := false
+	if shouldResolveForPeerDiscoveryDisableCheck(urls, primaryURL, hasDiscoveryResolver) {
+		discoveryURLs, discoveryResolved = g.resolvePeerDiscoveryURLs()
+	}
+	g.peerDiscoveryDisabled = shouldDisablePeerDiscoveryForResolvedURLs(urls, primaryURL, hasDiscoveryResolver, discoveryURLs, discoveryResolved)
 
 	g.logger.Info("multi-endpoint mode: connecting to %d Gravity servers: %v", len(urls), urls)
 
@@ -1210,6 +1218,61 @@ func allGravityURLsAreDirectIPs(urls []string) bool {
 		}
 	}
 	return hasURL
+}
+
+func sameGravityURLSet(a, b []string) bool {
+	normalize := func(in []string) map[string]struct{} {
+		out := make(map[string]struct{}, len(in))
+		for _, raw := range in {
+			u := strings.TrimSpace(raw)
+			if u == "" {
+				continue
+			}
+			out[u] = struct{}{}
+		}
+		return out
+	}
+
+	aa := normalize(a)
+	bb := normalize(b)
+	if len(aa) == 0 || len(aa) != len(bb) {
+		return false
+	}
+	for u := range aa {
+		if _, ok := bb[u]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func shouldResolveForPeerDiscoveryDisableCheck(urls []string, primaryURL string, hasDiscoveryResolver bool) bool {
+	return allGravityURLsAreDirectIPs(urls) && !isDirectIPGravityURL(primaryURL) && hasDiscoveryResolver
+}
+
+func shouldDisablePeerDiscoveryForResolvedURLs(urls []string, primaryURL string, hasDiscoveryResolver bool, discoveryURLs []string, discoveryResolved bool) bool {
+	if !allGravityURLsAreDirectIPs(urls) {
+		return false
+	}
+
+	// A direct IP primary URL is an explicit operator override. Do not discover
+	// away from it.
+	if isDirectIPGravityURL(primaryURL) {
+		return true
+	}
+
+	if !hasDiscoveryResolver {
+		return true
+	}
+
+	if !discoveryResolved {
+		return true
+	}
+
+	// Hadron may resolve DNS before constructing the Gravity client, which
+	// means DNS-derived peers arrive here as direct IP URLs. Keep peer discovery
+	// enabled when the resolver confirms this URL set came from discovery.
+	return !sameGravityURLSet(urls, discoveryURLs)
 }
 
 func isDirectIPGravityURL(raw string) bool {
@@ -5148,6 +5211,10 @@ func (g *GravityClient) resolvePeerDiscoveryURLs() ([]string, bool) {
 	ctx := g.discoveryCtx
 	timeout := g.discoveryResolveTimeout
 	g.discoveryMu.Unlock()
+
+	if g.discoveryResolveFunc == nil {
+		return nil, false
+	}
 
 	if ctx == nil {
 		ctx = g.ctx

@@ -250,6 +250,124 @@ func TestAllGravityURLsAreDirectIPs(t *testing.T) {
 	}
 }
 
+func TestShouldDisablePeerDiscoveryForResolvedURLs(t *testing.T) {
+	tests := []struct {
+		name              string
+		url               string
+		urls              []string
+		hasResolver       bool
+		discoveryURLs     []string
+		discoveryResolved bool
+		want              bool
+	}{
+		{
+			name:              "explicit primary IP disables discovery",
+			url:               "grpc://10.0.0.1:443",
+			urls:              []string{"grpc://10.0.0.1:443"},
+			hasResolver:       true,
+			discoveryURLs:     []string{"grpc://10.0.0.1:443"},
+			discoveryResolved: true,
+			want:              true,
+		},
+		{
+			name: "static direct IP URLs without resolver disable discovery",
+			url:  "grpc://gravity.example.com:443",
+			urls: []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"},
+			want: true,
+		},
+		{
+			name:              "static direct IP URLs with different resolver output disable discovery",
+			url:               "grpc://gravity.example.com:443",
+			urls:              []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"},
+			hasResolver:       true,
+			discoveryURLs:     []string{"grpc://10.0.0.3:443", "grpc://10.0.0.4:443"},
+			discoveryResolved: true,
+			want:              true,
+		},
+		{
+			name:              "DNS discovered direct IP URLs keep discovery enabled",
+			url:               "grpc://gravity.example.com:443",
+			urls:              []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"},
+			hasResolver:       true,
+			discoveryURLs:     []string{"grpc://10.0.0.2:443", "grpc://10.0.0.1:443"},
+			discoveryResolved: true,
+			want:              false,
+		},
+		{
+			name:              "resolver timeout disables discovery conservatively",
+			url:               "grpc://gravity.example.com:443",
+			urls:              []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"},
+			hasResolver:       true,
+			discoveryResolved: false,
+			want:              true,
+		},
+		{
+			name:              "hostnames keep discovery enabled",
+			url:               "grpc://gravity.example.com:443",
+			urls:              []string{"grpc://gravity-a.example.com:443", "grpc://gravity-b.example.com:443"},
+			hasResolver:       true,
+			discoveryURLs:     []string{"grpc://gravity-a.example.com:443", "grpc://gravity-b.example.com:443"},
+			discoveryResolved: true,
+			want:              false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldDisablePeerDiscoveryForResolvedURLs(tt.urls, tt.url, tt.hasResolver, tt.discoveryURLs, tt.discoveryResolved); got != tt.want {
+				t.Fatalf("shouldDisablePeerDiscoveryForResolvedURLs() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldResolveForPeerDiscoveryDisableCheck(t *testing.T) {
+	tests := []struct {
+		name        string
+		urls        []string
+		primaryURL  string
+		hasResolver bool
+		want        bool
+	}{
+		{
+			name:        "DNS-derived direct IP candidate needs bounded resolve",
+			urls:        []string{"grpc://10.0.0.1:443"},
+			primaryURL:  "grpc://gravity.example.com:443",
+			hasResolver: true,
+			want:        true,
+		},
+		{
+			name:        "explicit primary direct IP skips resolve",
+			urls:        []string{"grpc://10.0.0.1:443"},
+			primaryURL:  "grpc://10.0.0.1:443",
+			hasResolver: true,
+			want:        false,
+		},
+		{
+			name:        "hostnames skip resolve",
+			urls:        []string{"grpc://gravity-a.example.com:443"},
+			primaryURL:  "grpc://gravity.example.com:443",
+			hasResolver: true,
+			want:        false,
+		},
+		{
+			name:        "missing resolver skips resolve",
+			urls:        []string{"grpc://10.0.0.1:443"},
+			primaryURL:  "grpc://gravity.example.com:443",
+			hasResolver: false,
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldResolveForPeerDiscoveryDisableCheck(tt.urls, tt.primaryURL, tt.hasResolver); got != tt.want {
+				t.Fatalf("shouldResolveForPeerDiscoveryDisableCheck() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // ---------- pickRandomURL ----------
 
 func TestPickRandomURL_SingleElement(t *testing.T) {
@@ -438,6 +556,39 @@ func TestCheckPeerDiscovery_StaleURLReplacedWhenResolvedCountMatchesConnectedCou
 	}
 	if !urls["grpc://ion-a.example.com"] || !urls["grpc://ion-b.example.com"] {
 		t.Fatalf("expected both direct ion endpoints after replacement, got %v", urls)
+	}
+}
+
+func TestCheckPeerDiscovery_DNSDiscoveredDirectIPAddsEndpointBelowCapacity(t *testing.T) {
+	connected := []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+	}
+	g := newTestGravityClient(nil, connected)
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+			"grpc://10.0.0.3:443",
+		}
+	}
+	g.poolConfig.MaxGravityPeers = 3
+
+	g.checkPeerDiscovery(2 * time.Hour)
+
+	g.endpointsMu.RLock()
+	urls := make(map[string]bool)
+	for _, ep := range g.endpoints {
+		urls[ep.URL] = true
+	}
+	g.endpointsMu.RUnlock()
+
+	if !urls["grpc://10.0.0.3:443"] {
+		t.Fatalf("expected DNS-discovered direct IP endpoint to be added, got %v", urls)
+	}
+	if len(urls) != 3 {
+		t.Fatalf("expected 3 endpoints after discovery, got %d", len(urls))
 	}
 }
 
@@ -871,16 +1022,17 @@ func TestCleanup_CancelsPeerDiscoveryLoop(t *testing.T) {
 	}
 }
 
-func TestStartPeerDiscovery_DisabledForDirectIPGravityURLs(t *testing.T) {
+func TestStartPeerDiscovery_DisabledForExplicitDirectIPGravityURLs(t *testing.T) {
 	g := newTestGravityClient([]string{"grpc://10.0.0.1:443"}, []string{"grpc://10.0.0.1:443"})
 	defer g.cancel()
 
+	g.url = "grpc://10.0.0.1:443"
 	g.peerDiscoveryWake = make(chan struct{}, 1)
 	g.discoveryResolveFunc = func() []string {
 		t.Fatal("discovery resolver should not be called for direct IP Gravity URLs")
 		return nil
 	}
-	g.peerDiscoveryDisabled = allGravityURLsAreDirectIPs(g.gravityURLs)
+	g.peerDiscoveryDisabled = shouldDisablePeerDiscoveryForResolvedURLs(g.gravityURLs, g.url, g.discoveryResolveFunc != nil, nil, false)
 
 	g.startPeerDiscovery()
 
@@ -891,6 +1043,54 @@ func TestStartPeerDiscovery_DisabledForDirectIPGravityURLs(t *testing.T) {
 
 	if discoveryCtx != nil || discoveryDone != nil {
 		t.Fatal("expected peer discovery loop not to start for direct IP Gravity URLs")
+	}
+}
+
+func TestStartPeerDiscovery_DisabledForStaticDirectIPGravityURLs(t *testing.T) {
+	g := newTestGravityClient([]string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"}, []string{"grpc://10.0.0.1:443"})
+	defer g.cancel()
+
+	g.url = "grpc://gravity.example.com:443"
+	g.peerDiscoveryWake = make(chan struct{}, 1)
+	g.discoveryResolveFunc = func() []string {
+		return []string{"grpc://10.0.0.3:443", "grpc://10.0.0.4:443"}
+	}
+	g.peerDiscoveryDisabled = shouldDisablePeerDiscoveryForResolvedURLs(g.gravityURLs, g.url, g.discoveryResolveFunc != nil, []string{"grpc://10.0.0.3:443", "grpc://10.0.0.4:443"}, true)
+
+	g.startPeerDiscovery()
+
+	g.discoveryMu.Lock()
+	discoveryCtx := g.discoveryCtx
+	discoveryDone := g.discoveryDone
+	g.discoveryMu.Unlock()
+
+	if discoveryCtx != nil || discoveryDone != nil {
+		t.Fatal("expected peer discovery loop not to start for static direct IP Gravity URLs")
+	}
+}
+
+func TestStartPeerDiscovery_EnabledForDNSDiscoveredDirectIPGravityURLs(t *testing.T) {
+	urls := []string{"grpc://10.0.0.1:443", "grpc://10.0.0.2:443"}
+	g := newTestGravityClient(urls, urls)
+	defer g.cancel()
+
+	g.url = "grpc://gravity.example.com:443"
+	g.peerDiscoveryWake = make(chan struct{}, 1)
+	g.discoveryResolveFunc = func() []string {
+		return []string{"grpc://10.0.0.2:443", "grpc://10.0.0.1:443"}
+	}
+	g.peerDiscoveryDisabled = shouldDisablePeerDiscoveryForResolvedURLs(g.gravityURLs, g.url, g.discoveryResolveFunc != nil, []string{"grpc://10.0.0.2:443", "grpc://10.0.0.1:443"}, true)
+
+	g.startPeerDiscovery()
+	defer g.stopPeerDiscovery()
+
+	g.discoveryMu.Lock()
+	discoveryCtx := g.discoveryCtx
+	discoveryDone := g.discoveryDone
+	g.discoveryMu.Unlock()
+
+	if discoveryCtx == nil || discoveryDone == nil {
+		t.Fatal("expected peer discovery loop to start for DNS-discovered direct IP Gravity URLs")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/agentuity/go-common/logger"
 )
@@ -314,6 +315,94 @@ func TestReResolveEndpointURL_ConcurrentStaleDirectEndpointsPickUniqueDiscovered
 		if seen[want] != 1 {
 			t.Fatalf("expected exactly one endpoint for %s, got %d in %v", want, seen[want], seen)
 		}
+	}
+}
+
+func TestReResolveFromDiscoveredSet_UsesBoundedResolver(t *testing.T) {
+	endpoint := &GravityEndpoint{
+		URL:           "grpc://10.0.0.9:443",
+		TLSServerName: "gravity-bootstrap.example.com",
+	}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint}, newMockDNSLookup())
+	defer g.cancel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	g.discoveryResolveTimeout = 10 * time.Millisecond
+	g.discoveryResolveFunc = func() []string {
+		close(started)
+		<-release
+		return []string{"grpc://10.0.0.2:443"}
+	}
+	defer close(release)
+
+	begin := time.Now()
+	newURL, handled := g.reResolveFromDiscoveredSet(0, endpoint.URL)
+	elapsed := time.Since(begin)
+
+	if newURL != "" || handled {
+		t.Fatalf("expected timed out resolver to be unhandled, got url=%q handled=%t", newURL, handled)
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("expected bounded resolver timeout, took %s", elapsed)
+	}
+	select {
+	case <-started:
+	default:
+		t.Fatal("expected resolver to be called")
+	}
+}
+
+func TestReResolveFromDiscoveredSet_RefreshesTLSServerName(t *testing.T) {
+	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.9:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint1 := &GravityEndpoint{URL: "grpc://ion-a.example.com:443", TLSServerName: "ion-a.example.com"}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1}, newMockDNSLookup())
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://ion-a.example.com:443",
+			"grpc://ion-b.example.com:443",
+		}
+	}
+
+	newURL, handled := g.reResolveFromDiscoveredSet(0, endpoint0.URL)
+
+	if !handled {
+		t.Fatal("expected discovered replacement to be handled")
+	}
+	if newURL != "grpc://ion-b.example.com:443" {
+		t.Fatalf("expected ion-b replacement, got %q", newURL)
+	}
+	if endpoint0.URL != "grpc://ion-b.example.com:443" {
+		t.Fatalf("expected endpoint URL to update, got %q", endpoint0.URL)
+	}
+	if endpoint0.TLSServerName != "ion-b.example.com" {
+		t.Fatalf("expected TLS server name to update, got %q", endpoint0.TLSServerName)
+	}
+}
+
+func TestReResolveFromDiscoveredSet_ClearsTLSServerNameForRawIP(t *testing.T) {
+	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.9:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint1 := &GravityEndpoint{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity-bootstrap.example.com"}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1}, newMockDNSLookup())
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+		}
+	}
+
+	newURL, handled := g.reResolveFromDiscoveredSet(0, endpoint0.URL)
+
+	if !handled {
+		t.Fatal("expected discovered replacement to be handled")
+	}
+	if newURL != "grpc://10.0.0.2:443" {
+		t.Fatalf("expected raw IP replacement, got %q", newURL)
+	}
+	if endpoint0.TLSServerName != "" {
+		t.Fatalf("expected TLS server name to be cleared for raw IP, got %q", endpoint0.TLSServerName)
 	}
 }
 

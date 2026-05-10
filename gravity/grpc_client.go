@@ -4541,8 +4541,8 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 }
 
 func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL string) (string, bool) {
-	allURLs := g.discoveryResolveFunc()
-	if len(allURLs) == 0 {
+	allURLs, ok := g.resolvePeerDiscoveryURLs()
+	if !ok || len(allURLs) == 0 {
 		return "", false
 	}
 
@@ -4605,11 +4605,24 @@ func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL
 
 		if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 			g.endpoints[endpointIndex].URL = u
+			g.endpoints[endpointIndex].TLSServerName = g.tlsServerNameFromParsedURL(u)
 		}
 		return u, true
 	}
 
 	return "", false
+}
+
+func (g *GravityClient) tlsServerNameFromParsedURL(endpointURL string) string {
+	parsed, err := g.parseGRPCURL(endpointURL)
+	if err != nil {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(parsed)
+	if err != nil || net.ParseIP(host) != nil {
+		return ""
+	}
+	return host
 }
 
 // probeHealthEndpoint checks if a gravity endpoint is alive and ready by

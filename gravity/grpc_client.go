@@ -1786,6 +1786,9 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 	if currentCount < maxPeers && len(newURLs) > 0 {
 		newURL := pickRandomURL(newURLs)
 		if newURL != "" {
+			if g.replaceDuplicateEndpoint(newURL) {
+				return
+			}
 			g.logger.Info("peer discovery: adding new endpoint %s (currently %d/%d, %d new available)",
 				newURL, currentCount, maxPeers, len(newURLs))
 			g.addEndpoint(newURL)
@@ -1824,6 +1827,43 @@ func (g *GravityClient) checkPeerDiscovery(cycleInterval time.Duration) {
 		evictURL, newURL, len(allURLs), currentCount)
 	g.cycleEndpoint(evictURL, newURL)
 	g.lastCycleTime.Store(now.Unix())
+}
+
+// replaceDuplicateEndpoint repairs a full endpoint set where two slots point at
+// the same Gravity URL and peer discovery has found a missing discovered URL.
+func (g *GravityClient) replaceDuplicateEndpoint(newURL string) bool {
+	if strings.TrimSpace(newURL) == "" {
+		return false
+	}
+
+	g.endpointsMu.RLock()
+	counts := make(map[string]int, len(g.endpoints))
+	for _, ep := range g.endpoints {
+		if ep == nil {
+			continue
+		}
+		u := strings.TrimSpace(ep.URL)
+		if u != "" {
+			counts[u]++
+		}
+	}
+
+	duplicateURL := ""
+	for u, count := range counts {
+		if count > 1 {
+			duplicateURL = u
+			break
+		}
+	}
+	g.endpointsMu.RUnlock()
+
+	if duplicateURL == "" {
+		return false
+	}
+
+	g.logger.Info("peer discovery: replacing duplicate connection %s with %s", duplicateURL, newURL)
+	g.cycleEndpoint(duplicateURL, newURL)
+	return true
 }
 
 // cycleEndpoint replaces one endpoint with another.
@@ -4411,7 +4451,7 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 	// hostname that discovery returned. Re-resolving TLSServerName can therefore
 	// collapse multiple direct endpoints back onto the same shared/NLB address.
 	if g.multiEndpointMode.Load() && g.discoveryResolveFunc != nil {
-		if newURL, handled := g.reResolveFromDiscoveredSet(endpointIndex, currentURL, inUse); handled {
+		if newURL, handled := g.reResolveFromDiscoveredSet(endpointIndex, currentURL); handled {
 			return newURL
 		}
 	}
@@ -4500,7 +4540,7 @@ func (g *GravityClient) reResolveEndpointURL(endpointIndex int, currentURL strin
 	return ""
 }
 
-func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL string, inUse map[string]bool) (string, bool) {
+func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL string) (string, bool) {
 	allURLs := g.discoveryResolveFunc()
 	if len(allURLs) == 0 {
 		return "", false
@@ -4522,6 +4562,31 @@ func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL
 		return "", false
 	}
 
+	// Preserve direct discovered endpoint coverage. If this endpoint is still
+	// in the discovered set, retry it instead of collapsing onto another live
+	// Ion and leaving this direct target uncovered.
+	if currentKnown {
+		return "", true
+	}
+
+	g.endpointsMu.Lock()
+	defer g.endpointsMu.Unlock()
+
+	inUse := make(map[string]bool, len(g.endpoints))
+	for i, ep := range g.endpoints {
+		if i == endpointIndex || ep == nil {
+			continue
+		}
+		parsed, err := g.parseGRPCURL(ep.URL)
+		if err != nil {
+			continue
+		}
+		host, _, splitErr := net.SplitHostPort(parsed)
+		if splitErr == nil {
+			inUse[host] = true
+		}
+	}
+
 	// First try to switch to another discovered direct endpoint that is not
 	// already in use by a sibling endpoint.
 	for _, raw := range allURLs {
@@ -4538,19 +4603,10 @@ func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL
 			continue
 		}
 
-		g.endpointsMu.Lock()
 		if endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil {
 			g.endpoints[endpointIndex].URL = u
 		}
-		g.endpointsMu.Unlock()
 		return u, true
-	}
-
-	// If the current endpoint is already part of the discovered direct set and
-	// there is no unique replacement, keep retrying it rather than falling back
-	// to the shared bootstrap/NLB hostname via TLSServerName DNS.
-	if currentKnown {
-		return "", true
 	}
 
 	return "", false

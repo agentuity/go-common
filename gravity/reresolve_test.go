@@ -231,6 +231,92 @@ func TestReResolveEndpointURL_PrefersDiscoveredDirectEndpointsOverBootstrapDNS(t
 	}
 }
 
+func TestReResolveEndpointURL_ConcurrentDiscoveredDirectEndpointsDoNotCollapse(t *testing.T) {
+	mock := newMockDNSLookup()
+	mock.setIPs("gravity-bootstrap.example.com", "10.0.0.2")
+
+	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint1 := &GravityEndpoint{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint2 := &GravityEndpoint{URL: "grpc://10.0.0.3:443", TLSServerName: "gravity-bootstrap.example.com"}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1, endpoint2}, mock)
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+			"grpc://10.0.0.3:443",
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, idx := range []int{0, 2} {
+		wg.Add(1)
+		go func(endpointIndex int) {
+			defer wg.Done()
+			if newURL := g.reResolveEndpointURL(endpointIndex, "grpc://10.0.0.3:443"); newURL != "" {
+				t.Errorf("expected endpoint %d to keep retrying discovered direct URL, got %q", endpointIndex, newURL)
+			}
+		}(idx)
+	}
+	wg.Wait()
+
+	for _, idx := range []int{0, 2} {
+		if g.endpoints[idx].URL != "grpc://10.0.0.3:443" {
+			t.Fatalf("expected endpoint %d to remain on direct URL, got %q", idx, g.endpoints[idx].URL)
+		}
+	}
+	if mock.callCount() != 0 {
+		t.Fatalf("expected no bootstrap DNS lookups for discovered direct endpoints, got %d", mock.callCount())
+	}
+}
+
+func TestReResolveEndpointURL_ConcurrentStaleDirectEndpointsPickUniqueDiscoveredURLs(t *testing.T) {
+	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.9:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint1 := &GravityEndpoint{URL: "grpc://10.0.0.8:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint2 := &GravityEndpoint{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity-bootstrap.example.com"}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1, endpoint2}, newMockDNSLookup())
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+			"grpc://10.0.0.3:443",
+		}
+	}
+
+	var wg sync.WaitGroup
+	for _, item := range []struct {
+		index int
+		url   string
+	}{
+		{index: 0, url: "grpc://10.0.0.9:443"},
+		{index: 1, url: "grpc://10.0.0.8:443"},
+	} {
+		wg.Add(1)
+		go func(index int, url string) {
+			defer wg.Done()
+			if newURL := g.reResolveEndpointURL(index, url); newURL == "" {
+				t.Errorf("expected stale endpoint %d to choose a discovered replacement", index)
+			}
+		}(item.index, item.url)
+	}
+	wg.Wait()
+
+	seen := make(map[string]int)
+	for _, ep := range g.endpoints {
+		seen[ep.URL]++
+	}
+	for _, want := range []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.3:443",
+	} {
+		if seen[want] != 1 {
+			t.Fatalf("expected exactly one endpoint for %s, got %d in %v", want, seen[want], seen)
+		}
+	}
+}
+
 func TestReResolveEndpointURL_HandlesIPv6(t *testing.T) {
 	mock := newMockDNSLookup()
 	mock.setIPs("gravity.example.com", "fd15::2")

@@ -645,6 +645,48 @@ func TestCheckPeerDiscovery_ReplacesDuplicateEndpointWhenAtCapacity(t *testing.T
 	}
 }
 
+func TestReplaceDuplicateEndpoint_TargetsDuplicateSlot(t *testing.T) {
+	g := newTestGravityClient(nil, []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.2:443",
+	})
+	defer g.cancel()
+
+	reconnectIdx := -1
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		reconnectIdx = idx
+		if idx >= 0 && idx < len(g.endpointReconnecting) {
+			g.endpointReconnecting[idx].Store(false)
+		}
+	}
+
+	if !g.replaceDuplicateEndpoint("grpc://10.0.0.3:443") {
+		t.Fatal("expected duplicate endpoint to be replaced")
+	}
+
+	g.endpointsMu.RLock()
+	got := make([]string, len(g.endpoints))
+	for i, ep := range g.endpoints {
+		got[i] = ep.URL
+	}
+	g.endpointsMu.RUnlock()
+
+	want := []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.3:443",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("endpoint[%d]: expected %s, got %s (all=%v)", i, want[i], got[i], got)
+		}
+	}
+	if reconnectIdx != 2 {
+		t.Fatalf("expected duplicate slot 2 to reconnect, got %d", reconnectIdx)
+	}
+}
+
 func TestCheckPeerDiscovery_NewURLDiscovered(t *testing.T) {
 	// Connected to g1, g2, g3. DNS returns g1, g2, g3, g4.
 	// More URLs available than connected -- should cycle one endpoint.

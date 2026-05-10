@@ -1836,33 +1836,35 @@ func (g *GravityClient) replaceDuplicateEndpoint(newURL string) bool {
 		return false
 	}
 
-	g.endpointsMu.RLock()
-	counts := make(map[string]int, len(g.endpoints))
-	for _, ep := range g.endpoints {
+	g.endpointsMu.Lock()
+	seen := make(map[string]int, len(g.endpoints))
+	duplicateIdx := -1
+	for i, ep := range g.endpoints {
 		if ep == nil {
 			continue
 		}
 		u := strings.TrimSpace(ep.URL)
-		if u != "" {
-			counts[u]++
+		if u == "" {
+			continue
 		}
-	}
-
-	duplicateURL := ""
-	for u, count := range counts {
-		if count > 1 {
-			duplicateURL = u
+		if _, ok := seen[u]; ok {
+			duplicateIdx = i
 			break
 		}
+		seen[u] = i
 	}
-	g.endpointsMu.RUnlock()
-
-	if duplicateURL == "" {
+	if duplicateIdx < 0 {
+		g.endpointsMu.Unlock()
+		return false
+	}
+	duplicateURL, ok := g.cycleEndpointAtLocked(duplicateIdx, newURL)
+	g.endpointsMu.Unlock()
+	if !ok {
 		return false
 	}
 
 	g.logger.Info("peer discovery: replacing duplicate connection %s with %s", duplicateURL, newURL)
-	g.cycleEndpoint(duplicateURL, newURL)
+	g.finishEndpointCycle(duplicateIdx, duplicateURL, newURL)
 	return true
 }
 
@@ -1887,25 +1889,40 @@ func (g *GravityClient) cycleEndpoint(oldURL, newURL string) {
 		g.logger.Debug("peer discovery: endpoint %s already removed", oldURL)
 		return
 	}
+	replacedURL, ok := g.cycleEndpointAtLocked(oldIdx, newURL)
+	g.endpointsMu.Unlock()
+	if !ok {
+		return
+	}
 
+	g.finishEndpointCycle(oldIdx, replacedURL, newURL)
+}
+
+func (g *GravityClient) cycleEndpointAtLocked(endpointIndex int, newURL string) (string, bool) {
+	if strings.TrimSpace(newURL) == "" || endpointIndex < 0 || endpointIndex >= len(g.endpoints) || g.endpoints[endpointIndex] == nil {
+		return "", false
+	}
+	oldURL := g.endpoints[endpointIndex].URL
 	newEp := &GravityEndpoint{URL: newURL, TLSServerName: g.preferredTLSServerName(newURL)}
 	newEp.healthy.Store(false)
-	g.endpoints[oldIdx] = newEp
-	g.endpointsMu.Unlock()
+	g.endpoints[endpointIndex] = newEp
+	return oldURL, true
+}
 
+func (g *GravityClient) finishEndpointCycle(endpointIndex int, oldURL string, newURL string) {
 	g.mu.Lock()
-	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
-		g.connectionURLs[oldIdx] = ""
+	if endpointIndex >= 0 && endpointIndex < len(g.connectionURLs) {
+		g.connectionURLs[endpointIndex] = ""
 	}
 	g.mu.Unlock()
 
 	g.logger.Info("peer discovery: endpoint cycled: removed %s, added %s", oldURL, newURL)
-	g.disconnectEndpointStreams(oldIdx)
-	g.scheduleEndpointReconnect(oldIdx, "peer_discovery_cycle")
+	g.disconnectEndpointStreams(endpointIndex)
+	g.scheduleEndpointReconnect(endpointIndex, "peer_discovery_cycle")
 
 	g.mu.Lock()
-	if oldIdx >= 0 && oldIdx < len(g.connectionURLs) {
-		g.connectionURLs[oldIdx] = newURL
+	if endpointIndex >= 0 && endpointIndex < len(g.connectionURLs) {
+		g.connectionURLs[endpointIndex] = newURL
 	}
 	g.mu.Unlock()
 }
@@ -5108,13 +5125,23 @@ func (g *GravityClient) reconnectWithTimeout(timeout time.Duration) error {
 // reconnect resets connection state and attempts to start a new connection
 func (g *GravityClient) reconnect() error {
 	g.logger.Debug("reconnect called")
+	g.mu.Lock()
+	if g.closing {
+		g.mu.Unlock()
+		return context.Canceled
+	}
+	g.mu.Unlock()
+
 	g.stopPeerDiscovery()
 
 	// Reset connection state without holding lock during Start()
 	g.mu.Lock()
+	if g.closing {
+		g.mu.Unlock()
+		return context.Canceled
+	}
 	g.ensureConnectionContextLocked()
 	g.connected = false
-	g.closing = false // Reset closing flag to allow reconnection
 	g.initialStartupDone.Store(false)
 	g.sessionReady = make(chan struct{})
 

@@ -381,6 +381,32 @@ func TestReResolveFromDiscoveredSet_RefreshesTLSServerName(t *testing.T) {
 	}
 }
 
+func TestReResolveFromDiscoveredSet_DoesNotPreserveRetargetedSlot(t *testing.T) {
+	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.2:443", TLSServerName: "gravity-bootstrap.example.com"}
+	endpoint1 := &GravityEndpoint{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity-bootstrap.example.com"}
+	g := newReResolveTestClient([]*GravityEndpoint{endpoint0, endpoint1}, newMockDNSLookup())
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+			"grpc://10.0.0.3:443",
+		}
+	}
+
+	newURL, handled := g.reResolveFromDiscoveredSet(0, "grpc://10.0.0.3:443")
+
+	if !handled {
+		t.Fatal("expected retargeted slot to choose a current discovered URL")
+	}
+	if newURL != "grpc://10.0.0.2:443" {
+		t.Fatalf("expected slot current URL to be returned, got %q", newURL)
+	}
+	if endpoint0.URL != "grpc://10.0.0.2:443" {
+		t.Fatalf("expected endpoint URL to remain on retargeted slot, got %q", endpoint0.URL)
+	}
+}
+
 func TestReResolveFromDiscoveredSet_ClearsTLSServerNameForRawIP(t *testing.T) {
 	endpoint0 := &GravityEndpoint{URL: "grpc://10.0.0.9:443", TLSServerName: "gravity-bootstrap.example.com"}
 	endpoint1 := &GravityEndpoint{URL: "grpc://10.0.0.1:443", TLSServerName: "gravity-bootstrap.example.com"}

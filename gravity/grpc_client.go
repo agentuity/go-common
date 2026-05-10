@@ -4579,15 +4579,17 @@ func (g *GravityClient) reResolveFromDiscoveredSet(endpointIndex int, currentURL
 		return "", false
 	}
 
-	// Preserve direct discovered endpoint coverage. If this endpoint is still
-	// in the discovered set, retry it instead of collapsing onto another live
-	// Ion and leaving this direct target uncovered.
-	if currentKnown {
-		return "", true
-	}
-
 	g.endpointsMu.Lock()
 	defer g.endpointsMu.Unlock()
+
+	// Preserve direct discovered endpoint coverage. If this endpoint is still
+	// in the discovered set, retry it instead of collapsing onto another live
+	// Ion and leaving this direct target uncovered. Only do this while the
+	// reconnecting slot still points at currentURL; endpointReconnecting can
+	// keep an older reconnect active after peer discovery retargets the slot.
+	if currentKnown && endpointIndex >= 0 && endpointIndex < len(g.endpoints) && g.endpoints[endpointIndex] != nil && g.endpoints[endpointIndex].URL == currentURL {
+		return "", true
+	}
 
 	inUse := make(map[string]bool, len(g.endpoints))
 	for i, ep := range g.endpoints {

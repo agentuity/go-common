@@ -5003,7 +5003,14 @@ func (g *GravityClient) attemptReconnection(reason string) {
 		attemptTimeout = 2 * time.Minute // Default: 2 minutes per attempt
 	}
 
-	for !g.closing {
+	for {
+		g.mu.RLock()
+		closing := g.closing
+		g.mu.RUnlock()
+		if closing {
+			break
+		}
+
 		attempts++
 		if maxAttempts > 0 {
 			g.logger.Info("reconnection attempt %d/%d (backoff: %v, timeout: %v)", attempts, maxAttempts, backoff, attemptTimeout)

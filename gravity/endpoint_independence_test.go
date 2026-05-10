@@ -1199,8 +1199,14 @@ func setupWritePacketStreams(g *GravityClient, streams []*StreamInfo) {
 		if s == nil {
 			continue
 		}
+		if s.connIndex < 0 || s.connIndex >= len(g.connectionURLs) {
+			continue
+		}
 		url := g.connectionURLs[s.connIndex]
 		g.endpointStreamIndices[url] = append(g.endpointStreamIndices[url], idx)
+		if s.isHealthy && s.connIndex >= 0 && s.connIndex < len(g.streamManager.controlStreams) && g.streamManager.controlStreams[s.connIndex] == nil {
+			g.streamManager.controlStreams[s.connIndex] = &configurableMockStream{}
+		}
 	}
 	for _, s := range streams {
 		if s == nil {

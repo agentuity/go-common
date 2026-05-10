@@ -383,6 +383,25 @@ func TestHardening_WritePacketWhenClosing(t *testing.T) {
 	}
 }
 
+func TestHardening_ReconnectDoesNotClearClosing(t *testing.T) {
+	g := newHardeningGravityClient(t, 1)
+	g.mu.Lock()
+	g.closing = true
+	g.mu.Unlock()
+
+	err := g.reconnect()
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	g.mu.RLock()
+	closing := g.closing
+	g.mu.RUnlock()
+	if !closing {
+		t.Fatal("reconnect must not clear closing")
+	}
+}
+
 func TestHardening_ConcurrentCloseAndWritePacket(t *testing.T) {
 	g := newHardeningGravityClient(t, 1)
 	g.streamManager.allocationStrategy = RoundRobin

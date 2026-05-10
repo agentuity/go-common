@@ -592,6 +592,101 @@ func TestCheckPeerDiscovery_DNSDiscoveredDirectIPAddsEndpointBelowCapacity(t *te
 	}
 }
 
+func TestCheckPeerDiscovery_ReplacesDuplicateEndpointWhenAtCapacity(t *testing.T) {
+	connected := []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.2:443",
+	}
+	g := newTestGravityClient(nil, connected)
+	defer g.cancel()
+	g.discoveryResolveFunc = func() []string {
+		return []string{
+			"grpc://10.0.0.1:443",
+			"grpc://10.0.0.2:443",
+			"grpc://10.0.0.3:443",
+		}
+	}
+	g.poolConfig.MaxGravityPeers = 3
+
+	reconnectIdx := -1
+	var reconnectReason string
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		reconnectIdx = idx
+		reconnectReason = reason
+		if idx >= 0 && idx < len(g.endpointReconnecting) {
+			g.endpointReconnecting[idx].Store(false)
+		}
+	}
+
+	g.checkPeerDiscovery(2 * time.Hour)
+
+	g.endpointsMu.RLock()
+	urls := make(map[string]int)
+	for _, ep := range g.endpoints {
+		urls[ep.URL]++
+	}
+	g.endpointsMu.RUnlock()
+
+	for _, want := range []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.3:443",
+	} {
+		if urls[want] != 1 {
+			t.Fatalf("expected one endpoint for %s, got %d in %v", want, urls[want], urls)
+		}
+	}
+	if len(urls) != 3 {
+		t.Fatalf("expected 3 unique endpoints after duplicate repair, got %d: %v", len(urls), urls)
+	}
+	if reconnectIdx < 0 || reconnectReason != "peer_discovery_cycle" {
+		t.Fatalf("expected duplicate repair to schedule reconnect, got idx=%d reason=%q", reconnectIdx, reconnectReason)
+	}
+}
+
+func TestReplaceDuplicateEndpoint_TargetsDuplicateSlot(t *testing.T) {
+	g := newTestGravityClient(nil, []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.2:443",
+	})
+	defer g.cancel()
+
+	reconnectIdx := -1
+	g.reconnectEndpointHook = func(idx int, reason string) {
+		reconnectIdx = idx
+		if idx >= 0 && idx < len(g.endpointReconnecting) {
+			g.endpointReconnecting[idx].Store(false)
+		}
+	}
+
+	if !g.replaceDuplicateEndpoint("grpc://10.0.0.3:443") {
+		t.Fatal("expected duplicate endpoint to be replaced")
+	}
+
+	g.endpointsMu.RLock()
+	got := make([]string, len(g.endpoints))
+	for i, ep := range g.endpoints {
+		got[i] = ep.URL
+	}
+	g.endpointsMu.RUnlock()
+
+	want := []string{
+		"grpc://10.0.0.1:443",
+		"grpc://10.0.0.2:443",
+		"grpc://10.0.0.3:443",
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("endpoint[%d]: expected %s, got %s (all=%v)", i, want[i], got[i], got)
+		}
+	}
+	if reconnectIdx != 2 {
+		t.Fatalf("expected duplicate slot 2 to reconnect, got %d", reconnectIdx)
+	}
+}
+
 func TestCheckPeerDiscovery_NewURLDiscovered(t *testing.T) {
 	// Connected to g1, g2, g3. DNS returns g1, g2, g3, g4.
 	// More URLs available than connected -- should cycle one endpoint.

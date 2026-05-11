@@ -194,7 +194,6 @@ func (e *durableMetricExporter) Export(ctx context.Context, rm *metricdata.Resou
 }
 
 func (e *durableMetricExporter) ForceFlush(ctx context.Context) error {
-	e.wake()
 	return e.drain(ctx)
 }
 

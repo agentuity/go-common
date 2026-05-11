@@ -182,7 +182,6 @@ func (p *durableLogProcessor) ForceFlush(ctx context.Context) error {
 	if err := p.flushWriter(ctx); err != nil {
 		return err
 	}
-	p.wake()
 	return p.drain(ctx)
 }
 

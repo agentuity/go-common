@@ -157,7 +157,8 @@ func TestDurableMetricExporterReplaysPersistedBatchesAfterRestart(t *testing.T) 
 		path: dbPath,
 	})
 	require.NoError(t, err)
-	defer restarted.Shutdown(context.Background())
+	stopDurableMetricExporterLoop(restarted)
+	defer restarted.db.Close()
 	require.NoError(t, restarted.ForceFlush(ctx))
 	assert.Equal(t, 1, exporter.count())
 }

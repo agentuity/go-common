@@ -5,11 +5,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/agentuity/go-common/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 )
 
 func getTestValues() (string, string, string) {
@@ -96,4 +101,52 @@ func TestNewWithInvalidURL(t *testing.T) {
 	assert.Nil(t, log)
 	assert.Nil(t, shutdown)
 	assert.Contains(t, err.Error(), "error parsing oltpServerURL")
+}
+
+func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits[r.URL.Path]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tmp := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx, log, shutdown, err := NewWithAPIKey(
+		ctx,
+		"test-service",
+		server.URL,
+		"api-key",
+		nil,
+		WithLogBatchPath(filepath.Join(tmp, "logs.db")),
+		WithMetricBatchPath(filepath.Join(tmp, "metrics.db")),
+		WithTraceBatchPath(filepath.Join(tmp, "traces.db")),
+		WithLogBatchIdleTimeout(10*time.Millisecond),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, ctx)
+	require.NotNil(t, log)
+
+	log.Info("hello")
+
+	tracer := otel.Tracer("telemetry-test")
+	spanCtx, span := tracer.Start(ctx, "span")
+	span.End()
+
+	counter, err := otel.Meter("telemetry-test").Int64Counter("test.counter")
+	require.NoError(t, err)
+	counter.Add(spanCtx, 1, metric.WithAttributes())
+
+	shutdown()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits["/v1/logs"] > 0 && hits["/v1/traces"] > 0 && hits["/v1/metrics"] > 0
+	}, 2*time.Second, 10*time.Millisecond)
 }

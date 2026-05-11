@@ -16,9 +16,11 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.27.0"
@@ -43,6 +45,9 @@ type config struct {
 	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 	timeout     time.Duration
 	headers     http.Header
+	logBatch    durableLogConfig
+	metricBatch durableMetricConfig
+	traceBatch  durableTraceConfig
 }
 
 // WithDialContext sets a custom dialer for HTTP connections
@@ -66,6 +71,84 @@ func WithHeaders(headers http.Header) Option {
 	}
 }
 
+func WithLogBatchPath(path string) Option {
+	return func(c *config) {
+		c.logBatch.path = path
+	}
+}
+
+func WithLogBatchMaxRecords(n int) Option {
+	return func(c *config) {
+		c.logBatch.maxRecords = n
+	}
+}
+
+func WithLogBatchMaxBytes(n int) Option {
+	return func(c *config) {
+		c.logBatch.maxBytes = n
+	}
+}
+
+func WithLogBatchIdleTimeout(d time.Duration) Option {
+	return func(c *config) {
+		c.logBatch.idleTimeout = d
+	}
+}
+
+func WithLogBatchMaxStoredRecords(n int) Option {
+	return func(c *config) {
+		c.logBatch.maxStoredRecords = n
+	}
+}
+
+func WithLogBatchMaxStoredBytes(n int64) Option {
+	return func(c *config) {
+		c.logBatch.maxStoredBytes = n
+	}
+}
+
+func WithLogEmitQueueSize(n int) Option {
+	return func(c *config) {
+		c.logBatch.emitQueueSize = n
+	}
+}
+
+func WithMetricBatchPath(path string) Option {
+	return func(c *config) {
+		c.metricBatch.path = path
+	}
+}
+
+func WithMetricBatchMaxStoredBatches(n int) Option {
+	return func(c *config) {
+		c.metricBatch.maxStoredBatches = n
+	}
+}
+
+func WithMetricBatchMaxStoredBytes(n int64) Option {
+	return func(c *config) {
+		c.metricBatch.maxStoredBytes = n
+	}
+}
+
+func WithTraceBatchPath(path string) Option {
+	return func(c *config) {
+		c.traceBatch.path = path
+	}
+}
+
+func WithTraceBatchMaxStoredBatches(n int) Option {
+	return func(c *config) {
+		c.traceBatch.maxStoredBatches = n
+	}
+}
+
+func WithTraceBatchMaxStoredBytes(n int64) Option {
+	return func(c *config) {
+		c.traceBatch.maxStoredBytes = n
+	}
+}
+
 func new(ctx context.Context, oltpServerURL string, authToken string, serviceName string, opts ...Option) (context.Context, logger.Logger, ShutdownFunc, error) {
 	// Apply options
 	cfg := &config{}
@@ -84,8 +167,8 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	logURL := oltpURL.String()
 	oltpURL.Path = "/v1/traces"
 	traceURL := oltpURL.String()
-	// oltpURL.Path = "/v1/metrics"
-	// metricsURL := oltpURL.String()
+	oltpURL.Path = "/v1/metrics"
+	metricsURL := oltpURL.String()
 
 	var kvs []attribute.KeyValue
 	if val, ok := os.LookupEnv("AGENTUITY_REGION"); ok {
@@ -174,17 +257,53 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("error creating trace exporter: %w", err)
 	}
+	durableTraceExporter, err := newDurableTraceExporter(ctx, traceExporter, cfg.traceBatch)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating trace exporter queue: %w", err)
+	}
+
+	metricExporterOpts := []otlpmetrichttp.Option{
+		otlpmetrichttp.WithEndpointURL(metricsURL),
+		otlpmetrichttp.WithHeaders(headers),
+		otlpmetrichttp.WithTimeout(cfg.timeout),
+		otlpmetrichttp.WithCompression(otlpmetrichttp.GzipCompression),
+	}
+	if oltpURL.Scheme == "http" {
+		metricExporterOpts = append(metricExporterOpts, otlpmetrichttp.WithInsecure())
+	}
+	if httpClient != nil {
+		metricExporterOpts = append(metricExporterOpts, otlpmetrichttp.WithHTTPClient(httpClient))
+	}
+	metricExporter, err := otlpmetrichttp.New(ctx, metricExporterOpts...)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating metric exporter: %w", err)
+	}
+	durableMetricExporter, err := newDurableMetricExporter(ctx, metricExporter, cfg.metricBatch)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating metric exporter queue: %w", err)
+	}
 
 	// Create trace provider
 	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(traceExporter),
+		sdktrace.WithBatcher(durableTraceExporter),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tracerProvider)
 
+	meterProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithResource(res),
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(durableMetricExporter)),
+	)
+	otel.SetMeterProvider(meterProvider)
+
+	logProcessor, err := newDurableLogProcessor(ctx, logExporter, cfg.logBatch)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("error creating log processor: %w", err)
+	}
+
 	logProvider := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(logExporter)),
+		sdklog.WithProcessor(logProcessor),
 	)
 
 	otelsLogger := logProvider.Logger(serviceName)
@@ -197,7 +316,10 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 		ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout+time.Second)
 		defer cancel()
 		logProvider.Shutdown(ctx)
+		meterProvider.Shutdown(ctx)
 		tracerProvider.Shutdown(ctx)
+		durableTraceExporter.Shutdown(ctx)
+		durableMetricExporter.Shutdown(ctx)
 		traceExporter.Shutdown(ctx)
 		logExporter.Shutdown(ctx)
 	}

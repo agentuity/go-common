@@ -127,6 +127,9 @@ func newDurableMetricExporter(ctx context.Context, exporter sdkmetric.Exporter, 
 	}
 	e.wg.Add(1)
 	go e.exportLoop()
+	if e.hasRows() {
+		e.wake()
+	}
 	return e, nil
 }
 

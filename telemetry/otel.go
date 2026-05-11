@@ -259,6 +259,8 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	}
 	durableTraceExporter, err := newDurableTraceExporter(ctx, traceExporter, cfg.traceBatch)
 	if err != nil {
+		traceExporter.Shutdown(ctx)
+		logExporter.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("error creating trace exporter queue: %w", err)
 	}
 
@@ -276,10 +278,17 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	}
 	metricExporter, err := otlpmetrichttp.New(ctx, metricExporterOpts...)
 	if err != nil {
+		durableTraceExporter.Shutdown(ctx)
+		traceExporter.Shutdown(ctx)
+		logExporter.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("error creating metric exporter: %w", err)
 	}
 	durableMetricExporter, err := newDurableMetricExporter(ctx, metricExporter, cfg.metricBatch)
 	if err != nil {
+		metricExporter.Shutdown(ctx)
+		durableTraceExporter.Shutdown(ctx)
+		traceExporter.Shutdown(ctx)
+		logExporter.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("error creating metric exporter queue: %w", err)
 	}
 
@@ -298,6 +307,13 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 
 	logProcessor, err := newDurableLogProcessor(ctx, logExporter, cfg.logBatch)
 	if err != nil {
+		meterProvider.Shutdown(ctx)
+		tracerProvider.Shutdown(ctx)
+		durableMetricExporter.Shutdown(ctx)
+		metricExporter.Shutdown(ctx)
+		durableTraceExporter.Shutdown(ctx)
+		traceExporter.Shutdown(ctx)
+		logExporter.Shutdown(ctx)
 		return nil, nil, nil, fmt.Errorf("error creating log processor: %w", err)
 	}
 

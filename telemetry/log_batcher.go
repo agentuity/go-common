@@ -700,6 +700,22 @@ func attrsFromDTO(in []attrDTO) []attribute.KeyValue {
 			if v, ok := kv.Value.(string); ok {
 				out = append(out, key.String(v))
 			}
+		case attribute.BOOLSLICE:
+			if v, ok := boolSliceFromAny(kv.Value); ok {
+				out = append(out, key.BoolSlice(v))
+			}
+		case attribute.INT64SLICE:
+			if v, ok := int64SliceFromAny(kv.Value); ok {
+				out = append(out, key.Int64Slice(v))
+			}
+		case attribute.FLOAT64SLICE:
+			if v, ok := float64SliceFromAny(kv.Value); ok {
+				out = append(out, key.Float64Slice(v))
+			}
+		case attribute.STRINGSLICE:
+			if v, ok := stringSliceFromAny(kv.Value); ok {
+				out = append(out, key.StringSlice(v))
+			}
 		}
 	}
 	return out
@@ -715,6 +731,82 @@ func asFloat(v any) (float64, bool) {
 		return float64(t), true
 	default:
 		return 0, false
+	}
+}
+
+func boolSliceFromAny(v any) ([]bool, bool) {
+	switch t := v.(type) {
+	case []bool:
+		return append([]bool(nil), t...), true
+	case []interface{}:
+		out := make([]bool, 0, len(t))
+		for _, item := range t {
+			b, ok := item.(bool)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, b)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func int64SliceFromAny(v any) ([]int64, bool) {
+	switch t := v.(type) {
+	case []int64:
+		return append([]int64(nil), t...), true
+	case []interface{}:
+		out := make([]int64, 0, len(t))
+		for _, item := range t {
+			n, ok := asFloat(item)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, int64(n))
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func float64SliceFromAny(v any) ([]float64, bool) {
+	switch t := v.(type) {
+	case []float64:
+		return append([]float64(nil), t...), true
+	case []interface{}:
+		out := make([]float64, 0, len(t))
+		for _, item := range t {
+			n, ok := asFloat(item)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, n)
+		}
+		return out, true
+	default:
+		return nil, false
+	}
+}
+
+func stringSliceFromAny(v any) ([]string, bool) {
+	switch t := v.(type) {
+	case []string:
+		return append([]string(nil), t...), true
+	case []interface{}:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false
+			}
+			out = append(out, s)
+		}
+		return out, true
+	default:
+		return nil, false
 	}
 }
 

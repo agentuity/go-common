@@ -128,6 +128,12 @@ func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
 		WithTraceBatchPath(filepath.Join(tmp, "traces.db")),
 		WithLogBatchIdleTimeout(10*time.Millisecond),
 	)
+	var shutdownOnce sync.Once
+	t.Cleanup(func() {
+		if shutdown != nil {
+			shutdownOnce.Do(shutdown)
+		}
+	})
 	require.NoError(t, err)
 	require.NotNil(t, ctx)
 	require.NotNil(t, log)
@@ -142,7 +148,7 @@ func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
 	require.NoError(t, err)
 	counter.Add(spanCtx, 1, metric.WithAttributes())
 
-	shutdown()
+	shutdownOnce.Do(shutdown)
 
 	require.Eventually(t, func() bool {
 		mu.Lock()

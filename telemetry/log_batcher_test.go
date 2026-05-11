@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	otelLog "go.opentelemetry.io/otel/log"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 )
@@ -211,6 +213,27 @@ func TestDurableLogProcessorDropsCorruptRows(t *testing.T) {
 	require.NoError(t, p.ForceFlush(ctx))
 	assert.Equal(t, 1, exporter.count())
 	assertQueueEmpty(t, p.db, "otel_log_queue")
+}
+
+func TestLogAttributeSlicesRoundTrip(t *testing.T) {
+	attrs := []attrDTO{
+		attrToDTO(attribute.BoolSlice("bools", []bool{true, false})),
+		attrToDTO(attribute.Int64Slice("ints", []int64{1, 2})),
+		attrToDTO(attribute.Float64Slice("floats", []float64{1.5, 2.5})),
+		attrToDTO(attribute.StringSlice("strings", []string{"a", "b"})),
+	}
+	data, err := json.Marshal(attrs)
+	require.NoError(t, err)
+
+	var decoded []attrDTO
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	roundTrip := attrsFromDTO(decoded)
+
+	require.Len(t, roundTrip, 4)
+	assert.Equal(t, []bool{true, false}, roundTrip[0].Value.AsBoolSlice())
+	assert.Equal(t, []int64{1, 2}, roundTrip[1].Value.AsInt64Slice())
+	assert.Equal(t, []float64{1.5, 2.5}, roundTrip[2].Value.AsFloat64Slice())
+	assert.Equal(t, []string{"a", "b"}, roundTrip[3].Value.AsStringSlice())
 }
 
 func TestDurableLogProcessorCoalescesReplayRows(t *testing.T) {

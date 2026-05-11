@@ -122,6 +122,9 @@ func newDurableTraceExporter(ctx context.Context, exporter sdktrace.SpanExporter
 	}
 	e.wg.Add(1)
 	go e.exportLoop()
+	if e.hasRows() {
+		e.wake()
+	}
 	return e, nil
 }
 

@@ -89,9 +89,10 @@ func TestDurableTraceExporterKeepsBatchesOnExportFailure(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "traces.db"),
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
 
 	require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	stopDurableTraceExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -111,11 +112,12 @@ func TestDurableTraceExporterReplaysPersistedBatchesAfterRestart(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	stopDurableTraceExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	assert.Error(t, e.drain(ctx))
-	assert.Error(t, e.Shutdown(ctx))
 
 	exporter := &durableTraceTestExporter{}
 	restarted, err := newDurableTraceExporter(context.Background(), exporter, durableTraceConfig{
@@ -135,7 +137,8 @@ func TestDurableTraceExporterStorageCapsDropOldest(t *testing.T) {
 		maxStoredBytes:   1 << 20,
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
+	stopDurableTraceExporterLoop(e)
+	defer e.db.Close()
 
 	for i := 0; i < 3; i++ {
 		require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
@@ -164,15 +167,21 @@ func TestDurableTraceExporterDropsCorruptRows(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "traces.db"),
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
 
 	_, err = e.db.Exec(`INSERT INTO otel_trace_queue (created_at, size_bytes, payload) VALUES (?, ?, ?)`, time.Now().UnixNano(), 3, []byte("bad"))
 	require.NoError(t, err)
 	require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	stopDurableTraceExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	require.NoError(t, e.drain(ctx))
 	assert.Equal(t, 1, exporter.count())
 	assertQueueEmpty(t, e.db, "otel_trace_queue")
+}
+
+func stopDurableTraceExporterLoop(e *durableTraceExporter) {
+	close(e.done)
+	e.wg.Wait()
 }

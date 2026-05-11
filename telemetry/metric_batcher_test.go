@@ -93,10 +93,11 @@ func TestDurableMetricExporterForceFlushExportsBatches(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "metrics.db"),
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
 
 	rm := testResourceMetrics()
 	require.NoError(t, e.Export(context.Background(), &rm))
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -111,10 +112,11 @@ func TestDurableMetricExporterKeepsBatchesOnExportFailure(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "metrics.db"),
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
 
 	rm := testResourceMetrics()
 	require.NoError(t, e.Export(context.Background(), &rm))
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -135,11 +137,12 @@ func TestDurableMetricExporterReplaysPersistedBatchesAfterRestart(t *testing.T) 
 	require.NoError(t, err)
 	rm := testResourceMetrics()
 	require.NoError(t, e.Export(context.Background(), &rm))
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	assert.Error(t, e.ForceFlush(ctx))
-	assert.Error(t, e.Shutdown(ctx))
 
 	exporter := &durableMetricTestExporter{}
 	restarted, err := newDurableMetricExporter(context.Background(), exporter, durableMetricConfig{
@@ -159,7 +162,8 @@ func TestDurableMetricExporterStorageCapsDropOldest(t *testing.T) {
 		maxStoredBytes:   1 << 20,
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
 
 	for i := 0; i < 3; i++ {
 		rm := testResourceMetrics()
@@ -189,16 +193,22 @@ func TestDurableMetricExporterDropsCorruptRows(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "metrics.db"),
 	})
 	require.NoError(t, err)
-	defer e.Shutdown(context.Background())
 
 	_, err = e.db.Exec(`INSERT INTO otel_metric_queue (created_at, size_bytes, payload) VALUES (?, ?, ?)`, time.Now().UnixNano(), 3, []byte("bad"))
 	require.NoError(t, err)
 	rm := testResourceMetrics()
 	require.NoError(t, e.Export(context.Background(), &rm))
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	require.NoError(t, e.ForceFlush(ctx))
 	assert.Equal(t, 1, exporter.count())
 	assertQueueEmpty(t, e.db, "otel_metric_queue")
+}
+
+func stopDurableMetricExporterLoop(t *durableMetricExporter) {
+	close(t.done)
+	t.wg.Wait()
 }

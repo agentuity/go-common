@@ -103,6 +103,39 @@ func TestNewWithInvalidURL(t *testing.T) {
 	assert.Contains(t, err.Error(), "error parsing oltpServerURL")
 }
 
+func TestShutdownTelemetryComponentUsesIndependentTimeouts(t *testing.T) {
+	const timeout = 25 * time.Millisecond
+
+	firstStarted := make(chan struct{})
+	firstDone := make(chan struct{})
+	shutdownTelemetryComponent(timeout, func(ctx context.Context) error {
+		close(firstStarted)
+		<-ctx.Done()
+		close(firstDone)
+		return ctx.Err()
+	})
+
+	select {
+	case <-firstStarted:
+	default:
+		t.Fatal("expected first shutdown function to start")
+	}
+	select {
+	case <-firstDone:
+	default:
+		t.Fatal("expected first shutdown function to stop at its own timeout")
+	}
+
+	secondCalled := false
+	shutdownTelemetryComponent(timeout, func(ctx context.Context) error {
+		secondCalled = true
+		return nil
+	})
+	if !secondCalled {
+		t.Fatal("expected later shutdown functions to get their own timeout budget")
+	}
+}
+
 func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
 	var mu sync.Mutex
 	hits := map[string]int{}

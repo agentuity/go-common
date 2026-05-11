@@ -77,10 +77,11 @@ type durableMetricExporter struct {
 	cfg      durableMetricConfig
 	db       *sql.DB
 
-	wakeCh   chan struct{}
-	done     chan struct{}
-	wg       sync.WaitGroup
-	replayMu sync.Mutex
+	wakeCh     chan struct{}
+	done       chan struct{}
+	wg         sync.WaitGroup
+	replayMu   sync.Mutex
+	loopCancel context.CancelFunc
 
 	stopped atomic.Bool
 }
@@ -119,15 +120,17 @@ func newDurableMetricExporter(ctx context.Context, exporter sdkmetric.Exporter, 
 		return nil, err
 	}
 
+	loopCtx, loopCancel := context.WithCancel(context.Background())
 	e := &durableMetricExporter{
-		exporter: exporter,
-		cfg:      cfg,
-		db:       db,
-		wakeCh:   make(chan struct{}, 1),
-		done:     make(chan struct{}),
+		exporter:   exporter,
+		cfg:        cfg,
+		db:         db,
+		wakeCh:     make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		loopCancel: loopCancel,
 	}
 	e.wg.Add(1)
-	go e.exportLoop()
+	go e.exportLoop(loopCtx)
 	if e.hasRows() {
 		e.wake()
 	}
@@ -207,6 +210,9 @@ func (e *durableMetricExporter) Shutdown(ctx context.Context) error {
 	if e.stopped.Swap(true) {
 		return nil
 	}
+	if e.loopCancel != nil {
+		e.loopCancel()
+	}
 	close(e.done)
 	done := make(chan struct{})
 	go func() {
@@ -251,7 +257,7 @@ func (e *durableMetricExporter) enforceLimits(ctx context.Context) error {
 	return err
 }
 
-func (e *durableMetricExporter) exportLoop() {
+func (e *durableMetricExporter) exportLoop(loopCtx context.Context) {
 	defer e.wg.Done()
 	backoff := e.cfg.retryInitial
 	timer := time.NewTimer(time.Hour)
@@ -263,7 +269,7 @@ func (e *durableMetricExporter) exportLoop() {
 		case <-e.wakeCh:
 			resetTimer(timer, time.Millisecond)
 		case <-timer.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(loopCtx, 30*time.Second)
 			e.replayMu.Lock()
 			err := e.exportBatch(ctx)
 			e.replayMu.Unlock()

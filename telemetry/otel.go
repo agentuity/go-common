@@ -42,12 +42,13 @@ type Option func(*config)
 
 // config holds the configuration options for telemetry
 type config struct {
-	dialContext func(ctx context.Context, network, addr string) (net.Conn, error)
-	timeout     time.Duration
-	headers     http.Header
-	logBatch    durableLogConfig
-	metricBatch durableMetricConfig
-	traceBatch  durableTraceConfig
+	dialContext     func(ctx context.Context, network, addr string) (net.Conn, error)
+	timeout         time.Duration
+	shutdownTimeout time.Duration
+	headers         http.Header
+	logBatch        durableLogConfig
+	metricBatch     durableMetricConfig
+	traceBatch      durableTraceConfig
 }
 
 // WithDialContext sets a custom dialer for HTTP connections
@@ -61,6 +62,15 @@ func WithDialContext(dial func(ctx context.Context, network, addr string) (net.C
 func WithTimeout(dur time.Duration) Option {
 	return func(c *config) {
 		c.timeout = dur
+	}
+}
+
+// WithShutdownTimeout sets the per-component timeout used while shutting down
+// telemetry providers and durable queues. Each provider/exporter gets its own
+// budget so a slow OTLP endpoint for logs or metrics cannot starve trace drain.
+func WithShutdownTimeout(dur time.Duration) Option {
+	return func(c *config) {
+		c.shutdownTimeout = dur
 	}
 }
 
@@ -157,6 +167,9 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	}
 	if cfg.timeout <= 0 {
 		cfg.timeout = 10 * time.Second
+	}
+	if cfg.shutdownTimeout <= 0 {
+		cfg.shutdownTimeout = cfg.timeout + time.Second
 	}
 	// parse oltpURL
 	oltpURL, err := url.Parse(oltpServerURL)
@@ -329,21 +342,31 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	otel.SetTextMapPropagator(tc)
 
 	shutdown := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), cfg.timeout+time.Second)
-		defer cancel()
-		logProvider.Shutdown(ctx)
-		meterProvider.Shutdown(ctx)
-		tracerProvider.Shutdown(ctx)
-		durableTraceExporter.Shutdown(ctx)
-		durableMetricExporter.Shutdown(ctx)
-		traceExporter.Shutdown(ctx)
-		logExporter.Shutdown(ctx)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, logProvider.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, meterProvider.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, tracerProvider.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, durableTraceExporter.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, durableMetricExporter.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, traceExporter.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, logExporter.Shutdown)
 	}
 
 	return ctx,
 		logger.NewOtelLogger(otelsLogger, logger.LevelTrace),
 		shutdown,
 		nil
+}
+
+func shutdownTelemetryComponent(timeout time.Duration, shutdown func(context.Context) error) {
+	if shutdown == nil {
+		return
+	}
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	_ = shutdown(ctx)
 }
 
 func New(ctx context.Context, serviceName string, telemetrySecret string, telemetryURL string, consoleLogger logger.Logger, opts ...Option) (context.Context, logger.Logger, func(), error) {

@@ -76,9 +76,10 @@ type durableTraceExporter struct {
 	cfg      durableTraceConfig
 	db       *sql.DB
 
-	wakeCh chan struct{}
-	done   chan struct{}
-	wg     sync.WaitGroup
+	wakeCh     chan struct{}
+	done       chan struct{}
+	wg         sync.WaitGroup
+	loopCancel context.CancelFunc
 
 	stopped atomic.Bool
 }
@@ -113,15 +114,17 @@ func newDurableTraceExporter(ctx context.Context, exporter sdktrace.SpanExporter
 	_, _ = db.ExecContext(ctx, `ALTER TABLE otel_trace_queue ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.ExecContext(ctx, `UPDATE otel_trace_queue SET size_bytes = length(payload) WHERE size_bytes = 0`)
 
+	loopCtx, loopCancel := context.WithCancel(context.Background())
 	e := &durableTraceExporter{
-		exporter: exporter,
-		cfg:      cfg,
-		db:       db,
-		wakeCh:   make(chan struct{}, 1),
-		done:     make(chan struct{}),
+		exporter:   exporter,
+		cfg:        cfg,
+		db:         db,
+		wakeCh:     make(chan struct{}, 1),
+		done:       make(chan struct{}),
+		loopCancel: loopCancel,
 	}
 	e.wg.Add(1)
-	go e.exportLoop()
+	go e.exportLoop(loopCtx)
 	if e.hasRows() {
 		e.wake()
 	}
@@ -150,6 +153,9 @@ func (e *durableTraceExporter) ExportSpans(ctx context.Context, spans []sdktrace
 func (e *durableTraceExporter) Shutdown(ctx context.Context) error {
 	if e.stopped.Swap(true) {
 		return nil
+	}
+	if e.loopCancel != nil {
+		e.loopCancel()
 	}
 	close(e.done)
 	done := make(chan struct{})
@@ -195,7 +201,7 @@ func (e *durableTraceExporter) enforceLimits(ctx context.Context) error {
 	return nil
 }
 
-func (e *durableTraceExporter) exportLoop() {
+func (e *durableTraceExporter) exportLoop(loopCtx context.Context) {
 	defer e.wg.Done()
 	backoff := e.cfg.retryInitial
 	timer := time.NewTimer(time.Hour)
@@ -207,7 +213,7 @@ func (e *durableTraceExporter) exportLoop() {
 		case <-e.wakeCh:
 			resetTimer(timer, time.Millisecond)
 		case <-timer.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(loopCtx, 30*time.Second)
 			err := e.exportBatch(ctx)
 			cancel()
 			if err != nil {

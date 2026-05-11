@@ -214,6 +214,9 @@ func TestDurableTraceExporterCoalescesReplayRows(t *testing.T) {
 }
 
 func stopDurableTraceExporterLoop(e *durableTraceExporter) {
+	if e.loopCancel != nil {
+		e.loopCancel()
+	}
 	close(e.done)
 	e.wg.Wait()
 }

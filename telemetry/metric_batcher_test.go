@@ -242,6 +242,9 @@ func TestDurableMetricExporterCoalescesReplayRows(t *testing.T) {
 }
 
 func stopDurableMetricExporterLoop(t *durableMetricExporter) {
+	if t.loopCancel != nil {
+		t.loopCancel()
+	}
 	close(t.done)
 	t.wg.Wait()
 }

@@ -102,12 +102,13 @@ type durableLogProcessor struct {
 	cfg      durableLogConfig
 	db       *sql.DB
 
-	emitCh   chan queuedLogRecord
-	wakeCh   chan struct{}
-	flushCh  chan chan struct{}
-	done     chan struct{}
-	wg       sync.WaitGroup
-	replayMu sync.Mutex
+	emitCh     chan queuedLogRecord
+	wakeCh     chan struct{}
+	flushCh    chan chan struct{}
+	done       chan struct{}
+	wg         sync.WaitGroup
+	replayMu   sync.Mutex
+	loopCancel context.CancelFunc
 
 	stopped atomic.Bool
 	dropped atomic.Uint64
@@ -143,18 +144,20 @@ func newDurableLogProcessor(ctx context.Context, exporter sdklog.Exporter, cfg d
 	_, _ = db.ExecContext(ctx, `ALTER TABLE otel_log_queue ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0`)
 	_, _ = db.ExecContext(ctx, `UPDATE otel_log_queue SET size_bytes = length(record) WHERE size_bytes = 0`)
 
+	loopCtx, loopCancel := context.WithCancel(context.Background())
 	p := &durableLogProcessor{
-		exporter: exporter,
-		cfg:      cfg,
-		db:       db,
-		emitCh:   make(chan queuedLogRecord, cfg.emitQueueSize),
-		wakeCh:   make(chan struct{}, 1),
-		flushCh:  make(chan chan struct{}),
-		done:     make(chan struct{}),
+		exporter:   exporter,
+		cfg:        cfg,
+		db:         db,
+		emitCh:     make(chan queuedLogRecord, cfg.emitQueueSize),
+		wakeCh:     make(chan struct{}, 1),
+		flushCh:    make(chan chan struct{}),
+		done:       make(chan struct{}),
+		loopCancel: loopCancel,
 	}
 	p.wg.Add(2)
 	go p.writeLoop()
-	go p.exportLoop()
+	go p.exportLoop(loopCtx)
 	return p, nil
 }
 
@@ -217,6 +220,9 @@ func (p *durableLogProcessor) flushWriter(ctx context.Context) error {
 func (p *durableLogProcessor) Shutdown(ctx context.Context) error {
 	if p.stopped.Swap(true) {
 		return nil
+	}
+	if p.loopCancel != nil {
+		p.loopCancel()
 	}
 	close(p.done)
 	done := make(chan struct{})
@@ -352,7 +358,7 @@ func configureDurableQueueDB(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
-func (p *durableLogProcessor) exportLoop() {
+func (p *durableLogProcessor) exportLoop(loopCtx context.Context) {
 	defer p.wg.Done()
 	backoff := p.cfg.retryInitial
 	timer := time.NewTimer(p.cfg.idleTimeout)
@@ -364,7 +370,7 @@ func (p *durableLogProcessor) exportLoop() {
 		case <-p.wakeCh:
 			resetTimer(timer, p.cfg.idleTimeout)
 		case <-timer.C:
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(loopCtx, 30*time.Second)
 			p.replayMu.Lock()
 			err := p.exportOne(ctx)
 			p.replayMu.Unlock()

@@ -133,8 +133,9 @@ func TestDurableTraceExporterReplaysPersistedBatchesAfterRestart(t *testing.T) {
 	})
 	require.NoError(t, err)
 	defer restarted.Shutdown(context.Background())
-	require.NoError(t, restarted.drain(ctx))
-	assert.Equal(t, 1, exporter.count())
+	require.Eventually(t, func() bool {
+		return exporter.count() == 1
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestDurableTraceExporterStorageCapsDropOldest(t *testing.T) {

@@ -102,11 +102,12 @@ type durableLogProcessor struct {
 	cfg      durableLogConfig
 	db       *sql.DB
 
-	emitCh  chan queuedLogRecord
-	wakeCh  chan struct{}
-	flushCh chan chan struct{}
-	done    chan struct{}
-	wg      sync.WaitGroup
+	emitCh   chan queuedLogRecord
+	wakeCh   chan struct{}
+	flushCh  chan chan struct{}
+	done     chan struct{}
+	wg       sync.WaitGroup
+	replayMu sync.Mutex
 
 	stopped atomic.Bool
 	dropped atomic.Uint64
@@ -179,6 +180,8 @@ func (p *durableLogProcessor) OnEmit(_ context.Context, r *sdklog.Record) error 
 }
 
 func (p *durableLogProcessor) ForceFlush(ctx context.Context) error {
+	p.replayMu.Lock()
+	defer p.replayMu.Unlock()
 	if err := p.flushWriter(ctx); err != nil {
 		return err
 	}
@@ -362,7 +365,9 @@ func (p *durableLogProcessor) exportLoop() {
 			resetTimer(timer, p.cfg.idleTimeout)
 		case <-timer.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			p.replayMu.Lock()
 			err := p.exportOne(ctx)
+			p.replayMu.Unlock()
 			cancel()
 			if err != nil {
 				otel.Handle(err)

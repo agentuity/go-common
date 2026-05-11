@@ -77,9 +77,10 @@ type durableMetricExporter struct {
 	cfg      durableMetricConfig
 	db       *sql.DB
 
-	wakeCh chan struct{}
-	done   chan struct{}
-	wg     sync.WaitGroup
+	wakeCh   chan struct{}
+	done     chan struct{}
+	wg       sync.WaitGroup
+	replayMu sync.Mutex
 
 	stopped atomic.Bool
 }
@@ -197,6 +198,8 @@ func (e *durableMetricExporter) Export(ctx context.Context, rm *metricdata.Resou
 }
 
 func (e *durableMetricExporter) ForceFlush(ctx context.Context) error {
+	e.replayMu.Lock()
+	defer e.replayMu.Unlock()
 	return e.drain(ctx)
 }
 
@@ -261,7 +264,9 @@ func (e *durableMetricExporter) exportLoop() {
 			resetTimer(timer, time.Millisecond)
 		case <-timer.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			e.replayMu.Lock()
 			err := e.exportBatch(ctx)
+			e.replayMu.Unlock()
 			cancel()
 			if err != nil {
 				otel.Handle(err)

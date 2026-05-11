@@ -18,6 +18,7 @@ import (
 type durableMetricTestExporter struct {
 	mu      sync.Mutex
 	metrics []metricdata.ResourceMetrics
+	batches []int
 	err     error
 }
 
@@ -36,6 +37,7 @@ func (e *durableMetricTestExporter) Export(_ context.Context, rm *metricdata.Res
 		return e.err
 	}
 	e.metrics = append(e.metrics, *rm)
+	e.batches = append(e.batches, countMetricDataPoints(rm))
 	return nil
 }
 
@@ -57,6 +59,12 @@ func (e *durableMetricTestExporter) count() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.metrics)
+}
+
+func (e *durableMetricTestExporter) batchCounts() []int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]int(nil), e.batches...)
 }
 
 func testResourceMetrics() metricdata.ResourceMetrics {
@@ -208,7 +216,56 @@ func TestDurableMetricExporterDropsCorruptRows(t *testing.T) {
 	assertQueueEmpty(t, e.db, "otel_metric_queue")
 }
 
+func TestDurableMetricExporterCoalescesReplayRows(t *testing.T) {
+	exporter := &durableMetricTestExporter{}
+	e, err := newDurableMetricExporter(context.Background(), exporter, durableMetricConfig{
+		path:           filepath.Join(t.TempDir(), "metrics.db"),
+		replayMaxRows:  10,
+		replayMaxBytes: 1 << 20,
+	})
+	require.NoError(t, err)
+	stopDurableMetricExporterLoop(e)
+	defer e.db.Close()
+
+	for i := 0; i < 3; i++ {
+		rm := testResourceMetrics()
+		require.NoError(t, e.Export(context.Background(), &rm))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, e.ForceFlush(ctx))
+	assert.Equal(t, 1, exporter.count())
+	assert.Equal(t, []int{3}, exporter.batchCounts())
+	assertQueueEmpty(t, e.db, "otel_metric_queue")
+}
+
 func stopDurableMetricExporterLoop(t *durableMetricExporter) {
 	close(t.done)
 	t.wg.Wait()
+}
+
+func countMetricDataPoints(rm *metricdata.ResourceMetrics) int {
+	var count int
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch data := m.Data.(type) {
+			case metricdata.Gauge[int64]:
+				count += len(data.DataPoints)
+			case metricdata.Gauge[float64]:
+				count += len(data.DataPoints)
+			case metricdata.Sum[int64]:
+				count += len(data.DataPoints)
+			case metricdata.Sum[float64]:
+				count += len(data.DataPoints)
+			case metricdata.Histogram[int64]:
+				count += len(data.DataPoints)
+			case metricdata.Histogram[float64]:
+				count += len(data.DataPoints)
+			case metricdata.Summary:
+				count += len(data.DataPoints)
+			}
+		}
+	}
+	return count
 }

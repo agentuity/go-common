@@ -22,6 +22,8 @@ import (
 const (
 	defaultTraceMaxStoredBatches = 10000
 	defaultTraceMaxStoredBytes   = int64(256 * 1024 * 1024)
+	defaultTraceReplayMaxRows    = 512
+	defaultTraceReplayMaxBytes   = 512 * 1024
 	defaultTraceRetryInitial     = time.Second
 	defaultTraceRetryMax         = 30 * time.Second
 )
@@ -30,6 +32,8 @@ type durableTraceConfig struct {
 	path             string
 	maxStoredBatches int
 	maxStoredBytes   int64
+	replayMaxRows    int
+	replayMaxBytes   int
 	retryInitial     time.Duration
 	retryMax         time.Duration
 }
@@ -43,6 +47,12 @@ func (c durableTraceConfig) withDefaults() durableTraceConfig {
 	}
 	if c.maxStoredBytes <= 0 {
 		c.maxStoredBytes = defaultTraceMaxStoredBytes
+	}
+	if c.replayMaxRows <= 0 {
+		c.replayMaxRows = defaultTraceReplayMaxRows
+	}
+	if c.replayMaxBytes <= 0 {
+		c.replayMaxBytes = defaultTraceReplayMaxBytes
 	}
 	if c.retryInitial <= 0 {
 		c.retryInitial = defaultTraceRetryInitial
@@ -195,7 +205,7 @@ func (e *durableTraceExporter) exportLoop() {
 			resetTimer(timer, time.Millisecond)
 		case <-timer.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := e.exportOne(ctx)
+			err := e.exportBatch(ctx)
 			cancel()
 			if err != nil {
 				otel.Handle(err)
@@ -226,32 +236,74 @@ func (e *durableTraceExporter) drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := e.exportOne(ctx); err != nil {
+		if err := e.exportBatch(ctx); err != nil {
 			return err
 		}
 	}
 }
 
-func (e *durableTraceExporter) exportOne(ctx context.Context) error {
-	var id int64
-	var payload []byte
-	err := e.db.QueryRowContext(ctx, `SELECT id, payload FROM otel_trace_queue ORDER BY id ASC LIMIT 1`).Scan(&id, &payload)
-	if err == sql.ErrNoRows {
-		return nil
-	}
+func (e *durableTraceExporter) exportBatch(ctx context.Context) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT id, payload, size_bytes FROM otel_trace_queue ORDER BY id ASC LIMIT ?`, e.cfg.replayMaxRows)
 	if err != nil {
 		return err
 	}
-	spans, err := decodeTracePayload(payload)
-	if err != nil {
-		_, _ = e.db.ExecContext(ctx, `DELETE FROM otel_trace_queue WHERE id = ?`, id)
-		return nil
+	defer rows.Close()
+
+	var ids []int64
+	var spans []sdktrace.ReadOnlySpan
+	var totalBytes int
+	for rows.Next() {
+		var id int64
+		var payload []byte
+		var size int
+		if err := rows.Scan(&id, &payload, &size); err != nil {
+			return err
+		}
+		if len(ids) > 0 && totalBytes+size > e.cfg.replayMaxBytes {
+			break
+		}
+		decoded, err := decodeTracePayload(payload)
+		if err != nil {
+			ids = append(ids, id)
+			continue
+		}
+		ids = append(ids, id)
+		spans = append(spans, decoded...)
+		totalBytes += size
 	}
-	if err := e.exporter.ExportSpans(ctx, spans); err != nil {
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = e.db.ExecContext(ctx, `DELETE FROM otel_trace_queue WHERE id = ?`, id)
-	return err
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(spans) > 0 {
+		if err := e.exporter.ExportSpans(ctx, spans); err != nil {
+			return err
+		}
+	}
+	return e.deleteIDs(ctx, ids)
+}
+
+func (e *durableTraceExporter) deleteIDs(ctx context.Context, ids []int64) error {
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `DELETE FROM otel_trace_queue WHERE id = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, id := range ids {
+		if _, err := stmt.ExecContext(ctx, id); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	_ = stmt.Close()
+	return tx.Commit()
 }
 
 func (e *durableTraceExporter) hasRows() bool {

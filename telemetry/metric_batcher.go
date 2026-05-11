@@ -23,6 +23,8 @@ import (
 const (
 	defaultMetricMaxStoredBatches = 10000
 	defaultMetricMaxStoredBytes   = int64(256 * 1024 * 1024)
+	defaultMetricReplayMaxRows    = 512
+	defaultMetricReplayMaxBytes   = 512 * 1024
 	defaultMetricRetryInitial     = time.Second
 	defaultMetricRetryMax         = 30 * time.Second
 )
@@ -31,6 +33,8 @@ type durableMetricConfig struct {
 	path             string
 	maxStoredBatches int
 	maxStoredBytes   int64
+	replayMaxRows    int
+	replayMaxBytes   int
 	retryInitial     time.Duration
 	retryMax         time.Duration
 }
@@ -44,6 +48,12 @@ func (c durableMetricConfig) withDefaults() durableMetricConfig {
 	}
 	if c.maxStoredBytes <= 0 {
 		c.maxStoredBytes = defaultMetricMaxStoredBytes
+	}
+	if c.replayMaxRows <= 0 {
+		c.replayMaxRows = defaultMetricReplayMaxRows
+	}
+	if c.replayMaxBytes <= 0 {
+		c.replayMaxBytes = defaultMetricReplayMaxBytes
 	}
 	if c.retryInitial <= 0 {
 		c.retryInitial = defaultMetricRetryInitial
@@ -249,7 +259,7 @@ func (e *durableMetricExporter) exportLoop() {
 			resetTimer(timer, time.Millisecond)
 		case <-timer.C:
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			err := e.exportOne(ctx)
+			err := e.exportBatch(ctx)
 			cancel()
 			if err != nil {
 				otel.Handle(err)
@@ -281,32 +291,89 @@ func (e *durableMetricExporter) drain(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := e.exportOne(ctx); err != nil {
+		if err := e.exportBatch(ctx); err != nil {
 			return err
 		}
 	}
 }
 
-func (e *durableMetricExporter) exportOne(ctx context.Context) error {
-	var id int64
-	var payload []byte
-	err := e.db.QueryRowContext(ctx, `SELECT id, payload FROM otel_metric_queue ORDER BY id ASC LIMIT 1`).Scan(&id, &payload)
-	if err == sql.ErrNoRows {
-		return nil
-	}
+func (e *durableMetricExporter) exportBatch(ctx context.Context) error {
+	rows, err := e.db.QueryContext(ctx, `SELECT id, payload, size_bytes FROM otel_metric_queue ORDER BY id ASC LIMIT ?`, e.cfg.replayMaxRows)
 	if err != nil {
 		return err
 	}
-	rm, err := decodeMetricPayload(payload)
-	if err != nil {
-		_, _ = e.db.ExecContext(ctx, `DELETE FROM otel_metric_queue WHERE id = ?`, id)
-		return nil
+	defer rows.Close()
+
+	var ids []int64
+	var resourceMetrics []metricdata.ResourceMetrics
+	var totalBytes int
+	for rows.Next() {
+		var id int64
+		var payload []byte
+		var size int
+		if err := rows.Scan(&id, &payload, &size); err != nil {
+			return err
+		}
+		if len(ids) > 0 && totalBytes+size > e.cfg.replayMaxBytes {
+			break
+		}
+		rm, err := decodeMetricPayload(payload)
+		if err != nil {
+			ids = append(ids, id)
+			continue
+		}
+		ids = append(ids, id)
+		resourceMetrics = append(resourceMetrics, rm)
+		totalBytes += size
 	}
-	if err := e.exporter.Export(ctx, &rm); err != nil {
+	if err := rows.Err(); err != nil {
 		return err
 	}
-	_, err = e.db.ExecContext(ctx, `DELETE FROM otel_metric_queue WHERE id = ?`, id)
-	return err
+	if len(ids) == 0 {
+		return nil
+	}
+	if len(resourceMetrics) > 0 {
+		merged := mergeResourceMetrics(resourceMetrics)
+		if err := e.exporter.Export(ctx, &merged); err != nil {
+			return err
+		}
+	}
+	return e.deleteIDs(ctx, ids)
+}
+
+func (e *durableMetricExporter) deleteIDs(ctx context.Context, ids []int64) error {
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	stmt, err := tx.PrepareContext(ctx, `DELETE FROM otel_metric_queue WHERE id = ?`)
+	if err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	for _, id := range ids {
+		if _, err := stmt.ExecContext(ctx, id); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	_ = stmt.Close()
+	return tx.Commit()
+}
+
+func mergeResourceMetrics(items []metricdata.ResourceMetrics) metricdata.ResourceMetrics {
+	if len(items) == 0 {
+		return metricdata.ResourceMetrics{}
+	}
+	merged := metricdata.ResourceMetrics{
+		Resource:     items[0].Resource,
+		ScopeMetrics: make([]metricdata.ScopeMetrics, 0),
+	}
+	for _, item := range items {
+		merged.ScopeMetrics = append(merged.ScopeMetrics, item.ScopeMetrics...)
+	}
+	return merged
 }
 
 func (e *durableMetricExporter) hasRows() bool {

@@ -18,6 +18,7 @@ import (
 type durableLogTestExporter struct {
 	mu      sync.Mutex
 	records []sdklog.Record
+	batches []int
 	err     error
 }
 
@@ -28,6 +29,7 @@ func (e *durableLogTestExporter) Export(_ context.Context, records []sdklog.Reco
 		return e.err
 	}
 	e.records = append(e.records, records...)
+	e.batches = append(e.batches, len(records))
 	return nil
 }
 
@@ -49,6 +51,12 @@ func (e *durableLogTestExporter) count() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.records)
+}
+
+func (e *durableLogTestExporter) batchCounts() []int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]int(nil), e.batches...)
 }
 
 func testLogRecord(msg string) sdklog.Record {
@@ -202,6 +210,33 @@ func TestDurableLogProcessorDropsCorruptRows(t *testing.T) {
 	defer cancel()
 	require.NoError(t, p.ForceFlush(ctx))
 	assert.Equal(t, 1, exporter.count())
+	assertQueueEmpty(t, p.db, "otel_log_queue")
+}
+
+func TestDurableLogProcessorCoalescesReplayRows(t *testing.T) {
+	exporter := &durableLogTestExporter{}
+	p, err := newDurableLogProcessor(context.Background(), exporter, durableLogConfig{
+		path:           filepath.Join(t.TempDir(), "logs.db"),
+		idleTimeout:    time.Hour,
+		emitQueueSize:  10,
+		writeBatchSize: 10,
+		maxRecords:     10,
+		maxBytes:       1 << 20,
+	})
+	require.NoError(t, err)
+	defer p.Shutdown(context.Background())
+
+	records := make([]queuedLogRecord, 0, 3)
+	for i := 0; i < 3; i++ {
+		records = append(records, mustQueuedLogRecord(t, testLogRecord("batched")))
+	}
+	require.NoError(t, p.insert(records))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, p.ForceFlush(ctx))
+	assert.Equal(t, 3, exporter.count())
+	assert.Equal(t, []int{3}, exporter.batchCounts())
 	assertQueueEmpty(t, p.db, "otel_log_queue")
 }
 

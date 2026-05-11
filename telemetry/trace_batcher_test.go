@@ -17,9 +17,10 @@ import (
 )
 
 type durableTraceTestExporter struct {
-	mu    sync.Mutex
-	spans []sdktrace.ReadOnlySpan
-	err   error
+	mu      sync.Mutex
+	spans   []sdktrace.ReadOnlySpan
+	batches []int
+	err     error
 }
 
 func (e *durableTraceTestExporter) ExportSpans(_ context.Context, spans []sdktrace.ReadOnlySpan) error {
@@ -29,6 +30,7 @@ func (e *durableTraceTestExporter) ExportSpans(_ context.Context, spans []sdktra
 		return e.err
 	}
 	e.spans = append(e.spans, spans...)
+	e.batches = append(e.batches, len(spans))
 	return nil
 }
 
@@ -46,6 +48,12 @@ func (e *durableTraceTestExporter) count() int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return len(e.spans)
+}
+
+func (e *durableTraceTestExporter) batchCounts() []int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]int(nil), e.batches...)
 }
 
 func testReadOnlySpan() sdktrace.ReadOnlySpan {
@@ -178,6 +186,29 @@ func TestDurableTraceExporterDropsCorruptRows(t *testing.T) {
 	defer cancel()
 	require.NoError(t, e.drain(ctx))
 	assert.Equal(t, 1, exporter.count())
+	assertQueueEmpty(t, e.db, "otel_trace_queue")
+}
+
+func TestDurableTraceExporterCoalescesReplayRows(t *testing.T) {
+	exporter := &durableTraceTestExporter{}
+	e, err := newDurableTraceExporter(context.Background(), exporter, durableTraceConfig{
+		path:           filepath.Join(t.TempDir(), "traces.db"),
+		replayMaxRows:  10,
+		replayMaxBytes: 1 << 20,
+	})
+	require.NoError(t, err)
+	stopDurableTraceExporterLoop(e)
+	defer e.db.Close()
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	require.NoError(t, e.drain(ctx))
+	assert.Equal(t, 3, exporter.count())
+	assert.Equal(t, []int{3}, exporter.batchCounts())
 	assertQueueEmpty(t, e.db, "otel_trace_queue")
 }
 

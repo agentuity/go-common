@@ -256,7 +256,6 @@ func (e *durableTraceExporter) exportBatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	var ids []int64
 	var spans []sdktrace.ReadOnlySpan
@@ -266,6 +265,7 @@ func (e *durableTraceExporter) exportBatch(ctx context.Context) error {
 		var payload []byte
 		var size int
 		if err := rows.Scan(&id, &payload, &size); err != nil {
+			_ = rows.Close()
 			return err
 		}
 		if len(ids) > 0 && totalBytes+size > e.cfg.replayMaxBytes {
@@ -281,6 +281,10 @@ func (e *durableTraceExporter) exportBatch(ctx context.Context) error {
 		totalBytes += size
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	if len(ids) == 0 {

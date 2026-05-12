@@ -213,6 +213,36 @@ func TestDurableTraceExporterCoalescesReplayRows(t *testing.T) {
 	assertQueueEmpty(t, e.db, "otel_trace_queue")
 }
 
+func TestDurableTraceExporterDoesNotHoldDBConnectionDuringReplayExport(t *testing.T) {
+	exporter := &blockingSpanExporter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	e, err := newDurableTraceExporter(context.Background(), exporter, durableTraceConfig{
+		path: filepath.Join(t.TempDir(), "traces.db"),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, e.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	require.Eventually(t, func() bool {
+		select {
+		case <-exporter.started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.NoError(t, e.ExportSpans(ctx, []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+
+	close(exporter.release)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(t, e.Shutdown(shutdownCtx))
+}
+
 func stopDurableTraceExporterLoop(e *durableTraceExporter) {
 	if e.loopCancel != nil {
 		e.loopCancel()

@@ -307,7 +307,7 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 
 	// Create trace provider
 	tracerProvider := sdktrace.NewTracerProvider(
-		sdktrace.WithSyncer(durableTraceExporter),
+		sdktrace.WithBatcher(durableTraceExporter),
 		sdktrace.WithResource(res),
 	)
 	otel.SetTracerProvider(tracerProvider)

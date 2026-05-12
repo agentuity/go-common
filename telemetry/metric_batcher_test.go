@@ -241,6 +241,72 @@ func TestDurableMetricExporterCoalescesReplayRows(t *testing.T) {
 	assertQueueEmpty(t, e.db, "otel_metric_queue")
 }
 
+type blockingMetricExporter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingMetricExporter) Temporality(sdkmetric.InstrumentKind) metricdata.Temporality {
+	return metricdata.CumulativeTemporality
+}
+
+func (e *blockingMetricExporter) Aggregation(kind sdkmetric.InstrumentKind) sdkmetric.Aggregation {
+	return sdkmetric.DefaultAggregationSelector(kind)
+}
+
+func (e *blockingMetricExporter) Export(ctx context.Context, _ *metricdata.ResourceMetrics) error {
+	e.once.Do(func() {
+		close(e.started)
+	})
+	select {
+	case <-e.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *blockingMetricExporter) ForceFlush(context.Context) error {
+	return nil
+}
+
+func (e *blockingMetricExporter) Shutdown(context.Context) error {
+	return nil
+}
+
+func TestDurableMetricExporterDoesNotHoldDBConnectionDuringReplayExport(t *testing.T) {
+	exporter := &blockingMetricExporter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	e, err := newDurableMetricExporter(context.Background(), exporter, durableMetricConfig{
+		path: filepath.Join(t.TempDir(), "metrics.db"),
+	})
+	require.NoError(t, err)
+
+	rm := testResourceMetrics()
+	require.NoError(t, e.Export(context.Background(), &rm))
+	require.Eventually(t, func() bool {
+		select {
+		case <-exporter.started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	rm = testResourceMetrics()
+	require.NoError(t, e.Export(ctx, &rm))
+
+	close(exporter.release)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(t, e.Shutdown(shutdownCtx))
+}
+
 func stopDurableMetricExporterLoop(t *durableMetricExporter) {
 	if t.loopCancel != nil {
 		t.loopCancel()

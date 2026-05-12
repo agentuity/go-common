@@ -263,6 +263,79 @@ func TestDurableLogProcessorCoalescesReplayRows(t *testing.T) {
 	assertQueueEmpty(t, p.db, "otel_log_queue")
 }
 
+type blockingLogExporter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingLogExporter) Export(ctx context.Context, _ []sdklog.Record) error {
+	e.once.Do(func() {
+		close(e.started)
+	})
+	select {
+	case <-e.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *blockingLogExporter) Shutdown(context.Context) error {
+	return nil
+}
+
+func (e *blockingLogExporter) ForceFlush(context.Context) error {
+	return nil
+}
+
+func TestDurableLogProcessorDoesNotHoldDBConnectionDuringReplayExport(t *testing.T) {
+	exporter := &blockingLogExporter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	p, err := newDurableLogProcessor(context.Background(), exporter, durableLogConfig{
+		path:           filepath.Join(t.TempDir(), "logs.db"),
+		idleTimeout:    time.Hour,
+		emitQueueSize:  10,
+		writeBatchSize: 10,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, p.insert([]queuedLogRecord{mustQueuedLogRecord(t, testLogRecord("blocked replay"))}))
+	flushDone := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		flushDone <- p.ForceFlush(ctx)
+	}()
+	require.Eventually(t, func() bool {
+		select {
+		case <-exporter.started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	insertDone := make(chan error, 1)
+	go func() {
+		insertDone <- p.insert([]queuedLogRecord{mustQueuedLogRecord(t, testLogRecord("while replaying"))})
+	}()
+	select {
+	case err := <-insertDone:
+		require.NoError(t, err)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("log insert blocked while replay export was waiting")
+	}
+
+	close(exporter.release)
+	require.NoError(t, <-flushDone)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), time.Second)
+	defer shutdownCancel()
+	require.NoError(t, p.Shutdown(shutdownCtx))
+}
+
 func ptrRecord(r sdklog.Record) *sdklog.Record {
 	return &r
 }

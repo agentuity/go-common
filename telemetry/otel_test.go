@@ -11,10 +11,14 @@ import (
 	"time"
 
 	"github.com/agentuity/go-common/logger"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/extra/redisotel/v9"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/metric"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 func getTestValues() (string, string, string) {
@@ -188,4 +192,133 @@ func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
 		defer mu.Unlock()
 		return hits["/v1/logs"] > 0 && hits["/v1/traces"] > 0 && hits["/v1/metrics"] > 0
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestSlowTelemetryExporterDoesNotBlockInstrumentedRedisPing(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(250 * time.Millisecond)
+		http.Error(w, "tableflip old process still exiting", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	mr := miniredis.RunT(t)
+
+	for _, tt := range []struct {
+		name       string
+		seedReplay bool
+	}{
+		{name: "empty queues"},
+		{name: "active replay", seedReplay: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tmp := t.TempDir()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			ctx, log, shutdown, err := NewWithAPIKey(
+				ctx,
+				"test-service",
+				server.URL,
+				"api-key",
+				nil,
+				WithTimeout(50*time.Millisecond),
+				WithShutdownTimeout(50*time.Millisecond),
+				WithLogBatchPath(filepath.Join(tmp, "logs.db")),
+				WithMetricBatchPath(filepath.Join(tmp, "metrics.db")),
+				WithTraceBatchPath(filepath.Join(tmp, "traces.db")),
+				WithLogBatchIdleTimeout(10*time.Millisecond),
+			)
+			require.NoError(t, err)
+			require.NotNil(t, ctx)
+			require.NotNil(t, log)
+			t.Cleanup(shutdown)
+
+			if tt.seedReplay {
+				log.Info("seed log replay")
+
+				spanCtx, span := otel.Tracer("telemetry-redis-repro").Start(ctx, "seed-span")
+				span.End()
+
+				counter, err := otel.Meter("telemetry-redis-repro").Int64Counter("seed.counter")
+				require.NoError(t, err)
+				counter.Add(spanCtx, 1)
+			}
+
+			client := redis.NewClient(&redis.Options{
+				Addr:         mr.Addr(),
+				DialTimeout:  50 * time.Millisecond,
+				ReadTimeout:  50 * time.Millisecond,
+				WriteTimeout: 50 * time.Millisecond,
+				PoolTimeout:  50 * time.Millisecond,
+			})
+			t.Cleanup(func() {
+				require.NoError(t, client.Close())
+			})
+
+			require.NoError(t, redisotel.InstrumentTracing(client))
+			require.NoError(t, redisotel.InstrumentMetrics(client))
+
+			pingCtx, pingCancel := context.WithTimeout(context.Background(), time.Second)
+			defer pingCancel()
+
+			start := time.Now()
+			require.NoError(t, client.Ping(pingCtx).Err())
+			require.Less(t, time.Since(start), 250*time.Millisecond)
+		})
+	}
+}
+
+type blockingSpanExporter struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (e *blockingSpanExporter) ExportSpans(ctx context.Context, _ []sdktrace.ReadOnlySpan) error {
+	e.once.Do(func() {
+		close(e.started)
+	})
+	select {
+	case <-e.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (e *blockingSpanExporter) Shutdown(context.Context) error {
+	return nil
+}
+
+func TestBatchSpanProcessorDoesNotBlockWhenDurableTraceQueueIsBusy(t *testing.T) {
+	exporter := &blockingSpanExporter{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	durable, err := newDurableTraceExporter(context.Background(), exporter, durableTraceConfig{
+		path: filepath.Join(t.TempDir(), "traces.db"),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, durable.ExportSpans(context.Background(), []sdktrace.ReadOnlySpan{testReadOnlySpan()}))
+	require.Eventually(t, func() bool {
+		select {
+		case <-exporter.started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	provider := sdktrace.NewTracerProvider(sdktrace.WithBatcher(durable))
+
+	start := time.Now()
+	_, span := provider.Tracer("telemetry-test").Start(context.Background(), "span")
+	span.End()
+	require.Less(t, time.Since(start), 100*time.Millisecond)
+
+	close(exporter.release)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	require.NoError(t, provider.Shutdown(ctx))
 }

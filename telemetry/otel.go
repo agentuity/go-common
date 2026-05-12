@@ -46,6 +46,7 @@ type config struct {
 	timeout         time.Duration
 	shutdownTimeout time.Duration
 	headers         http.Header
+	resourceAttrs   []attribute.KeyValue
 	logBatch        durableLogConfig
 	metricBatch     durableMetricConfig
 	traceBatch      durableTraceConfig
@@ -78,6 +79,12 @@ func WithShutdownTimeout(dur time.Duration) Option {
 func WithHeaders(headers http.Header) Option {
 	return func(c *config) {
 		c.headers = headers
+	}
+}
+
+func WithResourceAttributes(attrs ...attribute.KeyValue) Option {
+	return func(c *config) {
+		c.resourceAttrs = append(c.resourceAttrs, attrs...)
 	}
 }
 
@@ -198,6 +205,7 @@ func new(ctx context.Context, oltpServerURL string, authToken string, serviceNam
 	}
 
 	kvs = append(kvs, semconv.ServiceName(serviceName))
+	kvs = append(kvs, cfg.resourceAttrs...)
 
 	res, err := resource.New(
 		ctx,
@@ -393,6 +401,101 @@ func NewWithAPIKey(ctx context.Context, serviceName string, telemetryURL string,
 		return ctx2, olog, shutdownMetrics, nil
 	}
 	return ctx2, olog.Stack(consoleLogger), shutdownMetrics, nil
+}
+
+// NewLogForwarderWithAPIKey creates an OTLP log-only logger backed by the durable
+// local log queue. It does not mutate global OpenTelemetry providers, so callers
+// can safely create multiple forwarders with different resource attributes and
+// durable queue paths in the same process.
+func NewLogForwarderWithAPIKey(ctx context.Context, serviceName string, telemetryURL string, telemetryAPIKey string, consoleLogger logger.Logger, opts ...Option) (logger.Logger, func(), error) {
+	cfg := &config{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+	if cfg.timeout <= 0 {
+		cfg.timeout = 10 * time.Second
+	}
+	if cfg.shutdownTimeout <= 0 {
+		cfg.shutdownTimeout = cfg.timeout + time.Second
+	}
+
+	oltpURL, err := url.Parse(telemetryURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error parsing oltpServerURL: %w", err)
+	}
+	oltpURL.Path = "/v1/logs"
+	logURL := oltpURL.String()
+
+	kvs := []attribute.KeyValue{semconv.ServiceName(serviceName)}
+	kvs = append(kvs, cfg.resourceAttrs...)
+	res, err := resource.New(
+		ctx,
+		resource.WithTelemetrySDK(),
+		resource.WithAttributes(kvs...),
+	)
+	if errors.Is(err, resource.ErrPartialResource) || errors.Is(err, resource.ErrSchemaURLConflict) {
+		fmt.Println(err)
+	} else if err != nil {
+		return nil, nil, fmt.Errorf("error creating resource: %w", err)
+	}
+
+	headers := make(map[string]string)
+	for k, v := range cfg.headers {
+		headers[k] = strings.Join(v, ",")
+	}
+	if telemetryAPIKey != "" {
+		headers["Authorization"] = "Bearer " + telemetryAPIKey
+	}
+
+	var httpClient *http.Client
+	if cfg.dialContext != nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = cfg.dialContext
+		transport.ForceAttemptHTTP2 = true
+		httpClient = &http.Client{
+			Transport: transport,
+			Timeout:   cfg.timeout,
+		}
+	}
+
+	logExporterOpts := []otlploghttp.Option{
+		otlploghttp.WithEndpointURL(logURL),
+		otlploghttp.WithHeaders(headers),
+		otlploghttp.WithTimeout(cfg.timeout),
+		otlploghttp.WithCompression(otlploghttp.GzipCompression),
+	}
+	if oltpURL.Scheme == "http" {
+		logExporterOpts = append(logExporterOpts, otlploghttp.WithInsecure())
+	}
+	if httpClient != nil {
+		logExporterOpts = append(logExporterOpts, otlploghttp.WithHTTPClient(httpClient))
+	}
+	logExporter, err := otlploghttp.New(ctx, logExporterOpts...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("error creating log exporter: %w", err)
+	}
+
+	logProcessor, err := newDurableLogProcessor(ctx, logExporter, cfg.logBatch)
+	if err != nil {
+		logExporter.Shutdown(ctx)
+		return nil, nil, fmt.Errorf("error creating log processor: %w", err)
+	}
+
+	logProvider := sdklog.NewLoggerProvider(
+		sdklog.WithResource(res),
+		sdklog.WithProcessor(logProcessor),
+	)
+	otelLogger := logger.NewOtelLogger(logProvider.Logger(serviceName), logger.LevelTrace)
+	if consoleLogger != nil {
+		otelLogger = otelLogger.Stack(consoleLogger)
+	}
+
+	shutdown := func() {
+		shutdownTelemetryComponent(cfg.shutdownTimeout, logProvider.Shutdown)
+		shutdownTelemetryComponent(cfg.shutdownTimeout, logExporter.Shutdown)
+	}
+
+	return otelLogger, shutdown, nil
 }
 
 func StartSpan(ctx context.Context, logger logger.Logger, tracer trace.Tracer, spanName string, opts ...trace.SpanStartOption) (context.Context, logger.Logger, trace.Span) {

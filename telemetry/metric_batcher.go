@@ -324,6 +324,7 @@ func (e *durableMetricExporter) exportBatch(ctx context.Context) error {
 		var payload []byte
 		var size int
 		if err := rows.Scan(&id, &payload, &size); err != nil {
+			_ = rows.Close()
 			return err
 		}
 		if len(ids) > 0 && totalBytes+size > e.cfg.replayMaxBytes {

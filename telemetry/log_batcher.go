@@ -425,6 +425,7 @@ func (p *durableLogProcessor) exportOne(ctx context.Context) error {
 		var data []byte
 		var size int
 		if err := rows.Scan(&id, &data, &size); err != nil {
+			_ = rows.Close()
 			return err
 		}
 		if len(records) > 0 && total+size > p.cfg.maxBytes {

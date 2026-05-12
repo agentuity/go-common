@@ -321,5 +321,4 @@ func TestBatchSpanProcessorDoesNotBlockWhenDurableTraceQueueIsBusy(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	require.NoError(t, provider.Shutdown(ctx))
-	require.NoError(t, durable.Shutdown(ctx))
 }

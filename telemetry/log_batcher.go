@@ -416,7 +416,6 @@ func (p *durableLogProcessor) exportOne(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
 
 	var ids []int64
 	var records []sdklog.Record
@@ -441,6 +440,10 @@ func (p *durableLogProcessor) exportOne(ctx context.Context) error {
 		total += size
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
 		return err
 	}
 	if len(ids) == 0 {

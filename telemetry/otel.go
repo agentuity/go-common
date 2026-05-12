@@ -430,7 +430,12 @@ func NewLogForwarderWithAPIKey(ctx context.Context, serviceName string, telemetr
 	kvs = append(kvs, cfg.resourceAttrs...)
 	res, err := resource.New(
 		ctx,
+		resource.WithFromEnv(),
 		resource.WithTelemetrySDK(),
+		resource.WithProcess(),
+		resource.WithOS(),
+		resource.WithContainer(),
+		resource.WithHost(),
 		resource.WithAttributes(kvs...),
 	)
 	if errors.Is(err, resource.ErrPartialResource) || errors.Is(err, resource.ErrSchemaURLConflict) {

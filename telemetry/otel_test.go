@@ -238,10 +238,14 @@ func TestNewLogForwarderWithAPIKeySendsOnlyLogs(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 
 	mu.Lock()
-	defer mu.Unlock()
 	assert.Equal(t, "Bearer sk_test", authHeaders["/v1/logs"])
-	assert.Zero(t, hits["/v1/traces"])
-	assert.Zero(t, hits["/v1/metrics"])
+	mu.Unlock()
+
+	require.Never(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits["/v1/traces"] > 0 || hits["/v1/metrics"] > 0
+	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestSlowTelemetryExporterDoesNotBlockInstrumentedRedisPing(t *testing.T) {

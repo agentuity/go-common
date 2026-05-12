@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
@@ -192,6 +193,59 @@ func TestTelemetrySendsLogsTracesAndMetrics(t *testing.T) {
 		defer mu.Unlock()
 		return hits["/v1/logs"] > 0 && hits["/v1/traces"] > 0 && hits["/v1/metrics"] > 0
 	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestNewLogForwarderWithAPIKeySendsOnlyLogs(t *testing.T) {
+	var mu sync.Mutex
+	hits := map[string]int{}
+	authHeaders := map[string]string{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits[r.URL.Path]++
+		authHeaders[r.URL.Path] = r.Header.Get("Authorization")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	tmp := t.TempDir()
+	ctx := context.Background()
+	log, shutdown, err := NewLogForwarderWithAPIKey(
+		ctx,
+		"container-log-forwarder",
+		server.URL,
+		"sk_test",
+		nil,
+		WithLogBatchPath(filepath.Join(tmp, "container-1-logs.db")),
+		WithLogBatchIdleTimeout(10*time.Millisecond),
+		WithResourceAttributes(
+			attribute.String("@agentuity/orgId", "org_123"),
+			attribute.String("@agentuity/projectId", "proj_123"),
+			attribute.String("@agentuity/deploymentId", "dep_123"),
+		),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, log)
+	require.NotNil(t, shutdown)
+
+	log.Info("hello from container")
+	shutdown()
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits["/v1/logs"] > 0
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	assert.Equal(t, "Bearer sk_test", authHeaders["/v1/logs"])
+	mu.Unlock()
+
+	require.Never(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return hits["/v1/traces"] > 0 || hits["/v1/metrics"] > 0
+	}, 100*time.Millisecond, 10*time.Millisecond)
 }
 
 func TestSlowTelemetryExporterDoesNotBlockInstrumentedRedisPing(t *testing.T) {

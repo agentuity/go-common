@@ -3,7 +3,7 @@ module github.com/agentuity/go-common
 go 1.26.2
 
 require (
-	github.com/alicebob/miniredis/v2 v2.36.1
+	github.com/alicebob/miniredis/v2 v2.38.0
 	github.com/buger/goterm v1.0.4
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/charmbracelet/huh v0.6.0

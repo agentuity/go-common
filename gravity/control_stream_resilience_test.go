@@ -178,6 +178,34 @@ func TestEstablishControlStreams_PartialFailure(t *testing.T) {
 	}
 }
 
+func TestEstablishControlStreams_MultiEndpointSkipsNilClients(t *testing.T) {
+	g := newResilienceTestClient(t, 4, true)
+	g.sessionClients = []pb.GravitySessionServiceClient{
+		&mockSessionClient{},
+		nil,
+		&mockSessionClient{},
+		nil,
+	}
+
+	err := g.establishControlStreams()
+	if err != nil {
+		t.Fatalf("expected partial success with nil clients skipped, got error: %v", err)
+	}
+
+	if got := countNonNilControlStreams(g); got != 2 {
+		t.Fatalf("expected 2 established control streams, got %d", got)
+	}
+
+	for _, idx := range []int{1, 3} {
+		if g.streamManager.controlStreams[idx] != nil {
+			t.Fatalf("expected nil client endpoint %d control stream=nil", idx)
+		}
+		if !g.endpointReconnecting[idx].Load() {
+			t.Fatalf("expected nil client endpoint %d reconnecting=true", idx)
+		}
+	}
+}
+
 func TestEstablishControlStreams_AllFail(t *testing.T) {
 	g := newResilienceTestClient(t, 3, true)
 	g.sessionClients = []pb.GravitySessionServiceClient{
@@ -205,6 +233,22 @@ func TestEstablishControlStreams_SingleEndpointPreservesOriginalBehavior(t *test
 	err := g.establishControlStreams()
 	if err == nil {
 		t.Fatalf("expected error in single-endpoint mode")
+	}
+	if g.endpointReconnecting[0].Load() {
+		t.Fatalf("expected single-endpoint reconnecting flag to remain false")
+	}
+}
+
+func TestEstablishControlStreams_SingleEndpointNilClientReturnsError(t *testing.T) {
+	g := newResilienceTestClient(t, 1, false)
+	g.sessionClients = []pb.GravitySessionServiceClient{nil}
+
+	err := g.establishControlStreams()
+	if err == nil {
+		t.Fatalf("expected error for nil single-endpoint session client")
+	}
+	if !strings.Contains(err.Error(), "session client 0 is not available") {
+		t.Fatalf("expected nil session client error, got: %v", err)
 	}
 	if g.endpointReconnecting[0].Load() {
 		t.Fatalf("expected single-endpoint reconnecting flag to remain false")

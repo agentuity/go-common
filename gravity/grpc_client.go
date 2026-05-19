@@ -2193,6 +2193,9 @@ func (g *GravityClient) establishControlStreams() error {
 				i, numConns, len(g.streamManager.contexts), len(g.streamManager.controlStreams))
 			break
 		}
+		if client == nil {
+			return fmt.Errorf("session client %d is not available", i)
+		}
 		g.logger.Debug("establishing control stream %d/%d", i+1, len(g.connections))
 		ctx, cancel := context.WithCancel(g.ctx)
 		g.streamManager.contexts[i] = ctx
@@ -2236,6 +2239,10 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 	results := make(chan establishResult, n)
 
 	for i, client := range g.sessionClients {
+		if client == nil {
+			results <- establishResult{index: i, err: fmt.Errorf("session client %d is not available", i)}
+			continue
+		}
 		go func(idx int, c pb.GravitySessionServiceClient) {
 			ctx, cancel := context.WithCancel(g.ctx)
 			stream, err := c.EstablishSession(ctx, grpc.UseCompressor(grpcgzip.Name))
@@ -2254,7 +2261,9 @@ func (g *GravityClient) establishControlStreamsMulti() error {
 			if !isContextCanceled(g.ctx, result.err) {
 				g.logger.Debug("control stream %d failed: %v", result.index+1, result.err)
 			}
-			result.cancel()
+			if result.cancel != nil {
+				result.cancel()
+			}
 			failed = append(failed, result.index)
 			lastErr = result.err
 			continue

@@ -385,93 +385,96 @@ func Unzip(src, dest string, flatten bool) error {
 	defer r.Close()
 
 	for _, f := range r.File {
-		// Check for directory traversal attacks by examining path components
-		// Split the path and check each component
-		pathParts := strings.Split(filepath.ToSlash(f.Name), "/")
-		for _, part := range pathParts {
-			// Block path components that could be used for directory traversal
-			// ".." is obvious, but also block pure dot sequences (3+ dots) that might be interpreted as ".."
-			if part == ".." || (len(part) >= 3 && strings.Trim(part, ".") == "") {
-				return fmt.Errorf("invalid file path: %s", f.Name)
-			}
-		}
-
-		rc, err := f.Open()
-		if err != nil {
+		if err := unzipFile(f, dest, flatten); err != nil {
 			return err
-		}
-		defer rc.Close()
-
-		if flatten {
-			f.Name = filepath.Base(f.Name)
-		}
-
-		// Validate file name before path construction to catch absolute paths and other attacks
-		if filepath.IsAbs(f.Name) {
-			return fmt.Errorf("invalid file path, absolute path not allowed: %s", f.Name)
-		}
-
-		// Check for Windows-style absolute paths and UNC paths (platform-independent)
-		if len(f.Name) >= 3 && f.Name[1] == ':' && (f.Name[2] == '\\' || f.Name[2] == '/') {
-			return fmt.Errorf("invalid file path, Windows drive path not allowed: %s", f.Name)
-		}
-		if strings.HasPrefix(f.Name, "\\\\") {
-			return fmt.Errorf("invalid file path, UNC path not allowed: %s", f.Name)
-		}
-
-		fpath := filepath.Join(dest, f.Name)
-
-		// Canonicalize paths and validate against directory traversal
-		destRoot := filepath.Clean(dest)
-		if !strings.HasSuffix(destRoot, string(os.PathSeparator)) {
-			destRoot += string(os.PathSeparator)
-		}
-		cleanedFpath := filepath.Clean(fpath)
-
-		// Ensure the cleaned file path is within the destination directory
-		if !strings.HasPrefix(cleanedFpath+string(os.PathSeparator), destRoot) {
-			return fmt.Errorf("invalid file path, outside destination directory: %s", f.Name)
-		}
-
-		if f.FileInfo().IsDir() && !flatten {
-			os.MkdirAll(fpath, os.ModePerm)
-		} else {
-			var fdir string
-			if lastIndex := strings.LastIndex(fpath, string(os.PathSeparator)); lastIndex > -1 {
-				fdir = fpath[:lastIndex]
-			}
-
-			err = os.MkdirAll(fdir, os.ModePerm)
-			if err != nil {
-				return err
-			}
-
-			// Zip archives created on Windows may store zero or incorrect Unix
-			// permission bits, causing EACCES errors when the extracted files
-			// are read on Linux.  Ensure the owner-read bit is always present
-			// while preserving any existing execute bits.
-			mode := f.Mode()
-			if mode.Perm() == 0 {
-				// Entirely missing permissions — set sensible default but
-				// keep any execute bits from the original mode.
-				mode = (mode & 0o111) | 0o600
-			} else if mode&0o400 == 0 {
-				// Has some bits but owner-read is missing — add it.
-				mode = mode | 0o400
-			}
-
-			f, err := os.OpenFile(
-				fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-
-			_, err = io.Copy(f, rc)
-			if err != nil {
-				return err
-			}
 		}
 	}
 	return nil
+}
+
+func unzipFile(f *zip.File, dest string, flatten bool) error {
+	name := f.Name
+
+	// Check for directory traversal attacks by examining path components
+	// Split the path and check each component
+	pathParts := strings.Split(filepath.ToSlash(name), "/")
+	for _, part := range pathParts {
+		// Block path components that could be used for directory traversal
+		// ".." is obvious, but also block pure dot sequences (3+ dots) that might be interpreted as ".."
+		if part == ".." || (len(part) >= 3 && strings.Trim(part, ".") == "") {
+			return fmt.Errorf("invalid file path: %s", name)
+		}
+	}
+
+	if flatten {
+		name = filepath.Base(name)
+	}
+
+	// Validate file name before path construction to catch absolute paths and other attacks
+	if filepath.IsAbs(name) {
+		return fmt.Errorf("invalid file path, absolute path not allowed: %s", name)
+	}
+
+	// Check for Windows-style absolute paths and UNC paths (platform-independent)
+	if len(name) >= 3 && name[1] == ':' && (name[2] == '\\' || name[2] == '/') {
+		return fmt.Errorf("invalid file path, Windows drive path not allowed: %s", name)
+	}
+	if strings.HasPrefix(name, "\\\\") {
+		return fmt.Errorf("invalid file path, UNC path not allowed: %s", name)
+	}
+
+	fpath := filepath.Join(dest, name)
+
+	// Canonicalize paths and validate against directory traversal
+	destRoot := filepath.Clean(dest)
+	if !strings.HasSuffix(destRoot, string(os.PathSeparator)) {
+		destRoot += string(os.PathSeparator)
+	}
+	cleanedFpath := filepath.Clean(fpath)
+
+	// Ensure the cleaned file path is within the destination directory
+	if !strings.HasPrefix(cleanedFpath+string(os.PathSeparator), destRoot) {
+		return fmt.Errorf("invalid file path, outside destination directory: %s", name)
+	}
+
+	if f.FileInfo().IsDir() && !flatten {
+		return os.MkdirAll(fpath, os.ModePerm)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(fpath), os.ModePerm); err != nil {
+		return err
+	}
+
+	rc, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer rc.Close()
+
+	// Zip archives created on Windows may store zero or incorrect Unix
+	// permission bits, causing EACCES errors when the extracted files
+	// are read on Linux.  Ensure the owner-read bit is always present
+	// while preserving any existing execute bits.
+	mode := f.Mode()
+	if mode.Perm() == 0 {
+		// Entirely missing permissions — set sensible default but
+		// keep any execute bits from the original mode.
+		mode = (mode & 0o111) | 0o600
+	} else if mode&0o400 == 0 {
+		// Has some bits but owner-read is missing — add it.
+		mode = mode | 0o400
+	}
+
+	out, err := os.OpenFile(
+		fpath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+
+	if _, err = io.Copy(out, rc); err != nil {
+		out.Close()
+		return err
+	}
+
+	return out.Close()
 }

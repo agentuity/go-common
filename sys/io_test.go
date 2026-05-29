@@ -45,6 +45,30 @@ func TestUnzip(t *testing.T) {
 	assert.True(t, Exists(filepath.Join(baseDir, "foo", "foo.txt")))
 }
 
+func TestUnzipRelativeDestination(t *testing.T) {
+	baseDir := t.TempDir()
+	zipPath := filepath.Join(baseDir, "foobar.zip")
+	zf, err := os.Create(zipPath)
+	assert.NoError(t, err)
+	zw := zip.NewWriter(zf)
+	w, err := zw.Create("foo/foo.txt")
+	assert.NoError(t, err)
+	_, err = w.Write([]byte("bar"))
+	assert.NoError(t, err)
+	assert.NoError(t, zw.Close())
+	assert.NoError(t, zf.Close())
+
+	originalWd, err := os.Getwd()
+	assert.NoError(t, err)
+	assert.NoError(t, os.Chdir(baseDir))
+	t.Cleanup(func() {
+		assert.NoError(t, os.Chdir(originalWd))
+	})
+
+	assert.NoError(t, Unzip("foobar.zip", ".", false))
+	assert.True(t, Exists(filepath.Join(baseDir, "foo", "foo.txt")))
+}
+
 func TestUnzipWithBracketFilename(t *testing.T) {
 	baseDir := t.TempDir()
 	zipPath := filepath.Join(baseDir, "test.zip")

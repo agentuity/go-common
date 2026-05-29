@@ -426,11 +426,20 @@ func unzipFile(f *zip.File, dest string, flatten bool) error {
 	fpath := filepath.Join(dest, name)
 
 	// Canonicalize paths and validate against directory traversal
-	destRoot := filepath.Clean(dest)
+	destRoot, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("invalid destination path: %w", err)
+	}
+	cleanedFpath, err := filepath.Abs(fpath)
+	if err != nil {
+		return fmt.Errorf("invalid file path: %w", err)
+	}
+
+	destRoot = filepath.Clean(destRoot)
 	if !strings.HasSuffix(destRoot, string(os.PathSeparator)) {
 		destRoot += string(os.PathSeparator)
 	}
-	cleanedFpath := filepath.Clean(fpath)
+	cleanedFpath = filepath.Clean(cleanedFpath)
 
 	// Ensure the cleaned file path is within the destination directory
 	if !strings.HasPrefix(cleanedFpath+string(os.PathSeparator), destRoot) {

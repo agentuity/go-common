@@ -1,6 +1,6 @@
 module github.com/agentuity/go-common
 
-go 1.26.2
+go 1.26.4
 
 require (
 	github.com/alicebob/miniredis/v2 v2.38.0

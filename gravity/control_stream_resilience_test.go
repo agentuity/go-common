@@ -17,9 +17,15 @@ import (
 type mockSessionClient struct {
 	establishErr     error
 	streamPacketsErr error
+	deploymentResp   *pb.DeploymentMetadataResponse
+	deploymentErr    error
+	sandboxResp      *pb.SandboxMetadataResponse
+	sandboxErr       error
 
 	establishCalls     int
 	streamPacketsCalls int
+	deploymentCalls    int
+	sandboxCalls       int
 }
 
 func (m *mockSessionClient) EstablishSession(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[pb.SessionMessage, pb.SessionMessage], error) {
@@ -39,10 +45,24 @@ func (m *mockSessionClient) StreamSessionPackets(ctx context.Context, opts ...gr
 }
 
 func (m *mockSessionClient) GetDeploymentMetadata(context.Context, *pb.DeploymentMetadataRequest, ...grpc.CallOption) (*pb.DeploymentMetadataResponse, error) {
+	m.deploymentCalls++
+	if m.deploymentErr != nil {
+		return nil, m.deploymentErr
+	}
+	if m.deploymentResp != nil {
+		return m.deploymentResp, nil
+	}
 	return nil, errors.New("not implemented")
 }
 
 func (m *mockSessionClient) GetSandboxMetadata(context.Context, *pb.SandboxMetadataRequest, ...grpc.CallOption) (*pb.SandboxMetadataResponse, error) {
+	m.sandboxCalls++
+	if m.sandboxErr != nil {
+		return nil, m.sandboxErr
+	}
+	if m.sandboxResp != nil {
+		return m.sandboxResp, nil
+	}
 	return nil, errors.New("not implemented")
 }
 
@@ -252,6 +272,50 @@ func TestEstablishControlStreams_SingleEndpointNilClientReturnsError(t *testing.
 	}
 	if g.endpointReconnecting[0].Load() {
 		t.Fatalf("expected single-endpoint reconnecting flag to remain false")
+	}
+}
+
+func TestGetDeploymentMetadata_NoSessionClientsReturnsError(t *testing.T) {
+	g := newResilienceTestClient(t, 0, false)
+
+	resp, err := g.GetDeploymentMetadata(context.Background(), "deploy-1", "org-1")
+	if err == nil {
+		t.Fatalf("expected error for empty session clients, got response: %v", resp)
+	}
+	if !strings.Contains(err.Error(), "no gRPC session clients available") {
+		t.Fatalf("expected no clients error, got: %v", err)
+	}
+}
+
+func TestGetDeploymentMetadata_AllNilSessionClientsReturnsError(t *testing.T) {
+	g := newResilienceTestClient(t, 2, true)
+	g.sessionClients = []pb.GravitySessionServiceClient{nil, nil}
+
+	resp, err := g.GetDeploymentMetadata(context.Background(), "deploy-1", "org-1")
+	if err == nil {
+		t.Fatalf("expected error for nil session clients, got response: %v", resp)
+	}
+	if !strings.Contains(err.Error(), "no usable gRPC session clients available") {
+		t.Fatalf("expected no usable clients error, got: %v", err)
+	}
+}
+
+func TestGetDeploymentMetadata_UsesLaterNonNilSessionClient(t *testing.T) {
+	g := newResilienceTestClient(t, 3, true)
+	laterClient := &mockSessionClient{
+		deploymentResp: &pb.DeploymentMetadataResponse{Success: true},
+	}
+	g.sessionClients = []pb.GravitySessionServiceClient{nil, laterClient, nil}
+
+	resp, err := g.GetDeploymentMetadata(context.Background(), "deploy-1", "org-1")
+	if err != nil {
+		t.Fatalf("expected success from later session client, got error: %v", err)
+	}
+	if resp == nil || !resp.GetSuccess() {
+		t.Fatalf("expected successful deployment metadata response, got: %v", resp)
+	}
+	if laterClient.deploymentCalls != 1 {
+		t.Fatalf("expected later client to be called once, got %d", laterClient.deploymentCalls)
 	}
 }
 

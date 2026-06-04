@@ -7044,10 +7044,26 @@ func (g *GravityClient) returnBuffer(pooledBuf *PooledBuffer) {
 	}
 }
 
-// GetDeploymentMetadata makes a gRPC call to get deployment metadata
-func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID, orgID string) (*pb.DeploymentMetadataResponse, error) {
+func (g *GravityClient) usableSessionClient() (pb.GravitySessionServiceClient, error) {
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+
 	if len(g.sessionClients) == 0 {
 		return nil, fmt.Errorf("no gRPC session clients available")
+	}
+	for _, client := range g.sessionClients {
+		if client != nil {
+			return client, nil
+		}
+	}
+	return nil, fmt.Errorf("no usable gRPC session clients available")
+}
+
+// GetDeploymentMetadata makes a gRPC call to get deployment metadata
+func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID, orgID string) (*pb.DeploymentMetadataResponse, error) {
+	client, err := g.usableSessionClient()
+	if err != nil {
+		return nil, err
 	}
 
 	metadataRequest := &pb.DeploymentMetadataRequest{
@@ -7058,13 +7074,14 @@ func (g *GravityClient) GetDeploymentMetadata(ctx context.Context, deploymentID,
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.sessionClients[0].GetDeploymentMetadata(authCtx, metadataRequest)
+	return client.GetDeploymentMetadata(authCtx, metadataRequest)
 }
 
 // GetSandboxMetadata makes a gRPC call to get sandbox metadata
 func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID string, generateCertificate bool) (*pb.SandboxMetadataResponse, error) {
-	if len(g.sessionClients) == 0 {
-		return nil, fmt.Errorf("no gRPC session clients available")
+	client, err := g.usableSessionClient()
+	if err != nil {
+		return nil, err
 	}
 
 	metadataRequest := &pb.SandboxMetadataRequest{
@@ -7076,7 +7093,7 @@ func (g *GravityClient) GetSandboxMetadata(ctx context.Context, sandboxID, orgID
 	md := metadata.Pairs("authorization", "Bearer "+g.authorizationToken)
 	authCtx := metadata.NewOutgoingContext(ctx, md)
 
-	return g.sessionClients[0].GetSandboxMetadata(authCtx, metadataRequest)
+	return client.GetSandboxMetadata(authCtx, metadataRequest)
 }
 
 // GetIPv6Address returns the IPv6 address for external use

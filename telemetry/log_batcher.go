@@ -241,7 +241,7 @@ func (p *durableLogProcessor) Shutdown(ctx context.Context) error {
 		return errors.Join(ctx.Err(), p.exporter.Shutdown(ctx), p.db.Close())
 	}
 	err := p.drain(ctx)
-	p.maybeIncrementalVacuum()
+	p.maybeIncrementalVacuum(true)
 	return errors.Join(err, p.exporter.Shutdown(ctx), p.db.Close())
 }
 
@@ -338,18 +338,20 @@ func (p *durableLogProcessor) enforceLimits() error {
 		}
 		totalBytes -= size
 	}
-	p.maybeIncrementalVacuum()
+	p.maybeIncrementalVacuum(false)
 	return err
 }
 
-func (p *durableLogProcessor) maybeIncrementalVacuum() {
+func (p *durableLogProcessor) maybeIncrementalVacuum(force bool) {
 	p.limitsMu.Lock()
 	defer p.limitsMu.Unlock()
-	now := time.Now()
-	if !p.lastVacuumAt.IsZero() && now.Sub(p.lastVacuumAt) < incrementalVacuumMinInterval {
-		return
+	if !force {
+		now := time.Now()
+		if !p.lastVacuumAt.IsZero() && now.Sub(p.lastVacuumAt) < incrementalVacuumMinInterval {
+			return
+		}
+		p.lastVacuumAt = now
 	}
-	p.lastVacuumAt = now
 	_, _ = p.db.Exec(`PRAGMA incremental_vacuum`)
 }
 

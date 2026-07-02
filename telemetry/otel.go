@@ -130,6 +130,18 @@ func WithLogEmitQueueSize(n int) Option {
 	}
 }
 
+func WithLogWriteInterval(d time.Duration) Option {
+	return func(c *config) {
+		c.logBatch.writeInterval = d
+	}
+}
+
+func WithLogWriteBatchSize(n int) Option {
+	return func(c *config) {
+		c.logBatch.writeBatchSize = n
+	}
+}
+
 func WithMetricBatchPath(path string) Option {
 	return func(c *config) {
 		c.metricBatch.path = path

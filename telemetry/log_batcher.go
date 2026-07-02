@@ -112,7 +112,12 @@ type durableLogProcessor struct {
 
 	stopped atomic.Bool
 	dropped atomic.Uint64
+
+	limitsMu      sync.Mutex
+	lastVacuumAt  time.Time
 }
+
+const incrementalVacuumMinInterval = 5 * time.Minute
 
 var _ sdklog.Processor = (*durableLogProcessor)(nil)
 
@@ -236,6 +241,7 @@ func (p *durableLogProcessor) Shutdown(ctx context.Context) error {
 		return errors.Join(ctx.Err(), p.exporter.Shutdown(ctx), p.db.Close())
 	}
 	err := p.drain(ctx)
+	p.maybeIncrementalVacuum(true)
 	return errors.Join(err, p.exporter.Shutdown(ctx), p.db.Close())
 }
 
@@ -332,8 +338,21 @@ func (p *durableLogProcessor) enforceLimits() error {
 		}
 		totalBytes -= size
 	}
-	_, _ = p.db.Exec(`PRAGMA incremental_vacuum`)
+	p.maybeIncrementalVacuum(false)
 	return err
+}
+
+func (p *durableLogProcessor) maybeIncrementalVacuum(force bool) {
+	p.limitsMu.Lock()
+	defer p.limitsMu.Unlock()
+	if !force {
+		now := time.Now()
+		if !p.lastVacuumAt.IsZero() && now.Sub(p.lastVacuumAt) < incrementalVacuumMinInterval {
+			return
+		}
+		p.lastVacuumAt = now
+	}
+	_, _ = p.db.Exec(`PRAGMA incremental_vacuum`)
 }
 
 func configureDurableQueueDB(ctx context.Context, db *sql.DB) error {

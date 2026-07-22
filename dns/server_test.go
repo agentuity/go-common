@@ -232,6 +232,66 @@ func TestDefaultDNSConfig(t *testing.T) {
 	}
 }
 
+func TestDNSResolver_shouldCacheResponse(t *testing.T) {
+	testLogger := logger.NewTestLogger()
+	config := DNSConfig{
+		ListenAddress:       ":15353",
+		ManagedDomains:      []string{"test.local"},
+		InternalNameservers: []string{"127.0.0.1:5354"},
+		UpstreamNameservers: []string{"8.8.8.8:53"},
+		QueryTimeout:        "2s",
+	}
+
+	resolver, err := New(context.Background(), testLogger, config)
+	if err != nil {
+		t.Fatalf("Failed to create resolver: %v", err)
+	}
+
+	cnameOnly := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "main-cow.upstash.io.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 15},
+				Target: "global-latency.upstash.io.",
+			},
+		},
+	}
+	if resolver.shouldCacheResponse(cnameOnly, dns.TypeA) {
+		t.Error("CNAME-only A response must not be cached")
+	}
+	if resolver.shouldCacheResponse(cnameOnly, dns.TypeAAAA) {
+		t.Error("CNAME-only AAAA response must not be cached")
+	}
+
+	complete := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.CNAME{
+				Hdr:    dns.RR_Header{Name: "main-cow.upstash.io.", Rrtype: dns.TypeCNAME, Class: dns.ClassINET, Ttl: 15},
+				Target: "global-latency.upstash.io.",
+			},
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "global-us3.upstash.io.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.IPv4(44, 233, 22, 8),
+			},
+		},
+	}
+	if !resolver.shouldCacheResponse(complete, dns.TypeA) {
+		t.Error("CNAME+A response should be cached")
+	}
+
+	// Pure A answers are always cacheable.
+	aOnly := &dns.Msg{
+		Answer: []dns.RR{
+			&dns.A{
+				Hdr: dns.RR_Header{Name: "example.com.", Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+				A:   net.IPv4(1, 2, 3, 4),
+			},
+		},
+	}
+	if !resolver.shouldCacheResponse(aOnly, dns.TypeA) {
+		t.Error("A-only response should be cached")
+	}
+}
+
 func TestDNSResolver_needsCNAMEResolution(t *testing.T) {
 	logger := logger.NewTestLogger()
 	config := DNSConfig{

@@ -95,27 +95,42 @@ func TestWriteResolvConf_Content(t *testing.T) {
 		t.Fatalf("Failed to read written file: %v", err)
 	}
 
-	lines := strings.Split(string(content), "\n")
+	contentStr := string(content)
+	lines := strings.Split(contentStr, "\n")
 
 	// Track what we found
 	foundComment := false
-	foundNameserver := false
+	foundLocalStub := false
+	foundMetadata := false
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "#") {
 			foundComment = true
 		}
-		if strings.HasPrefix(line, "nameserver 127.0.0.1") {
-			foundNameserver = true
+		if line == "nameserver 127.0.0.1" {
+			foundLocalStub = true
+		}
+		if strings.Contains(line, "169.254.169.254") {
+			foundMetadata = true
 		}
 	}
 
 	if !foundComment {
 		t.Error("resolv.conf missing comment header")
 	}
-	if !foundNameserver {
-		t.Error("resolv.conf missing nameserver line")
+	if !foundLocalStub {
+		t.Error("resolv.conf missing local stub nameserver 127.0.0.1")
+	}
+	if foundMetadata {
+		t.Error("resolv.conf must not list cloud metadata 169.254.169.254 as a nameserver")
+	}
+	// Public recursive fallback (first DefaultExternalDNSServers host) should be present.
+	if fallback := resolvConfNameserverHost(DefaultExternalDNSServers); fallback != "" {
+		want := "nameserver " + fallback
+		if !strings.Contains(contentStr, want) {
+			t.Errorf("resolv.conf missing public fallback %q; content:\n%s", want, contentStr)
+		}
 	}
 }
 
@@ -264,6 +279,44 @@ nameserver 127.0.0.53
 			wantErr:         false,
 		},
 		{
+			name: "skip cloud metadata 169.254.169.254",
+			content: `nameserver 169.254.169.254
+nameserver 8.8.8.8
+nameserver 9.9.9.9
+`,
+			wantNameservers: []string{"8.8.8.8:53", "9.9.9.9:53"},
+			wantSearch:      nil,
+			wantErr:         false,
+		},
+		{
+			name: "skip metadata with port and other link-local",
+			content: `nameserver 169.254.169.254:53
+nameserver 169.254.0.1
+nameserver 10.0.2.3
+`,
+			wantNameservers: []string{"10.0.2.3:53"},
+			wantSearch:      nil,
+			wantErr:         false,
+		},
+		{
+			name: "azure style: metadata then real dns kept",
+			content: `nameserver 169.254.169.254
+nameserver 168.63.129.16
+`,
+			wantNameservers: []string{"168.63.129.16:53"},
+			wantSearch:      nil,
+			wantErr:         false,
+		},
+		{
+			name: "only metadata - no valid nameservers",
+			content: `nameserver 169.254.169.254
+nameserver 169.254.0.1
+`,
+			wantNameservers: nil,
+			wantSearch:      nil,
+			wantErr:         false,
+		},
+		{
 			name: "extra whitespace",
 			content: `  nameserver   8.8.8.8  
   search   example.com  
@@ -338,6 +391,7 @@ func TestIsLoopbackAddress(t *testing.T) {
 		{"8.8.8.8", false},
 		{"1.1.1.1", false},
 		{"0.0.0.0", false},
+		{"169.254.169.254", false},
 		{"", false},
 		{"invalid", false},
 	}
@@ -346,6 +400,59 @@ func TestIsLoopbackAddress(t *testing.T) {
 		t.Run(tt.addr, func(t *testing.T) {
 			if got := isLoopbackAddress(tt.addr); got != tt.want {
 				t.Errorf("isLoopbackAddress(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsCloudMetadataNameserver(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"169.254.169.254", true},
+		{"169.254.169.254:53", true},
+		{"169.254.0.1", true},      // IPv4 link-local
+		{"169.254.255.255", true},  // IPv4 link-local
+		{"fe80::1", true},          // IPv6 link-local
+		{"[fe80::1]:53", true},
+		{"8.8.8.8", false},
+		{"9.9.9.9:53", false},
+		{"10.0.2.3", false},
+		{"168.63.129.16", false}, // Azure recursive DNS (not metadata)
+		{"127.0.0.1", false},
+		{"", false},
+		{"invalid", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			if got := isCloudMetadataNameserver(tt.addr); got != tt.want {
+				t.Errorf("isCloudMetadataNameserver(%q) = %v, want %v", tt.addr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsUnsuitableUpstreamNameserver(t *testing.T) {
+	tests := []struct {
+		addr string
+		want bool
+	}{
+		{"127.0.0.1", true},
+		{"127.0.0.53:53", true},
+		{"169.254.169.254", true},
+		{"169.254.169.254:53", true},
+		{"8.8.8.8", false},
+		{"9.9.9.9:53", false},
+		{"168.63.129.16", false},
+		{"10.0.2.3:53", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.addr, func(t *testing.T) {
+			if got := isUnsuitableUpstreamNameserver(tt.addr); got != tt.want {
+				t.Errorf("isUnsuitableUpstreamNameserver(%q) = %v, want %v", tt.addr, got, tt.want)
 			}
 		})
 	}
@@ -427,5 +534,48 @@ nameserver 10.0.2.3
 
 	if count != 1 {
 		t.Errorf("Expected 9.9.9.9:53 to appear exactly once, got %d times in %v", count, result)
+	}
+}
+
+func TestGetSystemNameservers_FiltersCloudMetadata(t *testing.T) {
+	origDefault := DefaultResolveConfFilename
+	defer func() { DefaultResolveConfFilename = origDefault }()
+
+	tmpDir := t.TempDir()
+	testFile := filepath.Join(tmpDir, "resolv.conf")
+	// Azure-like pre-overwrite resolv.conf: metadata first, then cloud DNS.
+	content := `nameserver 169.254.169.254
+nameserver 168.63.129.16
+`
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
+
+	DefaultResolveConfFilename = testFile
+
+	result := GetSystemNameservers()
+
+	for _, ns := range result {
+		if strings.Contains(ns, "169.254.") {
+			t.Fatalf("GetSystemNameservers() must not return metadata/link-local NS, got %v", result)
+		}
+	}
+	if len(result) == 0 {
+		t.Fatal("GetSystemNameservers() returned empty list")
+	}
+	if result[0] != "168.63.129.16:53" {
+		t.Errorf("expected Azure DNS first, got %v", result)
+	}
+	// Defaults still appended
+	hasDefault := false
+	for _, ns := range result {
+		for _, def := range DefaultExternalDNSServers {
+			if ns == def {
+				hasDefault = true
+			}
+		}
+	}
+	if !hasDefault {
+		t.Errorf("expected default external NS in %v", result)
 	}
 }

@@ -18,7 +18,11 @@ type ParsedResolvConf struct {
 }
 
 // ParseResolvConf parses a resolv.conf file and returns the nameservers and search domains.
-// It skips nameservers pointing to 127.0.0.1 (any port) to avoid circular references.
+// It skips nameservers that are unsuitable as recursive upstreams:
+//   - loopback (127.0.0.0/8, ::1) to avoid circular references to a local stub
+//   - cloud metadata / link-local (169.254.169.254 and 169.254.0.0/16) which are
+//     not portable recursive resolvers (on Azure, 169.254.169.254 is IMDS, not DNS)
+//
 // If filename is empty, it defaults to /etc/resolv.conf
 func ParseResolvConf(filename string) (*ParsedResolvConf, error) {
 	if filename == "" {
@@ -50,8 +54,8 @@ func ParseResolvConf(filename string) (*ParsedResolvConf, error) {
 		switch fields[0] {
 		case "nameserver":
 			ns := fields[1]
-			// Skip localhost/loopback addresses to avoid circular references
-			if isLoopbackAddress(ns) {
+			// Skip addresses that must not be used as recursive upstreams.
+			if isUnsuitableUpstreamNameserver(ns) {
 				continue
 			}
 			// Add port 53 if not specified
@@ -87,30 +91,61 @@ func ParseResolvConf(filename string) (*ParsedResolvConf, error) {
 	return result, nil
 }
 
-// isLoopbackAddress checks if an address is a loopback address (127.0.0.0/8 or ::1)
-func isLoopbackAddress(addr string) bool {
-	// Remove port if present
+// nameserverHost extracts the host portion of a nameserver address that may
+// include a port (e.g. "8.8.8.8:53", "[2001:db8::1]:53", or bare "8.8.8.8").
+func nameserverHost(addr string) string {
 	host := addr
 	if strings.Contains(addr, ":") {
-		var err error
-		host, _, err = net.SplitHostPort(addr)
-		if err != nil {
-			// Maybe it's just an IP without port, or IPv6
-			host = addr
+		h, _, err := net.SplitHostPort(addr)
+		if err == nil {
+			return h
 		}
+		// Bare IPv6 without brackets/port, or other non-host:port form.
 	}
+	return host
+}
 
-	ip := net.ParseIP(host)
+// isLoopbackAddress checks if an address is a loopback address (127.0.0.0/8 or ::1)
+func isLoopbackAddress(addr string) bool {
+	ip := net.ParseIP(nameserverHost(addr))
 	if ip == nil {
 		return false
 	}
-
 	return ip.IsLoopback()
 }
 
+// isCloudMetadataNameserver reports whether addr is a cloud instance-metadata
+// or link-local address that must not be used as a recursive DNS upstream.
+//
+// 169.254.169.254 is the multi-cloud metadata endpoint (IMDS). On GCP it
+// sometimes answers DNS; on Azure it is HTTP metadata only and UDP/53 times
+// out. Preferring it as the first upstream burns the local stub's query
+// budget and breaks multi-level CNAME resolution (e.g. Upstash Redis hosts).
+//
+// Broader 169.254.0.0/16 (IPv4 link-local) and fe80::/10 (IPv6 link-local)
+// are also unsuitable as portable recursive resolvers.
+func isCloudMetadataNameserver(addr string) bool {
+	ip := net.ParseIP(nameserverHost(addr))
+	if ip == nil {
+		return false
+	}
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+	// Explicit metadata well-known address (also covered by link-local, kept
+	// for clarity and in case of future non-link-local metadata DNS).
+	return ip.Equal(net.IPv4(169, 254, 169, 254))
+}
+
+// isUnsuitableUpstreamNameserver reports whether addr should be excluded from
+// recursive upstream lists (loopback stub or cloud metadata / link-local).
+func isUnsuitableUpstreamNameserver(addr string) bool {
+	return isLoopbackAddress(addr) || isCloudMetadataNameserver(addr)
+}
+
 // GetSystemNameservers returns a merged list of nameservers: first the nameservers
-// from the system's resolv.conf (excluding loopback addresses), then the
-// DefaultExternalDNSServers as fallbacks. Duplicates are removed.
+// from the system's resolv.conf (excluding loopback and cloud-metadata addresses),
+// then the DefaultExternalDNSServers as fallbacks. Duplicates are removed.
 func GetSystemNameservers() []string {
 	parsed, err := ParseResolvConf(DefaultResolveConfFilename)
 
@@ -120,6 +155,9 @@ func GetSystemNameservers() []string {
 	// Add system nameservers first (if any)
 	if err == nil {
 		for _, ns := range parsed.Nameservers {
+			if isUnsuitableUpstreamNameserver(ns) {
+				continue
+			}
 			if !seen[ns] {
 				seen[ns] = true
 				result = append(result, ns)
@@ -138,23 +176,51 @@ func GetSystemNameservers() []string {
 	return result
 }
 
-// WriteResolvConf writes a resolv.conf file that points to a local DNS server
-// with the default internal domain as the search domain.
+// WriteResolvConf writes a resolv.conf file that points clients at the local
+// DNS stub (127.0.0.1). A public recursive server from DefaultExternalDNSServers
+// is included as a last-resort fallback when the local stub is unavailable.
+//
+// Cloud metadata (169.254.169.254) is intentionally not used: on Azure it is
+// IMDS, not recursive DNS, and caused intermittent lookup timeouts.
+//
 // If filename is empty, it defaults to /etc/resolv.conf
 func WriteResolvConf(filename string) error {
 	if filename == "" {
 		filename = DefaultResolveConfFilename
 	}
 
-	content := `# Generated by agentuity/go-common/dns
-nameserver 127.0.0.1
-nameserver 169.254.169.254
-`
+	var b strings.Builder
+	b.WriteString("# Generated by agentuity/go-common/dns\n")
+	b.WriteString("nameserver 127.0.0.1\n")
+	if fallback := resolvConfNameserverHost(DefaultExternalDNSServers); fallback != "" {
+		b.WriteString("nameserver ")
+		b.WriteString(fallback)
+		b.WriteString("\n")
+	}
 
 	// Write the file with appropriate permissions (0644)
-	if err := os.WriteFile(filename, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filename, []byte(b.String()), 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", filename, err)
 	}
 
 	return nil
+}
+
+// resolvConfNameserverHost returns the first DefaultExternalDNSServers entry
+// in resolv.conf form (host only, no port). Empty if none configured.
+func resolvConfNameserverHost(servers []string) string {
+	for _, ns := range servers {
+		host := nameserverHost(ns)
+		if host == "" || isUnsuitableUpstreamNameserver(host) {
+			continue
+		}
+		// resolv.conf wants a bare IP or hostname, not host:port.
+		if ip := net.ParseIP(host); ip != nil {
+			return host
+		}
+		if !strings.Contains(host, ":") {
+			return host
+		}
+	}
+	return ""
 }

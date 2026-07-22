@@ -532,7 +532,15 @@ func (s *DNSResolver) forwardQueryTCP(originalData []byte, domain string, queryT
 				cnameNameservers := s.selectNameservers(cnameTarget)
 				finalResponse, err := s.resolveCNAMERecursively(ctx, cnameTarget, queryType, cnameNameservers, 1)
 				if err != nil {
-					s.logger.Error("Failed to resolve CNAME chain: %v", err)
+					s.logger.Error("Failed to resolve CNAME chain: domain=%s qtype=%s cname=%s error=%v",
+						domain, dns.TypeToString[queryType], strings.TrimSuffix(cnameTarget, "."), err)
+					// Incomplete CNAME answers poison the cache and break clients
+					// (e.g. multi-level Upstash CNAMEs). Try the next nameserver.
+					failedResponses++
+					if failedResponses == responsesReceived && nextNS < len(nameservers) {
+						staggerTimer.Reset(0)
+					}
+					continue
 				} else if finalResponse != nil {
 					finalResponse.MsgHdr = response.MsgHdr
 					finalResponse.Question = response.Question
@@ -542,10 +550,15 @@ func (s *DNSResolver) forwardQueryTCP(originalData []byte, domain string, queryT
 				}
 			}
 
-			// Cache the response
-			responseBytes, err := response.Pack()
-			if err == nil {
-				s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+			// Never cache CNAME-only answers for A/AAAA queries.
+			if !s.shouldCacheResponse(response, queryType) {
+				s.logger.Debug("skipping cache for incomplete CNAME response: domain=%s qtype=%s",
+					domain, dns.TypeToString[queryType])
+			} else {
+				responseBytes, err := response.Pack()
+				if err == nil {
+					s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+				}
 			}
 
 			return response
@@ -780,8 +793,15 @@ func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domai
 				// Recursively resolve the CNAME
 				finalResponse, err := s.resolveCNAMERecursively(ctx, cnameTarget, queryType, cnameNameservers, 1)
 				if err != nil {
-					s.logger.Error("Failed to resolve CNAME chain: %v", err)
-					// Fall back to sending the partial CNAME response
+					s.logger.Error("Failed to resolve CNAME chain: domain=%s qtype=%s cname=%s error=%v",
+						domain, dns.TypeToString[queryType], strings.TrimSuffix(cnameTarget, "."), err)
+					// Incomplete CNAME answers poison the cache and break clients
+					// (e.g. multi-level Upstash CNAMEs). Try the next nameserver.
+					failedResponses++
+					if failedResponses == responsesReceived && nextNS < len(nameservers) {
+						staggerTimer.Reset(0)
+					}
+					continue
 				} else if finalResponse != nil {
 					// Merge CNAME records with final response
 					finalResponse.MsgHdr = response.MsgHdr     // Preserve original header fields and transaction ID
@@ -799,8 +819,13 @@ func (s *DNSResolver) forwardQuery(conn *net.UDPConn, originalData []byte, domai
 				continue
 			}
 
-			// Cache the response using the minimum TTL from all answers
-			s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+			// Never cache CNAME-only answers for A/AAAA queries.
+			if !s.shouldCacheResponse(response, queryType) {
+				s.logger.Debug("skipping cache for incomplete CNAME response: domain=%s qtype=%s",
+					domain, dns.TypeToString[queryType])
+			} else {
+				s.cacheResponse(cacheKey, responseBytes, response, domain, queryType)
+			}
 
 			// Send response back to client
 			_, err = conn.WriteToUDP(responseBytes, clientAddr)
@@ -1074,6 +1099,15 @@ func (s *DNSResolver) getNegativeCacheTTL(response *dns.Msg) uint32 {
 
 func (s *DNSResolver) debugDNSResponse(msg *dns.Msg, domain string, queryType uint16) {
 	s.logger.Debug("DNS query %s (%v) response: %s", domain, dns.TypeToString[queryType], msg)
+}
+
+// shouldCacheResponse reports whether a DNS response is safe to put in the
+// resolver cache. Incomplete CNAME-only answers for A/AAAA queries are not
+// cached: when chain resolution fails they would poison subsequent lookups
+// for multi-level CNAMEs (e.g. Upstash latency endpoints).
+func (s *DNSResolver) shouldCacheResponse(response *dns.Msg, queryType uint16) bool {
+	incomplete, _ := s.needsCNAMEResolution(response, queryType)
+	return !incomplete
 }
 
 // needsCNAMEResolution checks if a response contains only CNAME records without final A/AAAA records

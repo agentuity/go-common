@@ -59,6 +59,8 @@ type dataplaneMockTunnelStream struct {
 	errCh  chan error
 
 	closeSendCount atomic.Int64
+	blockSend      <-chan struct{}
+	activeSends    atomic.Int64
 }
 
 var _ pb.GravitySessionService_StreamSessionPacketsClient = (*dataplaneMockTunnelStream)(nil)
@@ -75,6 +77,15 @@ func newDataplaneMockTunnelStream(ctx context.Context) *dataplaneMockTunnelStrea
 }
 
 func (m *dataplaneMockTunnelStream) Send(p *pb.TunnelPacket) error {
+	m.activeSends.Add(1)
+	defer m.activeSends.Add(-1)
+	if m.blockSend != nil {
+		select {
+		case <-m.blockSend:
+		case <-m.ctx.Done():
+			return status.Error(codes.Canceled, "context canceled")
+		}
+	}
 	if v := m.sendErr.Load(); v != nil {
 		if err, ok := v.(error); ok && err != nil {
 			return err
@@ -221,6 +232,113 @@ func TestWritePacket_SendsToStream(t *testing.T) {
 	got := stream.lastSent()
 	if got == nil || string(got.Data) != string(payload) {
 		t.Fatalf("expected payload to be sent to tunnel stream")
+	}
+}
+
+func TestWritePacket_BlockedSendIsBoundedAndReconnectsOnlyEndpoint(t *testing.T) {
+	g, _ := newTunnelDataplaneTestClient(t, 2)
+	g.tunnelSendTimeout = 25 * time.Millisecond
+	g.multiEndpointMode.Store(true)
+	g.selector = NewEndpointSelector(time.Minute)
+
+	blockedCtx, blockedCancel := context.WithCancel(g.ctx)
+	defer blockedCancel()
+	blocked := newDataplaneMockTunnelStream(blockedCtx)
+	blocked.blockSend = make(chan struct{})
+	sibling := newDataplaneMockTunnelStream(g.ctx)
+	installStreams(g,
+		&StreamInfo{stream: blocked, connIndex: 0, streamID: "blocked", isHealthy: true},
+		&StreamInfo{stream: sibling, connIndex: 1, streamID: "sibling", isHealthy: true},
+	)
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+	g.streamManager.cancels = []context.CancelFunc{blockedCancel, func() {}}
+	reconnected := make(chan int, 1)
+	g.reconnectEndpointHook = func(idx int, _ string) { reconnected <- idx }
+
+	// Bind this flow to endpoint zero so the first send exercises the block.
+	g.selector.bindings[ExtractFlowKey(makeIPv6Packet())] = &TunnelBinding{Endpoint: g.endpoints[0], LastUsed: time.Now()}
+	start := time.Now()
+	err := g.WritePacket(makeIPv6Packet())
+	if !errors.Is(err, ErrTunnelSendTimeout) {
+		t.Fatalf("expected tunnel send timeout, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
+		t.Fatalf("blocked send was not bounded: %s", elapsed)
+	}
+	select {
+	case idx := <-reconnected:
+		if idx != 0 {
+			t.Fatalf("reconnected endpoint %d, want 0", idx)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for endpoint quarantine")
+	}
+
+	if err := g.WritePacket(reverseFlow(makeIPv6Packet())); err != nil {
+		t.Fatalf("healthy sibling endpoint stopped carrying traffic: %v", err)
+	}
+	if sibling.sentCount() != 1 {
+		t.Fatalf("healthy sibling received %d packets, want 1", sibling.sentCount())
+	}
+	if !g.endpoints[1].IsHealthy() {
+		t.Fatal("healthy sibling endpoint was quarantined")
+	}
+	waitUntil(t, time.Second, func() bool { return blocked.activeSends.Load() == 0 })
+}
+
+func TestKeepalive_BlockedSendQuarantinesEndpoint(t *testing.T) {
+	g, _ := newTunnelDataplaneTestClient(t, 2)
+	g.tunnelSendTimeout = 20 * time.Millisecond
+	blockedCtx, blockedCancel := context.WithCancel(g.ctx)
+	defer blockedCancel()
+	blocked := newDataplaneMockTunnelStream(blockedCtx)
+	blocked.blockSend = make(chan struct{})
+	sibling := newDataplaneMockTunnelStream(g.ctx)
+	installStreams(g,
+		&StreamInfo{stream: blocked, connIndex: 0, streamID: "blocked", isHealthy: true},
+		&StreamInfo{stream: sibling, connIndex: 1, streamID: "sibling", isHealthy: true},
+	)
+	g.streamManager.controlStreams[0] = &configurableMockStream{}
+	g.streamManager.controlStreams[1] = &configurableMockStream{}
+	g.poolConfig.StreamsPerGravity = 1
+	g.streamManager.cancels = []context.CancelFunc{blockedCancel, func() {}}
+	reconnected := make(chan int, 1)
+	g.reconnectEndpointHook = func(idx int, _ string) { reconnected <- idx }
+
+	g.sendTunnelKeepalives()
+	select {
+	case idx := <-reconnected:
+		if idx != 0 {
+			t.Fatalf("reconnected endpoint %d, want 0", idx)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocked keepalive did not reconnect its endpoint")
+	}
+	waitUntil(t, time.Second, func() bool { return sibling.sentCount() == 1 })
+	if !g.endpoints[1].IsHealthy() {
+		t.Fatal("sibling endpoint was quarantined by another endpoint's keepalive")
+	}
+	waitUntil(t, time.Second, func() bool { return blocked.activeSends.Load() == 0 })
+}
+
+func TestClose_CancelsHandlersBeforeWaiting(t *testing.T) {
+	g, _ := newTunnelDataplaneTestClient(t, 1)
+	g.handlerWg.Add(1)
+	go func() {
+		defer g.handlerWg.Done()
+		<-g.ctx.Done()
+	}()
+
+	done := make(chan error, 1)
+	go func() { done <- g.Close() }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close failed: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close blocked waiting for a handler whose I/O context was not cancelled")
 	}
 }
 

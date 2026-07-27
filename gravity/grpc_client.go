@@ -63,6 +63,9 @@ func init() {
 
 // Error variables for consistency with old implementation
 var ErrConnectionClosed = errors.New("gravity connection closed")
+var ErrTunnelSendTimeout = errors.New("gravity tunnel send timed out")
+
+const defaultTunnelSendTimeout = 5 * time.Second
 
 const (
 	// debugTunnelPackets gates verbose per-packet tunnel logging.
@@ -296,6 +299,7 @@ type GravityClient struct {
 	onEndpointReady            func(endpointIndex int)
 	onEndpointTunnelReady      func(endpointIndex int)
 	reconnectEndpointHook      func(endpointIndex int, reason string) // test hook; nil in production
+	tunnelSendTimeout          time.Duration
 
 	// State management
 	connected            bool
@@ -429,12 +433,18 @@ func sessionHelloErrorMessage(err error) string {
 // StreamInfo tracks individual stream health and load
 type StreamInfo struct {
 	stream    pb.GravitySessionService_StreamSessionPacketsClient
-	connIndex int        // Connection index this stream belongs to
-	streamID  string     // Unique stream identifier
-	isHealthy bool       // Stream health status
-	loadCount int64      // Current load (packets in flight)
-	lastUsed  time.Time  // Last time this stream was used
-	sendMu    sync.Mutex // Serializes Send calls on this stream
+	connIndex int       // Connection index this stream belongs to
+	streamID  string    // Unique stream identifier
+	isHealthy bool      // Stream health status
+	loadCount int64     // Current load (packets in flight)
+	lastUsed  time.Time // Last time this stream was used
+	sendOnce  sync.Once
+	sendQueue chan tunnelSendRequest
+}
+
+type tunnelSendRequest struct {
+	packet *pb.TunnelPacket
+	result chan error
 }
 
 const endpointDiscoveryRefreshFailureThreshold int32 = 10
@@ -569,6 +579,7 @@ func New(config GravityConfig) (*GravityClient, error) {
 		maxReconnectAttempts:       config.MaxReconnectAttempts,
 		reconnectAttemptTimeout:    config.ReconnectAttemptTimeout,
 		reconnectionFailedCallback: config.ReconnectionFailedCallback,
+		tunnelSendTimeout:          defaultTunnelSendTimeout,
 		onEndpointReady:            config.OnEndpointReady,
 		onEndpointTunnelReady:      config.OnEndpointTunnelReady,
 		tracer:                     otel.Tracer("@agentuity/gravity/client"),
@@ -1368,7 +1379,7 @@ type streamSnapshot struct {
 	connIndex int
 	isHealthy bool
 	stream    pb.GravitySessionService_StreamSessionPacketsClient
-	sendMu    *sync.Mutex // pointer to the stream's send mutex for serialization
+	info      *StreamInfo
 }
 
 func (g *GravityClient) sendTunnelKeepalives() {
@@ -1383,7 +1394,7 @@ func (g *GravityClient) sendTunnelKeepalives() {
 				connIndex: si.connIndex,
 				isHealthy: si.isHealthy,
 				stream:    si.stream,
-				sendMu:    &si.sendMu,
+				info:      si,
 			}
 		}
 	}
@@ -1427,7 +1438,7 @@ func (g *GravityClient) sendTunnelKeepalives() {
 		healthyInEndpoint := make([]int, 0, streamsPerConn)
 		for i := base; i < end; i++ {
 			s := snapshots[i]
-			if s.isHealthy && s.stream != nil && s.sendMu != nil {
+			if s.isHealthy && s.stream != nil && s.info != nil {
 				healthyInEndpoint = append(healthyInEndpoint, i)
 			}
 		}
@@ -1439,18 +1450,11 @@ func (g *GravityClient) sendTunnelKeepalives() {
 		targetIdx := healthyInEndpoint[rotation%len(healthyInEndpoint)]
 		s := snapshots[targetIdx]
 
-		// Serialize with the data path's sendMu. Use a goroutine with
-		// timeout so a wedged Send doesn't block the monitor loop.
+		// Serialize with the data path's sendMu. A timed-out send quarantines
+		// and reconnects only this endpoint.
 		go func(idx int, snap streamSnapshot) {
-			errCh := make(chan error, 1)
-			go func() {
-				snap.sendMu.Lock()
-				err := snap.stream.Send(&pb.TunnelPacket{Data: probe})
-				snap.sendMu.Unlock()
-				errCh <- err
-			}()
-			select {
-			case err := <-errCh:
+			err := g.sendTunnelStreamBounded(snap.info, &pb.TunnelPacket{Data: probe}, "keepalive")
+			if err == nil {
 				// Update LastProbeSentUs on every successful probe so the
 				// liveness monitor can distinguish "probed but no echo"
 				// from "never probed." Unlike LastSendUs (updated by
@@ -1458,15 +1462,13 @@ func (g *GravityClient) sendTunnelKeepalives() {
 				// set by keepalive probes — preventing data-path sends
 				// from masking a zombie tunnel (one-way: sending works,
 				// receiving doesn't).
-				if err == nil {
-					g.streamManager.metricsMu.Lock()
-					if m := g.streamManager.streamMetrics[snap.streamID]; m != nil {
-						m.LastProbeSentUs = time.Now().UnixMicro()
-					}
-					g.streamManager.metricsMu.Unlock()
+				g.streamManager.metricsMu.Lock()
+				if m := g.streamManager.streamMetrics[snap.streamID]; m != nil {
+					m.LastProbeSentUs = time.Now().UnixMicro()
 				}
-			case <-time.After(5 * time.Second):
-				g.logger.Warn("tunnel keepalive send blocked >5s on stream %d — possible zombie", idx)
+				g.streamManager.metricsMu.Unlock()
+			} else {
+				g.logger.Warn("tunnel keepalive send failed on stream %d: %v", idx, err)
 			}
 		}(targetIdx, s)
 	}
@@ -3909,22 +3911,22 @@ func (g *GravityClient) stop() error {
 	g.closing = true
 	g.mu.Unlock()
 
-	// Wait for in-flight checkpoint/restore handlers to finish so their
-	// response messages reach the server before we tear down streams.
-	g.handlerWg.Wait()
-
 	g.mu.Lock()
 	connectionCancel := g.connectionCancel
 	cancel := g.cancel
 	g.connected = false
 	g.mu.Unlock()
 
+	// Cancel stream contexts before waiting for handlers. A handler or packet
+	// sender may be blocked in gRPC I/O; cancellation is what makes that I/O
+	// return and guarantees bounded shutdown.
 	if connectionCancel != nil {
 		connectionCancel()
 	}
 	if cancel != nil {
 		cancel()
 	}
+	g.handlerWg.Wait()
 	g.cleanup()
 
 	return nil
@@ -4123,6 +4125,11 @@ func (g *GravityClient) handleEndpointDisconnection(endpointIndex int, reason st
 		g.logger.Info("operating in degraded mode: endpoint %d down, other endpoint(s) still healthy", endpointIndex)
 	} else {
 		g.logger.Warn("all endpoints down, reconnecting endpoint %d independently", endpointIndex)
+	}
+	if g.reconnectEndpointHook != nil {
+		defer g.endpointReconnecting[endpointIndex].Store(false)
+		g.reconnectEndpointHook(endpointIndex, reason)
+		return
 	}
 	// Always use per-endpoint reconnection in multi-endpoint mode.
 	// Each endpoint reconnects independently as its gravity server
@@ -5867,6 +5874,79 @@ func (g *GravityClient) Resume(reason string) error {
 }
 
 // WritePacket sends a tunnel packet via gRPC tunnel stream using load balancing
+func (g *GravityClient) sendTunnelStreamBounded(stream *StreamInfo, packet *pb.TunnelPacket, reason string) error {
+	if stream == nil || stream.stream == nil {
+		return fmt.Errorf("tunnel stream is unavailable")
+	}
+	timeout := g.tunnelSendTimeout
+	if timeout <= 0 {
+		timeout = defaultTunnelSendTimeout
+	}
+	// Send may outlive the caller when the deadline fires. Give the send
+	// goroutine immutable ownership so a TUN buffer can be reused immediately.
+	ownedPacket := &pb.TunnelPacket{
+		Data:         append([]byte(nil), packet.Data...),
+		StreamId:     packet.StreamId,
+		EnqueuedAtUs: packet.EnqueuedAtUs,
+	}
+	stream.sendOnce.Do(func() {
+		stream.sendQueue = make(chan tunnelSendRequest)
+		go g.runTunnelSendWorker(stream)
+	})
+	req := tunnelSendRequest{packet: ownedPacket, result: make(chan error, 1)}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case stream.sendQueue <- req:
+	case <-g.ctx.Done():
+		return ErrConnectionClosed
+	case <-timer.C:
+		g.quarantineTunnelSend(stream, reason, timeout)
+		return fmt.Errorf("%w after %s", ErrTunnelSendTimeout, timeout)
+	}
+	select {
+	case err := <-req.result:
+		return err
+	case <-g.ctx.Done():
+		return ErrConnectionClosed
+	case <-timer.C:
+		g.quarantineTunnelSend(stream, reason, timeout)
+		return fmt.Errorf("%w after %s", ErrTunnelSendTimeout, timeout)
+	}
+}
+
+func (g *GravityClient) runTunnelSendWorker(stream *StreamInfo) {
+	for {
+		select {
+		case <-g.ctx.Done():
+			return
+		case <-stream.stream.Context().Done():
+			return
+		case req := <-stream.sendQueue:
+			err := stream.stream.Send(req.packet)
+			req.result <- err
+		}
+	}
+}
+
+func (g *GravityClient) quarantineTunnelSend(stream *StreamInfo, reason string, timeout time.Duration) {
+	// gRPC stream Send has no per-call context. Quarantine first so no new
+	// packets select this stream, then cancel/reconnect its endpoint. The
+	// stream context cancellation unblocks the outstanding Send worker.
+	g.streamManager.tunnelMu.Lock()
+	stream.isHealthy = false
+	g.streamManager.tunnelMu.Unlock()
+	g.endpointsMu.RLock()
+	if stream.connIndex >= 0 && stream.connIndex < len(g.endpoints) && g.endpoints[stream.connIndex] != nil {
+		g.endpoints[stream.connIndex].healthy.Store(false)
+	}
+	g.endpointsMu.RUnlock()
+	g.logger.Error("tunnel %s send timed out after %s on endpoint %d stream %s; quarantining endpoint",
+		reason, timeout, stream.connIndex, stream.streamID)
+	go g.handleEndpointDisconnection(stream.connIndex, "tunnel_"+reason+"_send_timeout")
+}
+
 func (g *GravityClient) WritePacket(payload []byte) error {
 	if g.tracePackets {
 		g.tracePacketLogger.Debug("writePacket called with %d bytes", len(payload))
@@ -5929,9 +6009,7 @@ func (g *GravityClient) WritePacket(payload []byte) error {
 		}
 
 		sendStart := time.Now()
-		stream.sendMu.Lock()
-		err = stream.stream.Send(tunnelPacket)
-		stream.sendMu.Unlock()
+		err = g.sendTunnelStreamBounded(stream, tunnelPacket, "packet")
 		sendLatency := time.Since(sendStart)
 		if err != nil {
 			// Mark stream unhealthy and record per-stream error metrics,
@@ -6198,21 +6276,16 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 		StreamId: streamInfo.streamID,
 	}
 
-	// Send packet with retry logic and circuit breaker
+	// Validate the endpoint's circuit breaker before sending. Tunnel sends are
+	// deliberately not retried here: retransmission belongs to the tunneled
+	// transport, and retrying a blocked gRPC Send extends the dataplane stall.
 	connectionIndex := streamInfo.connIndex
 	if connectionIndex < 0 || connectionIndex >= len(g.circuitBreakers) {
 		return fmt.Errorf("circuit breaker index %d out of range (len=%d)", connectionIndex, len(g.circuitBreakers))
 	}
-	circuitBreaker := g.circuitBreakers[connectionIndex]
 
 	sendStart := time.Now()
-
-	err = RetryWithCircuitBreaker(context.WithoutCancel(g.ctx), g.retryConfig, circuitBreaker, func() error {
-		streamInfo.sendMu.Lock()
-		sendErr := streamInfo.stream.Send(packet)
-		streamInfo.sendMu.Unlock()
-		return sendErr
-	})
+	err = g.sendTunnelStreamBounded(streamInfo, packet, "packet")
 
 	sendLatency := time.Since(sendStart)
 
@@ -6230,7 +6303,7 @@ func (g *GravityClient) sendTunnelPacket(data []byte) error {
 		g.streamManager.metricsMu.Unlock()
 
 		g.outboundErrors.Add(1)
-		return fmt.Errorf("failed to send packet after retries: %w", err)
+		return fmt.Errorf("failed to send packet: %w", err)
 	}
 
 	// Record successful send metrics

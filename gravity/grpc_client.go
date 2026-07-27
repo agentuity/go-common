@@ -3842,8 +3842,11 @@ func (g *GravityClient) sendOnControlStream(streamIndex int, msg *pb.SessionMess
 // Interface methods
 
 func (g *GravityClient) SendPacket(data []byte) error {
+	// SendPacket is asynchronous, so the caller may reuse data as soon as this
+	// method returns. Give the outbound queue ownership of an immutable copy.
+	packet := append([]byte(nil), data...)
 	select {
-	case g.outboundPackets <- data:
+	case g.outboundPackets <- packet:
 		return nil
 	default:
 		return fmt.Errorf("outbound packet channel full")

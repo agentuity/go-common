@@ -224,6 +224,22 @@ func TestWritePacket_SendsToStream(t *testing.T) {
 	}
 }
 
+func TestSendPacketCopiesCallerBuffer(t *testing.T) {
+	t.Parallel()
+	g, _ := newTunnelDataplaneTestClient(t, 1)
+
+	payload := []byte{0x60, 0, 0, 0, 0, 0, 6, 0x2a}
+	if err := g.SendPacket(payload); err != nil {
+		t.Fatalf("SendPacket error: %v", err)
+	}
+
+	payload[len(payload)-1] = 0xff
+	queued := <-g.outboundPackets
+	if got, want := queued[len(queued)-1], byte(0x2a); got != want {
+		t.Fatalf("queued packet retained caller buffer: got last byte %#x, want %#x", got, want)
+	}
+}
+
 func TestWritePacket_RoundRobinAcrossStreams(t *testing.T) {
 	t.Parallel()
 	g, _ := newTunnelDataplaneTestClient(t, 1)

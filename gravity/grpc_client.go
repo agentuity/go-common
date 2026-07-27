@@ -440,11 +440,13 @@ type StreamInfo struct {
 	lastUsed  time.Time // Last time this stream was used
 	sendOnce  sync.Once
 	sendQueue chan tunnelSendRequest
+	sendDone  chan struct{}
 }
 
 type tunnelSendRequest struct {
-	packet *pb.TunnelPacket
-	result chan error
+	packet       *pb.TunnelPacket
+	result       chan error
+	pooledBuffer []byte
 }
 
 const endpointDiscoveryRefreshFailureThreshold int32 = 10
@@ -1450,8 +1452,8 @@ func (g *GravityClient) sendTunnelKeepalives() {
 		targetIdx := healthyInEndpoint[rotation%len(healthyInEndpoint)]
 		s := snapshots[targetIdx]
 
-		// Serialize with the data path's sendMu. A timed-out send quarantines
-		// and reconnects only this endpoint.
+		// Serialize through the data path's per-stream sendQueue worker. A
+		// timed-out send quarantines and reconnects only this endpoint.
 		go func(idx int, snap streamSnapshot) {
 			err := g.sendTunnelStreamBounded(snap.info, &pb.TunnelPacket{Data: probe}, "keepalive")
 			if err == nil {
@@ -5878,28 +5880,56 @@ func (g *GravityClient) sendTunnelStreamBounded(stream *StreamInfo, packet *pb.T
 	if stream == nil || stream.stream == nil {
 		return fmt.Errorf("tunnel stream is unavailable")
 	}
+	select {
+	case <-g.ctx.Done():
+		return ErrConnectionClosed
+	case <-stream.stream.Context().Done():
+		return ErrConnectionClosed
+	default:
+	}
 	timeout := g.tunnelSendTimeout
 	if timeout <= 0 {
 		timeout = defaultTunnelSendTimeout
 	}
 	// Send may outlive the caller when the deadline fires. Give the send
 	// goroutine immutable ownership so a TUN buffer can be reused immediately.
+	var ownedData []byte
+	var pooledBuffer []byte
+	if len(packet.Data) <= maxBufferSize {
+		pooledBuffer = g.bufferPool.Get().([]byte)
+		ownedData = pooledBuffer[:len(packet.Data)]
+		copy(ownedData, packet.Data)
+	} else {
+		ownedData = append([]byte(nil), packet.Data...)
+	}
 	ownedPacket := &pb.TunnelPacket{
-		Data:         append([]byte(nil), packet.Data...),
+		Data:         ownedData,
 		StreamId:     packet.StreamId,
 		EnqueuedAtUs: packet.EnqueuedAtUs,
 	}
 	stream.sendOnce.Do(func() {
 		stream.sendQueue = make(chan tunnelSendRequest)
+		stream.sendDone = make(chan struct{})
 		go g.runTunnelSendWorker(stream)
 	})
-	req := tunnelSendRequest{packet: ownedPacket, result: make(chan error, 1)}
+	req := tunnelSendRequest{packet: ownedPacket, result: make(chan error, 1), pooledBuffer: pooledBuffer}
+	handedOff := false
+	defer func() {
+		if !handedOff && req.pooledBuffer != nil {
+			g.bufferPool.Put(req.pooledBuffer)
+		}
+	}()
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
 	case stream.sendQueue <- req:
+		handedOff = true
 	case <-g.ctx.Done():
+		return ErrConnectionClosed
+	case <-stream.stream.Context().Done():
+		return ErrConnectionClosed
+	case <-stream.sendDone:
 		return ErrConnectionClosed
 	case <-timer.C:
 		g.quarantineTunnelSend(stream, reason, timeout)
@@ -5910,6 +5940,10 @@ func (g *GravityClient) sendTunnelStreamBounded(stream *StreamInfo, packet *pb.T
 		return err
 	case <-g.ctx.Done():
 		return ErrConnectionClosed
+	case <-stream.stream.Context().Done():
+		return ErrConnectionClosed
+	case <-stream.sendDone:
+		return ErrConnectionClosed
 	case <-timer.C:
 		g.quarantineTunnelSend(stream, reason, timeout)
 		return fmt.Errorf("%w after %s", ErrTunnelSendTimeout, timeout)
@@ -5917,6 +5951,7 @@ func (g *GravityClient) sendTunnelStreamBounded(stream *StreamInfo, packet *pb.T
 }
 
 func (g *GravityClient) runTunnelSendWorker(stream *StreamInfo) {
+	defer close(stream.sendDone)
 	for {
 		select {
 		case <-g.ctx.Done():
@@ -5925,6 +5960,9 @@ func (g *GravityClient) runTunnelSendWorker(stream *StreamInfo) {
 			return
 		case req := <-stream.sendQueue:
 			err := stream.stream.Send(req.packet)
+			if req.pooledBuffer != nil {
+				g.bufferPool.Put(req.pooledBuffer)
+			}
 			req.result <- err
 		}
 	}

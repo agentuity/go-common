@@ -287,6 +287,33 @@ func TestWritePacket_BlockedSendIsBoundedAndReconnectsOnlyEndpoint(t *testing.T)
 	waitUntil(t, time.Second, func() bool { return blocked.activeSends.Load() == 0 })
 }
 
+func TestSendTunnelStreamBounded_ExitedWorkerReturnsConnectionClosedImmediately(t *testing.T) {
+	g, _ := newTunnelDataplaneTestClient(t, 1)
+	g.tunnelSendTimeout = time.Second
+	streamCtx, cancel := context.WithCancel(g.ctx)
+	mock := newDataplaneMockTunnelStream(streamCtx)
+	stream := &StreamInfo{stream: mock, connIndex: 0, streamID: "closed", isHealthy: true}
+
+	if err := g.sendTunnelStreamBounded(stream, &pb.TunnelPacket{Data: []byte("first")}, "packet"); err != nil {
+		t.Fatalf("initial send failed: %v", err)
+	}
+	cancel()
+	select {
+	case <-stream.sendDone:
+	case <-time.After(time.Second):
+		t.Fatal("send worker did not exit")
+	}
+
+	start := time.Now()
+	err := g.sendTunnelStreamBounded(stream, &pb.TunnelPacket{Data: []byte("second")}, "packet")
+	if !errors.Is(err, ErrConnectionClosed) {
+		t.Fatalf("expected ErrConnectionClosed, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+		t.Fatalf("closed stream waited for send timeout: %s", elapsed)
+	}
+}
+
 func TestKeepalive_BlockedSendQuarantinesEndpoint(t *testing.T) {
 	g, _ := newTunnelDataplaneTestClient(t, 2)
 	g.tunnelSendTimeout = 20 * time.Millisecond

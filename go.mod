@@ -19,7 +19,7 @@ require (
 	github.com/savsgio/gotils v0.0.0-20250924091648-bce9a52d7761
 	github.com/shirou/gopsutil/v4 v4.26.7
 	github.com/spf13/cobra v1.10.2
-	github.com/stretchr/testify v1.11.1
+	github.com/stretchr/testify v1.12.0
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	github.com/xhit/go-str2duration/v2 v2.1.0
 	github.com/zijiren233/yaml-comment v0.2.2

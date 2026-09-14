@@ -21,7 +21,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/vmihailenco/msgpack/v5 v5.4.1
-	github.com/xhit/go-str2duration/v2 v2.1.0
+	github.com/xhit/go-str2duration/v2 v2.2.0
 	github.com/zijiren233/yaml-comment v0.2.2
 	go.etcd.io/etcd/client/v3 v3.7.1
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
